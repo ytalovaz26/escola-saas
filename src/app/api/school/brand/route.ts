@@ -6,11 +6,10 @@ export type SchoolBrand = {
   name?: string | null;
 };
 
-export async function getSchoolBrand(schoolId: string): Promise<SchoolBrand | null> {
+// função interna (NÃO exportar)
+async function getSchoolBrandInternal(schoolId: string): Promise<SchoolBrand | null> {
   if (!schoolId) return null;
 
-  // tenta pegar name se existir; se não existir, o Supabase retorna erro de coluna
-  // então a gente faz fallback para select só de logo e cor
   const tryWithName = await supabaseAdmin
     .from("schools")
     .select("logo_url,primary_color,name")
@@ -27,4 +26,28 @@ export async function getSchoolBrand(schoolId: string): Promise<SchoolBrand | nu
 
   if (fallback.error) return null;
   return (fallback.data as any) ?? null;
+}
+
+// ✅ ROTA VÁLIDA DO NEXT
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const schoolId = searchParams.get("schoolId");
+
+    if (!schoolId) {
+      return new Response(JSON.stringify({ error: "schoolId is required" }), {
+        status: 400,
+      });
+    }
+
+    const data = await getSchoolBrandInternal(schoolId);
+
+    return new Response(JSON.stringify(data), {
+      status: 200,
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: "internal error" }), {
+      status: 500,
+    });
+  }
 }
