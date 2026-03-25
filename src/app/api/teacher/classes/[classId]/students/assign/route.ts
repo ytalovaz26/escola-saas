@@ -8,7 +8,7 @@ function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }
 
-function normRole(role: any) {
+function normRole(role: unknown) {
   return String(role || "").trim().toLowerCase();
 }
 
@@ -18,9 +18,9 @@ async function getBearerToken(req: Request) {
   return m?.[1] || null;
 }
 
-export async function POST(req: Request, ctx: { params: { classId: string } }) {
+export async function POST(req: Request, context: any) {
   try {
-    const classId = String(ctx?.params?.classId || "").trim();
+    const classId = String(context?.params?.classId || "").trim();
     if (!classId) return jsonError("classId é obrigatório.", 400);
 
     const token = await getBearerToken(req);
@@ -79,7 +79,7 @@ export async function POST(req: Request, ctx: { params: { classId: string } }) {
 
     // 5) Payload (studentId)
     const body = await req.json().catch(() => ({}));
-    const studentId = String(body?.studentId || "").trim();
+    const studentId = String((body as any)?.studentId || "").trim();
     if (!studentId) return jsonError("studentId é obrigatório.", 400);
 
     // 6) Garante que o aluno pertence à mesma escola
@@ -96,7 +96,7 @@ export async function POST(req: Request, ctx: { params: { classId: string } }) {
     // 7) Verifica se já existe vínculo (class_students) — reativa se estiver inativo
     const { data: existing, error: exErr } = await supabaseAdmin
       .from("class_students")
-      .select("id, is_active")
+      .select("id, is_active, created_at")
       .eq("school_id", schoolId)
       .eq("class_id", classId)
       .eq("student_id", studentId)
@@ -141,6 +141,9 @@ export async function POST(req: Request, ctx: { params: { classId: string } }) {
       reactivated: true,
     });
   } catch (e: any) {
-    return jsonError(e?.message || "Internal error in /api/teacher/classes/[classId]/students/assign", 500);
+    return jsonError(
+      e?.message || "Internal error in /api/teacher/classes/[classId]/students/assign",
+      500
+    );
   }
 }
