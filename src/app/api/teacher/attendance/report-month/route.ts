@@ -169,8 +169,8 @@ async function getRosterStudentIdsRobust(params: {
 
       if (error) continue;
 
-      for (const r of data || []) {
-        const id = r?.[t.studentCol];
+      for (const r of (data || []) as any[]) {
+        const id = (r as any)?.[t.studentCol];
         if (typeof id === "string" && id.length > 0) all.add(id);
       }
     } catch {}
@@ -182,7 +182,7 @@ async function getRosterStudentIdsRobust(params: {
       p_date: endISO,
     });
 
-    for (const r of data || []) {
+    for (const r of (data || []) as any[]) {
       const id = r?.student_id ?? r?.id;
       if (typeof id === "string" && id.length > 0) all.add(id);
     }
@@ -515,7 +515,7 @@ export async function GET(req: Request) {
 
   const buffer = await pdfToBuffer(doc);
 
-  return new NextResponse(buffer, {
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="relatorio-${startISO}-a-${endISO}.pdf"`,
