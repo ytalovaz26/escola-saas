@@ -309,7 +309,7 @@ export async function GET(req: Request) {
   const headerTop = 38;
 
   if (logoBuffer) {
-    doc.image(logoBuffer, margin, headerTop, { fit: [90, 90], align: "left" });
+    doc.image(logoBuffer, margin, headerTop, { fit: [90, 90] });
   }
 
   const titleX = margin + 100;
