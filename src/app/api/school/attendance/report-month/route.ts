@@ -86,8 +86,9 @@ function normalizeStatus(raw: any): AttendanceStatus | null {
   return null;
 }
 
-async function pdfToBuffer(doc: PDFKit.PDFDocument) {
+async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
   const chunks: Buffer[] = [];
+
   return await new Promise<Buffer>((resolve, reject) => {
     doc.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -540,7 +541,7 @@ export async function GET(req: Request) {
 
   const buffer = await pdfToBuffer(doc);
 
-  return new NextResponse(buffer, {
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="frequencia-${classId}-${startISO}-a-${endISO}.pdf"`,
