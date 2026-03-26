@@ -6,16 +6,24 @@ export const runtime = "nodejs";
 
 type AttendanceStatus = "present" | "absent" | "late";
 
+type PayloadItem = {
+  studentId?: string;
+  student_id?: string;
+  status?: AttendanceStatus;
+  note?: string | null;
+};
+
 type Payload = {
   classId: string;
   date: string;
   lessonNumber?: number;
-  items: Array<{
-    studentId?: string;
-    student_id?: string;
-    status?: AttendanceStatus;
-    note?: string | null;
-  }>;
+  items: PayloadItem[];
+};
+
+type NormalizedIncomingItem = {
+  student_id: string;
+  status: AttendanceStatus;
+  note: string | null;
 };
 
 function corsHeaders() {
@@ -165,7 +173,7 @@ export async function POST(req: Request) {
       ? body.lessonNumber
       : 1;
 
-  const incomingItems = Array.isArray(body?.items) ? body.items : [];
+  const incomingItems: PayloadItem[] = Array.isArray(body?.items) ? body.items : [];
 
   if (!classId) return jsonError("classId é obrigatório.", 400);
   if (!date) return jsonError("date é obrigatório (YYYY-MM-DD).", 400);
@@ -202,11 +210,11 @@ export async function POST(req: Request) {
     });
   }
 
-  const allowedStudentIds = Array.from(
-    new Set(
+  const allowedStudentIds: string[] = Array.from(
+    new Set<string>(
       (activeStudents || [])
         .map((student: any) => String(student?.student_id ?? student?.id ?? "").trim())
-        .filter(Boolean)
+        .filter((studentId: string) => Boolean(studentId))
     )
   );
 
@@ -214,10 +222,7 @@ export async function POST(req: Request) {
     return jsonError("Nenhum aluno ativo encontrado para esta turma/data.", 400);
   }
 
-  const incomingMap = new Map<
-    string,
-    { student_id: string; status: AttendanceStatus; note: string | null }
-  >();
+  const incomingMap = new Map<string, NormalizedIncomingItem>();
 
   for (const item of incomingItems) {
     const studentId = String(item?.studentId || item?.student_id || "").trim();
@@ -230,9 +235,9 @@ export async function POST(req: Request) {
     });
   }
 
-  const receivedStudentIds = Array.from(incomingMap.keys());
+  const receivedStudentIds: string[] = Array.from(incomingMap.keys());
   const invalidStudentIds = receivedStudentIds.filter(
-    (studentId) => !allowedStudentIds.includes(studentId)
+    (studentId: string) => !allowedStudentIds.includes(studentId)
   );
 
   if (invalidStudentIds.length > 0) {
@@ -243,17 +248,19 @@ export async function POST(req: Request) {
     });
   }
 
-  const completedItems = allowedStudentIds.map((studentId) => {
-    const existing = incomingMap.get(studentId);
+  const completedItems: NormalizedIncomingItem[] = allowedStudentIds.map(
+    (studentId: string): NormalizedIncomingItem => {
+      const existing = incomingMap.get(studentId);
 
-    if (existing) return existing;
+      if (existing) return existing;
 
-    return {
-      student_id: studentId,
-      status: "present" as AttendanceStatus,
-      note: null,
-    };
-  });
+      return {
+        student_id: studentId,
+        status: "present",
+        note: null,
+      };
+    }
+  );
 
   const sessionResult = await getOrCreateSession({
     schoolId,
@@ -271,7 +278,7 @@ export async function POST(req: Request) {
 
   const sessionId = sessionResult.sessionId;
 
-  const rows = completedItems.map((item) => ({
+  const rows = completedItems.map((item: NormalizedIncomingItem) => ({
     school_id: schoolId,
     session_id: sessionId,
     student_id: item.student_id,
@@ -295,7 +302,7 @@ export async function POST(req: Request) {
     {
       ok: true,
       sessionId,
-      savedStudentIds: completedItems.map((item) => item.student_id),
+      savedStudentIds: completedItems.map((item: NormalizedIncomingItem) => item.student_id),
       totalSaved: completedItems.length,
     },
     { headers: corsHeaders() }
