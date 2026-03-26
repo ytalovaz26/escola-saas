@@ -553,7 +553,7 @@ export async function GET(req: Request) {
 
   const buffer = await pdfToBuffer(doc);
 
-  return new NextResponse(buffer, {
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="diario-escola-${classId}-${lessonDate}.pdf"`,
