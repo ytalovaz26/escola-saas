@@ -8,7 +8,7 @@ function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }
 
-function normRole(role: any) {
+function normRole(role: unknown) {
   return String(role || "").trim().toLowerCase();
 }
 
@@ -27,9 +27,9 @@ async function getBearerToken(req: Request) {
  * - garante que o professor está vinculado à turma (teacher_classes.is_active = true)
  * - retorna alunos da turma (class_students.is_active = true) com dados básicos do students
  */
-export async function GET(req: Request, ctx: { params: { classId: string } }) {
+export async function GET(req: Request, context: any) {
   try {
-    const classId = String(ctx?.params?.classId || "").trim();
+    const classId = String(context?.params?.classId || "").trim();
     if (!classId) return jsonError("classId é obrigatório.", 400);
 
     const token = await getBearerToken(req);
@@ -87,7 +87,6 @@ export async function GET(req: Request, ctx: { params: { classId: string } }) {
     if (!tc?.id) return jsonError("Você não tem acesso a esta turma.", 403);
 
     // 5) Lista alunos vinculados à turma (class_students)
-    // OBS: se sua tabela for "students" com colunas diferentes, ajuste o select abaixo.
     const { data: cs, error: csErr } = await supabaseAdmin
       .from("class_students")
       .select("id, student_id, created_at, is_active")
@@ -98,9 +97,11 @@ export async function GET(req: Request, ctx: { params: { classId: string } }) {
 
     if (csErr) return jsonError("class_students list failed: " + csErr.message, 500);
 
-    const studentIds = Array.from(new Set((cs ?? []).map((r: any) => r.student_id).filter(Boolean)));
+    const studentIds = Array.from(
+      new Set((cs ?? []).map((r: any) => r.student_id).filter(Boolean))
+    );
 
-    // 6) Carrega dados básicos dos students (ajuste colunas se necessário)
+    // 6) Carrega dados básicos dos students
     const studentsMap = new Map<string, any>();
     if (studentIds.length > 0) {
       const { data: students, error: sErr } = await supabaseAdmin
@@ -109,7 +110,9 @@ export async function GET(req: Request, ctx: { params: { classId: string } }) {
         .in("id", studentIds);
 
       if (!sErr && Array.isArray(students)) {
-        for (const s of students as any[]) studentsMap.set(s.id, s);
+        for (const s of students as any[]) {
+          studentsMap.set(s.id, s);
+        }
       }
     }
 
@@ -122,8 +125,6 @@ export async function GET(req: Request, ctx: { params: { classId: string } }) {
         classStudentId: row.id,
         studentId: sid,
         createdAt: row.created_at ?? null,
-
-        // dados do aluno (pode vir null se não existir/colunas divergirem)
         fullName: s?.full_name ?? null,
         ra: s?.ra ?? null,
         studentCreatedAt: s?.created_at ?? null,
@@ -142,6 +143,9 @@ export async function GET(req: Request, ctx: { params: { classId: string } }) {
       students,
     });
   } catch (e: any) {
-    return jsonError(e?.message || "Internal error in /api/teacher/classes/[classId]/students/list", 500);
+    return jsonError(
+      e?.message || "Internal error in /api/teacher/classes/[classId]/students/list",
+      500
+    );
   }
 }
