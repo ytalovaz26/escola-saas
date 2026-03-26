@@ -47,7 +47,9 @@ async function getTeacherContextOrFail(req: Request) {
   const role = String(link?.role || "").trim().toLowerCase();
   const schoolId = link?.school_id ? String(link.school_id) : "";
 
-  if (role !== "professor") return { ok: false as const, resp: jsonError("Acesso negado (somente professor).", 403) };
+  if (role !== "professor") {
+    return { ok: false as const, resp: jsonError("Acesso negado (somente professor).", 403) };
+  }
   if (!schoolId) return { ok: false as const, resp: jsonError("Vínculo sem school_id.", 403) };
 
   const supabase = supabaseRlsClient(token);
@@ -68,20 +70,31 @@ function normalizeSessionRow(row: any) {
 
 async function getSessionById(supabase: any, sessionId: string) {
   let { data, error } = await supabase.from("attendance_sessions").select("*").eq("id_uuid", sessionId).single();
+
   if (error && String(error.message || "").toLowerCase().includes("id_uuid")) {
     ({ data, error } = await supabase.from("attendance_sessions").select("*").eq("id", sessionId).single());
   }
+
   if (error) return { ok: false as const, error };
   return { ok: true as const, row: data };
 }
 
-async function ensureTeacherOwnsSession(supabase: any, teacherId: string, schoolId: string, sessionRow: any) {
+async function ensureTeacherOwnsSession(
+  supabase: any,
+  teacherId: string,
+  schoolId: string,
+  sessionRow: any
+) {
   const s = normalizeSessionRow(sessionRow);
 
-  if (String(s.teacher_id) !== String(teacherId)) return { ok: false as const, error: new Error("Sessão não pertence a este professor.") };
-  if (String(s.school_id) !== String(schoolId)) return { ok: false as const, error: new Error("Sessão não pertence a esta escola.") };
+  if (String(s.teacher_id) !== String(teacherId)) {
+    return { ok: false as const, error: new Error("Sessão não pertence a este professor.") };
+  }
 
-  // valida teacher_classes ativo
+  if (String(s.school_id) !== String(schoolId)) {
+    return { ok: false as const, error: new Error("Sessão não pertence a esta escola.") };
+  }
+
   const { data, error } = await supabase
     .from("teacher_classes")
     .select("id")
@@ -92,7 +105,9 @@ async function ensureTeacherOwnsSession(supabase: any, teacherId: string, school
     .maybeSingle();
 
   if (error) return { ok: false as const, error };
-  if (!data) return { ok: false as const, error: new Error("Professor não vinculado à turma desta sessão.") };
+  if (!data) {
+    return { ok: false as const, error: new Error("Professor não vinculado à turma desta sessão.") };
+  }
 
   return { ok: true as const, session: s };
 }
@@ -106,6 +121,7 @@ async function listActiveClassStudents(supabase: any, schoolId: string, classId:
     .eq("is_active", true);
 
   if (error) return { ok: false as const, error };
+
   const ids = (data || []).map((r: any) => r.student_id).filter(Boolean);
   return { ok: true as const, studentIds: ids };
 }
@@ -113,9 +129,10 @@ async function listActiveClassStudents(supabase: any, schoolId: string, classId:
 async function loadStudentProfiles(supabase: any, studentIds: string[]) {
   if (!studentIds.length) return { ok: true as const, students: [] as any[] };
 
-  // Se seus alunos são users do auth, eles estarão em profiles.user_id.
-  // Se não estiverem, isso voltará vazio e você me manda o print do schema do class_students.
-  const { data, error } = await supabase.from("profiles").select("user_id, full_name").in("user_id", studentIds);
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("user_id, full_name")
+    .in("user_id", studentIds);
 
   if (error) return { ok: false as const, error };
 
@@ -124,23 +141,36 @@ async function loadStudentProfiles(supabase: any, studentIds: string[]) {
     full_name: p.full_name ?? "",
   }));
 
-  students.sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
+  students.sort(
+    (
+      a: { student_id: string; full_name: string },
+      b: { student_id: string; full_name: string }
+    ) => String(a.full_name || "").localeCompare(String(b.full_name || ""), "pt-BR")
+  );
+
   return { ok: true as const, students };
 }
 
 async function listActiveMarks(supabase: any, schoolId: string, sessionId: string) {
-  let q = supabase.from("attendance_marks").select("*").eq("school_id", schoolId).eq("is_active", true);
+  let q = supabase
+    .from("attendance_marks")
+    .select("*")
+    .eq("school_id", schoolId)
+    .eq("is_active", true);
 
   let { data, error } = await q.eq("session_id", sessionId);
+
   if (error && String(error.message || "").toLowerCase().includes("session_id")) {
     ({ data, error } = await q.eq("attendance_session_id", sessionId));
   }
+
   if (error) return { ok: false as const, error };
 
   const byStudent: Record<string, any> = {};
   for (const r of data || []) {
     const sid = r.student_id ?? r.studentId;
     if (!sid) continue;
+
     const present = r.is_present ?? r.present ?? r.status ?? false;
     byStudent[String(sid)] = {
       present: Boolean(present),
@@ -165,7 +195,7 @@ export async function GET(req: Request) {
   const owns = await ensureTeacherOwnsSession(ctx.supabase, ctx.userId, ctx.schoolId, sess.row);
   if (!owns.ok) return jsonError(owns.error?.message || "Acesso negado.", 403);
 
-  const session = (owns as any).session;
+  const session = owns.session;
 
   const cs = await listActiveClassStudents(ctx.supabase, ctx.schoolId, session.class_id);
   if (!cs.ok) return jsonError("Erro ao listar alunos da turma.", 500, { details: cs.error?.message });
