@@ -667,7 +667,7 @@ export async function GET(req: Request) {
 
   const pdfBuffer = await pdfToBuffer(doc);
 
-  return new NextResponse(pdfBuffer, {
+  return new NextResponse(pdfBuffer as any, {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="chamada-${date}.pdf"`,
