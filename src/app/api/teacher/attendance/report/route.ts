@@ -506,15 +506,13 @@ export async function GET(req: Request) {
     );
 
   const pdfBuffer = await pdfToBuffer(doc);
-
-  const pdfBuffer = await pdfToBuffer(doc);
   const pdfBytes = new Uint8Array(pdfBuffer);
-  
+
   return new NextResponse(pdfBytes, {
-  headers: {
-    "Content-Type": "application/pdf",
-    "Content-Disposition": `inline; filename="chamada-${date}.pdf"`,
-    "Cache-Control": "no-store",
-  },
-});
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `inline; filename="chamada-${date}.pdf"`,
+      "Cache-Control": "no-store",
+    },
+  });
 }
