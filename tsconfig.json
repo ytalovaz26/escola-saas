@@ -30,6 +30,6 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-, "src/app/dev/enroll/page.tsx.BAK"  ],
+, "src/app/dev/enroll/page.tsx"  ],
   "exclude": ["node_modules"]
 }
