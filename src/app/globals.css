@@ -1,4 +1,3 @@
-/* src/app/globals.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -8,26 +7,35 @@ body {
   height: 100%;
 }
 
-/* Defaults do branding (caso ainda não tenha carregado o layout/branding) */
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* Defaults do branding */
 :root {
   --brand-rgb: 37 99 235; /* #2563eb */
   --brand: #2563eb;
 }
 
-/* Segurança: nenhuma imagem explode layout */
+/* Segurança */
+* {
+  box-sizing: border-box;
+}
+
 img {
   max-width: 100%;
   height: auto;
 }
 
 /* =========================
-   UI SaaS (CSS puro, sem @apply)
+   UI SaaS base
    ========================= */
 
 .card {
   background: #ffffff;
-  border: 1px solid rgb(226, 232, 240); /* slate-200 */
-  border-radius: 16px; /* ~rounded-2xl */
+  border: 1px solid rgb(226, 232, 240);
+  border-radius: 16px;
 }
 
 .btn {
@@ -35,23 +43,20 @@ img {
   align-items: center;
   justify-content: center;
   gap: 8px;
-
   padding: 8px 16px;
-  border-radius: 12px; /* ~rounded-xl */
+  border-radius: 12px;
   border: 1px solid rgb(226, 232, 240);
   background: #ffffff;
-
   font-size: 14px;
   font-weight: 600;
   line-height: 20px;
-
   user-select: none;
   cursor: pointer;
   transition: background-color 150ms ease, border-color 150ms ease, opacity 150ms ease, transform 150ms ease;
 }
 
 .btn:hover {
-  background: rgb(248, 250, 252); /* slate-50 */
+  background: rgb(248, 250, 252);
 }
 
 .btn:disabled {
@@ -60,7 +65,7 @@ img {
 }
 
 .btn-outline {
-  color: rgb(15, 23, 42); /* slate-900 */
+  color: rgb(15, 23, 42);
   background: #ffffff;
   border-color: rgb(226, 232, 240);
 }
@@ -76,7 +81,6 @@ img {
   border-color: rgba(var(--brand-rgb), 0.9);
 }
 
-/* Input padrão */
 .input {
   border: 1px solid rgb(226, 232, 240);
   border-radius: 12px;
@@ -92,14 +96,12 @@ img {
   box-shadow: 0 0 0 4px rgba(var(--brand-rgb), 0.18);
 }
 
-/* ✅ Logo sempre “média” e nunca estoura */
 .brand-logo-wrap {
   width: 44px;
   height: 44px;
   border-radius: 14px;
   border: 1px solid rgb(226, 232, 240);
   background: #ffffff;
-
   display: flex;
   align-items: center;
   justify-content: center;
