@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -15,8 +17,8 @@ type CalendarEventRow = {
   school_id: string;
   title: string;
   description: string | null;
-  starts_at: string; // timestamptz
-  ends_at: string | null; // timestamptz
+  starts_at: string;
+  ends_at: string | null;
   created_at: string;
 };
 
@@ -34,20 +36,21 @@ export default function ParentCalendarPage() {
 
   const [selectedStudentId, setSelectedStudentId] = useState<string>(initialStudentId);
 
-  // agrupa por dia (YYYY-MM-DD) — útil no mobile
   const eventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEventRow[]>();
+
     for (const ev of events) {
       const day = new Date(ev.starts_at).toISOString().slice(0, 10);
       const arr = map.get(day) ?? [];
       arr.push(ev);
       map.set(day, arr);
     }
-    // ordenar os eventos dentro do dia
+
     for (const [k, arr] of map.entries()) {
       arr.sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
       map.set(k, arr);
     }
+
     return map;
   }, [events]);
 
@@ -70,7 +73,6 @@ export default function ParentCalendarPage() {
           return;
         }
 
-        // valida parent
         const meRes = await fetch("/api/me", {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
@@ -78,6 +80,7 @@ export default function ParentCalendarPage() {
 
         const text = await meRes.text();
         let me: any = null;
+
         try {
           me = text ? JSON.parse(text) : null;
         } catch {
@@ -89,7 +92,6 @@ export default function ParentCalendarPage() {
           return;
         }
 
-        // carrega filhos (RLS)
         const { data: stData, error: stErr } = await supabase
           .from("students")
           .select("id, full_name, registration_number")
@@ -99,10 +101,9 @@ export default function ParentCalendarPage() {
           setError("Erro ao carregar filhos: " + stErr.message);
           return;
         }
+
         setStudents((stData ?? []) as StudentRow[]);
 
-        // carrega eventos (RLS deve filtrar por school_id do parent)
-        // Se sua tabela usar outros nomes de colunas, me diga que eu ajusto.
         const { data: evData, error: evErr } = await supabase
           .from("calendar_events")
           .select("id, school_id, title, description, starts_at, ends_at, created_at")
@@ -112,6 +113,7 @@ export default function ParentCalendarPage() {
           setError("Erro ao carregar agenda: " + evErr.message);
           return;
         }
+
         setEvents((evData ?? []) as CalendarEventRow[]);
       } catch (e: any) {
         setError(e?.message || "Erro inesperado");
@@ -124,15 +126,21 @@ export default function ParentCalendarPage() {
   function formatDayBR(yyyyMmDd: string) {
     const [y, m, d] = yyyyMmDd.split("-").map((x) => Number(x));
     const date = new Date(Date.UTC(y, m - 1, d));
-    return date.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+    return date.toLocaleDateString("pt-BR", {
+      weekday: "long",
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+    });
   }
 
   function formatTimeBR(iso: string) {
-    return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    return new Date(iso).toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   }
 
-  // OBS: hoje não filtramos eventos por filho porque seu modelo é "eventos da escola".
-  // Mas mantemos o seletor pois já prepara o sistema para eventos direcionados no futuro.
   const studentLabel = useMemo(() => {
     if (selectedStudentId === "all") return "Todos os filhos";
     const s = students.find((x) => x.id === selectedStudentId);
@@ -147,9 +155,7 @@ export default function ParentCalendarPage() {
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Agenda</h1>
-          <p className="text-sm text-gray-600 mt-1">
-            {studentLabel} • eventos da escola
-          </p>
+          <p className="text-sm text-gray-600 mt-1">{studentLabel} • eventos da escola</p>
         </div>
 
         <div className="w-full sm:w-80">
@@ -160,7 +166,6 @@ export default function ParentCalendarPage() {
             onChange={(e) => {
               const v = e.target.value;
               setSelectedStudentId(v);
-              // mantém URL coerente
               const qs = v === "all" ? "" : `?studentId=${encodeURIComponent(v)}`;
               router.replace(`/parent/calendar${qs}`);
             }}
@@ -195,9 +200,7 @@ export default function ParentCalendarPage() {
                         </div>
                       </div>
 
-                      <div className="text-[11px] text-gray-500 font-mono">
-                        {ev.id.slice(0, 8)}…
-                      </div>
+                      <div className="text-[11px] text-gray-500 font-mono">{ev.id.slice(0, 8)}…</div>
                     </div>
 
                     {ev.description ? (
