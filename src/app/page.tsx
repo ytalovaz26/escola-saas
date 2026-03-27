@@ -16,7 +16,10 @@ export default function Home() {
         return;
       }
 
-      const role = await getMyRole();
+      const roleRaw = await getMyRole();
+
+      // 🔥 normaliza e resolve o erro de TypeScript
+      const role = String(roleRaw || "").trim().toLowerCase();
 
       if (role === "admin_master") router.replace("/admin-master");
       else if (role === "diretor") router.replace("/director");
