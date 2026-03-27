@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import PageContent from "./PageContent";
+import PageContent from "./content";
 
 export const dynamic = "force-dynamic";
 
