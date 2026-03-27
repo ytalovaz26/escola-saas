@@ -1,9 +1,7 @@
-export const dynamic = "force-dynamic";
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type StudentRow = {
@@ -24,9 +22,6 @@ type CalendarEventRow = {
 
 export default function ParentCalendarPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const initialStudentId = searchParams.get("studentId") || "all";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +29,7 @@ export default function ParentCalendarPage() {
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [events, setEvents] = useState<CalendarEventRow[]>([]);
 
-  const [selectedStudentId, setSelectedStudentId] = useState<string>(initialStudentId);
+  const [selectedStudentId, setSelectedStudentId] = useState<string>("all");
 
   const eventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEventRow[]>();
@@ -64,6 +59,10 @@ export default function ParentCalendarPage() {
     (async () => {
       try {
         setError(null);
+
+        const params = new URLSearchParams(window.location.search);
+        const urlStudentId = params.get("studentId") || "all";
+        setSelectedStudentId(urlStudentId);
 
         const { data: sessionData } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
@@ -155,7 +154,9 @@ export default function ParentCalendarPage() {
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Agenda</h1>
-          <p className="text-sm text-gray-600 mt-1">{studentLabel} • eventos da escola</p>
+          <p className="text-sm text-gray-600 mt-1">
+            {studentLabel} • eventos da escola
+          </p>
         </div>
 
         <div className="w-full sm:w-80">
@@ -166,6 +167,7 @@ export default function ParentCalendarPage() {
             onChange={(e) => {
               const v = e.target.value;
               setSelectedStudentId(v);
+
               const qs = v === "all" ? "" : `?studentId=${encodeURIComponent(v)}`;
               router.replace(`/parent/calendar${qs}`);
             }}
@@ -200,7 +202,9 @@ export default function ParentCalendarPage() {
                         </div>
                       </div>
 
-                      <div className="text-[11px] text-gray-500 font-mono">{ev.id.slice(0, 8)}…</div>
+                      <div className="text-[11px] text-gray-500 font-mono">
+                        {ev.id.slice(0, 8)}…
+                      </div>
                     </div>
 
                     {ev.description ? (
