@@ -52,8 +52,9 @@ export async function GET(req: Request) {
       .maybeSingle();
 
     if (staffErr) return jsonError(staffErr.message, 500);
+    if (!staff) return jsonError("Professor sem escola vinculada.", 403);
 
-    const role = normRole(staff?.role);
+    const role = normRole(staff.role);
     if (!(role === "professor" || role === "teacher")) {
       return jsonError("Acesso permitido apenas para professores.", 403);
     }
@@ -63,11 +64,12 @@ export async function GET(req: Request) {
 
     // 3) params
     const { searchParams } = new URL(req.url);
-    const classId = searchParams.get("classId");
-    const lessonDate = searchParams.get("date");
-    const lessonNumber = Number(searchParams.get("lesson"));
+    const classId = String(searchParams.get("classId") || "").trim();
+    const lessonDate = String(searchParams.get("date") || "").trim();
+    const lessonRaw = String(searchParams.get("lesson") || "").trim();
+    const lessonNumber = Number(lessonRaw);
 
-    if (!classId || !lessonDate || !lessonNumber) {
+    if (!classId || !lessonDate || !lessonRaw || !Number.isFinite(lessonNumber) || lessonNumber <= 0) {
       return jsonError("Parâmetros obrigatórios: classId, date, lesson.", 400);
     }
 
@@ -133,10 +135,10 @@ export async function GET(req: Request) {
     if (stErr) return jsonError(stErr.message, 500);
 
     const normalizedStudents =
-      students?.map((r: any) => ({
-        studentId: r.students.id,
-        fullName: r.students.full_name,
-        enrollmentNumber: r.students.enrollment_number,
+      (students ?? []).map((r: any) => ({
+        studentId: r?.students?.id ?? r?.student_id ?? null,
+        fullName: r?.students?.full_name ?? "",
+        enrollmentNumber: r?.students?.enrollment_number ?? "",
       })) ?? [];
 
     return NextResponse.json({
