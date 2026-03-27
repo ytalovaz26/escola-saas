@@ -40,6 +40,40 @@ function currentMonthISO() {
   return `${yyyy}-${mm}`;
 }
 
+function openLoadingTab() {
+  const newTab = window.open("", "_blank");
+
+  if (newTab) {
+    newTab.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>Gerando PDF...</title>
+          <meta charset="utf-8" />
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+              background: #f8fafc;
+              color: #334155;
+            }
+          </style>
+        </head>
+        <body>
+          Gerando PDF...
+        </body>
+      </html>
+    `);
+    newTab.document.close();
+  }
+
+  return newTab;
+}
+
 export default function SchoolAttendancePage() {
   const router = useRouter();
 
@@ -151,6 +185,7 @@ export default function SchoolAttendancePage() {
       return;
     }
 
+    const previewTab = openLoadingTab();
     setDailyGenerating(true);
 
     try {
@@ -164,6 +199,8 @@ export default function SchoolAttendancePage() {
       });
 
       if (!res.ok) {
+        if (previewTab && !previewTab.closed) previewTab.close();
+
         const json = await safeJson(res);
         setError(
           (json?.error || "Falha ao gerar PDF diário.") +
@@ -174,9 +211,16 @@ export default function SchoolAttendancePage() {
 
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
-      window.open(objectUrl, "_blank", "noopener,noreferrer");
+
+      if (previewTab && !previewTab.closed) {
+        previewTab.location.href = objectUrl;
+      } else {
+        window.open(objectUrl, "_blank");
+      }
+
       setMessage("PDF diário gerado com sucesso.");
     } catch (e: any) {
+      if (previewTab && !previewTab.closed) previewTab.close();
       setError(e?.message || "Erro inesperado ao gerar PDF diário.");
     } finally {
       setDailyGenerating(false);
@@ -205,6 +249,7 @@ export default function SchoolAttendancePage() {
       return;
     }
 
+    const previewTab = openLoadingTab();
     setMonthlyGenerating(true);
 
     try {
@@ -223,6 +268,8 @@ export default function SchoolAttendancePage() {
       });
 
       if (!res.ok) {
+        if (previewTab && !previewTab.closed) previewTab.close();
+
         const json = await safeJson(res);
         setError(
           (json?.error ||
@@ -236,7 +283,12 @@ export default function SchoolAttendancePage() {
 
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
-      window.open(objectUrl, "_blank", "noopener,noreferrer");
+
+      if (previewTab && !previewTab.closed) {
+        previewTab.location.href = objectUrl;
+      } else {
+        window.open(objectUrl, "_blank");
+      }
 
       setMessage(
         reportMode === "period"
@@ -244,6 +296,8 @@ export default function SchoolAttendancePage() {
           : "PDF mensal gerado com sucesso."
       );
     } catch (e: any) {
+      if (previewTab && !previewTab.closed) previewTab.close();
+
       setError(
         e?.message ||
           (reportMode === "period"
@@ -409,8 +463,8 @@ export default function SchoolAttendancePage() {
                   ? "Gerando PDF por período..."
                   : "Gerando PDF mensal..."
                 : reportMode === "period"
-                ? "Gerar PDF por período"
-                : "Gerar PDF mensal"}
+                  ? "Gerar PDF por período"
+                  : "Gerar PDF mensal"}
             </button>
           </div>
 
