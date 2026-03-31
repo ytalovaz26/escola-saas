@@ -24,8 +24,22 @@ type StudentActiveClassRow = {
 };
 
 function initials(name: string) {
-  const parts = name.split(" ");
-  return (parts[0][0] + (parts[1]?.[0] || "")).toUpperCase();
+  const safe = String(name || "").trim();
+  if (!safe) return "AL";
+
+  const parts = safe.split(/\s+/).filter(Boolean);
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "AL";
+}
+
+async function safeJson(res: Response) {
+  const text = await res.text();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: false, error: text || "Resposta inválida do servidor" };
+  }
 }
 
 export default function StudentsPage() {
@@ -45,6 +59,7 @@ export default function StudentsPage() {
   const [selectedClassId, setSelectedClassId] = useState("");
 
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const activeMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -63,68 +78,170 @@ export default function StudentsPage() {
     return students.filter((s) => activeMap.get(s.id) === filterClassId);
   }, [students, filterClassId, activeMap]);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) return router.replace("/login");
+  async function loadAll() {
+    setError(null);
 
-      const token = data.session.access_token;
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
+    if (sessionError) {
+      setError(sessionError.message);
+      router.replace("/login");
+      return;
+    }
+
+    if (!sessionData.session) {
+      router.replace("/login");
+      return;
+    }
+
+    const token = sessionData.session.access_token;
+
+    try {
       const [cRes, sRes] = await Promise.all([
-        fetch("/api/school/classes", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/school/students", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/school/classes", {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        }),
+        fetch("/api/school/students", {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        }),
       ]);
 
-      const cJson = await cRes.json();
-      const sJson = await sRes.json();
+      const cJson = await safeJson(cRes);
+      const sJson = await safeJson(sRes);
 
-      setClasses(cJson.classes || []);
-      setStudents(sJson.students || []);
+      if (!cRes.ok || !cJson?.ok) {
+        setError(cJson?.error || "Erro ao carregar turmas.");
+        setClasses([]);
+      } else {
+        const loadedClasses = cJson.classes || [];
+        setClasses(loadedClasses);
 
-      const { data: linksData } = await supabase
+        if (!selectedClassId && loadedClasses[0]?.id) {
+          setSelectedClassId(loadedClasses[0].id);
+        }
+      }
+
+      if (!sRes.ok || !sJson?.ok) {
+        setError((prev) => prev || sJson?.error || "Erro ao carregar alunos.");
+        setStudents([]);
+      } else {
+        setStudents(sJson.students || []);
+      }
+
+      const { data: linksData, error: linksError } = await supabase
         .from("student_classes")
         .select("student_id,class_id")
         .eq("is_active", true);
 
-      setLinks(linksData || []);
+      if (linksError) {
+        setError((prev) => prev || `Erro ao carregar vínculos: ${linksError.message}`);
+        setLinks([]);
+      } else {
+        setLinks(linksData || []);
+      }
 
       const classFromUrl = searchParams.get("classId");
-      if (classFromUrl) setFilterClassId(classFromUrl);
+      if (classFromUrl) {
+        setFilterClassId(classFromUrl);
+      }
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao carregar dados.");
+    }
+  }
 
-      setLoading(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        await loadAll();
+      } finally {
+        setLoading(false);
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function createStudent() {
-    if (!fullName || !selectedClassId) return;
+    if (!fullName.trim()) {
+      setError("Informe o nome completo do aluno.");
+      return;
+    }
 
-    setSaving(true);
+    if (!selectedClassId) {
+      setError("Selecione a turma do aluno.");
+      return;
+    }
 
-    const { data } = await supabase
-      .from("students")
-      .insert({
-        full_name: fullName,
-        birth_date: birthDate || null,
-        registration_number: registrationNumber || null,
-      })
-      .select("id")
-      .single();
+    try {
+      setSaving(true);
+      setError(null);
 
-    await supabase.rpc("set_active_class", {
-      p_student_id: data.id,
-      p_class_id: selectedClassId,
-    });
+      const { data: insertedStudent, error: insertError } = await supabase
+        .from("students")
+        .insert({
+          full_name: fullName.trim(),
+          birth_date: birthDate || null,
+          registration_number: registrationNumber.trim() || null,
+        })
+        .select("id")
+        .single();
 
-    window.location.reload();
+      if (insertError) {
+        setError(`Erro ao criar aluno: ${insertError.message}`);
+        return;
+      }
+
+      if (!insertedStudent?.id) {
+        setError("Aluno criado sem retorno de ID. Tente novamente.");
+        return;
+      }
+
+      const { error: rpcError } = await supabase.rpc("set_active_class", {
+        p_student_id: insertedStudent.id,
+        p_class_id: selectedClassId,
+      });
+
+      if (rpcError) {
+        setError(`Aluno criado, mas houve erro ao vincular turma: ${rpcError.message}`);
+        return;
+      }
+
+      setFullName("");
+      setBirthDate("");
+      setRegistrationNumber("");
+
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao cadastrar aluno.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function changeClass(studentId: string, classId: string) {
-    await supabase.rpc("set_active_class", {
-      p_student_id: studentId,
-      p_class_id: classId,
-    });
+    if (!classId) return;
 
-    window.location.reload();
+    try {
+      setSaving(true);
+      setError(null);
+
+      const { error: rpcError } = await supabase.rpc("set_active_class", {
+        p_student_id: studentId,
+        p_class_id: classId,
+      });
+
+      if (rpcError) {
+        setError(`Erro ao trocar turma: ${rpcError.message}`);
+        return;
+      }
+
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao trocar turma.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (loading) {
@@ -137,7 +254,6 @@ export default function StudentsPage() {
 
   return (
     <main className="space-y-6">
-      {/* HERO */}
       <section className="rounded-[28px] bg-gradient-to-r from-slate-900 to-slate-700 text-white p-6">
         <h1 className="text-3xl font-semibold">Gestão de Alunos</h1>
         <p className="text-sm mt-2 text-slate-200">
@@ -145,7 +261,12 @@ export default function StudentsPage() {
         </p>
       </section>
 
-      {/* CADASTRO */}
+      {error ? (
+        <section className="bg-red-50 border border-red-200 text-red-700 rounded-3xl p-4">
+          {error}
+        </section>
+      ) : null}
+
       <section className="bg-white rounded-3xl p-6 border">
         <h2 className="font-semibold mb-4">Cadastrar aluno</h2>
 
@@ -166,6 +287,8 @@ export default function StudentsPage() {
             {classes.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
+                {c.grade ? ` • ${c.grade}` : ""}
+                {c.shift ? ` • ${c.shift}` : ""}
               </option>
             ))}
           </select>
@@ -185,12 +308,15 @@ export default function StudentsPage() {
           />
         </div>
 
-        <button onClick={createStudent} className="btn btn-primary mt-4">
+        <button
+          onClick={createStudent}
+          disabled={saving}
+          className="btn btn-primary mt-4 disabled:opacity-60"
+        >
           {saving ? "Salvando..." : "Cadastrar aluno"}
         </button>
       </section>
 
-      {/* FILTRO */}
       <section className="bg-white rounded-3xl p-6 border">
         <select
           className="input max-w-sm"
@@ -201,12 +327,13 @@ export default function StudentsPage() {
           {classes.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
+              {c.grade ? ` • ${c.grade}` : ""}
+              {c.shift ? ` • ${c.shift}` : ""}
             </option>
           ))}
         </select>
       </section>
 
-      {/* LISTA */}
       <section className="bg-white rounded-3xl border overflow-hidden">
         {filtered.length === 0 ? (
           <div className="p-10 text-center text-slate-500">
@@ -219,7 +346,10 @@ export default function StudentsPage() {
               const cls = classMap.get(classId || "");
 
               return (
-                <div key={s.id} className="p-5 flex justify-between items-center">
+                <div
+                  key={s.id}
+                  className="p-5 flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-center"
+                >
                   <div className="flex items-center gap-4">
                     <div className="bg-slate-900 text-white rounded-xl w-12 h-12 flex items-center justify-center">
                       {initials(s.full_name)}
@@ -233,8 +363,8 @@ export default function StudentsPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="text-sm text-slate-600">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <div className="text-sm text-slate-600 min-w-[140px]">
                       {cls?.name || "Sem turma"}
                     </div>
 
@@ -242,6 +372,7 @@ export default function StudentsPage() {
                       className="input"
                       value={classId || ""}
                       onChange={(e) => changeClass(s.id, e.target.value)}
+                      disabled={saving}
                     >
                       <option value="">Trocar</option>
                       {classes.map((c) => (
