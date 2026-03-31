@@ -52,6 +52,27 @@ function currentMonthISO() {
   return `${yyyy}-${mm}`;
 }
 
+function TextBox({
+  label,
+  value,
+  className = "",
+}: {
+  label: string;
+  value?: string | null;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 ${className}`}
+    >
+      <div className="font-semibold text-slate-900">{label}</div>
+      <div className="mt-2 whitespace-pre-wrap break-words overflow-hidden leading-6 text-slate-700">
+        {value && value.trim() ? value : "—"}
+      </div>
+    </div>
+  );
+}
+
 export default function SchoolClassDiaryPage() {
   const router = useRouter();
 
@@ -326,21 +347,21 @@ export default function SchoolClassDiaryPage() {
             <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-medium text-slate-500">Turma</div>
-                <div className="mt-1 text-sm font-semibold text-slate-900">
+                <div className="mt-1 break-words text-sm font-semibold text-slate-900">
                   {selectedGroup.diary.class_name || selectedGroup.diary.class_id}
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-medium text-slate-500">Disciplina</div>
-                <div className="mt-1 text-sm font-semibold text-slate-900">
+                <div className="mt-1 break-words text-sm font-semibold text-slate-900">
                   {selectedGroup.diary.subject_name}
                 </div>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-medium text-slate-500">Professor(a)</div>
-                <div className="mt-1 text-sm font-semibold text-slate-900">
+                <div className="mt-1 break-words text-sm font-semibold text-slate-900">
                   {selectedGroup.diary.teacher_name || selectedGroup.diary.teacher_user_id || "—"}
                 </div>
               </div>
@@ -385,30 +406,15 @@ export default function SchoolClassDiaryPage() {
                   </div>
 
                   <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                      <span className="font-semibold text-slate-900">Conteúdo:</span>{" "}
-                      {entry.content_taught || "—"}
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                      <span className="font-semibold text-slate-900">Metodologia:</span>{" "}
-                      {entry.methodology || "—"}
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                      <span className="font-semibold text-slate-900">Atividades:</span>{" "}
-                      {entry.activities || "—"}
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                      <span className="font-semibold text-slate-900">Observações:</span>{" "}
-                      {entry.notes || "—"}
-                    </div>
-
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 md:col-span-2">
-                      <span className="font-semibold text-slate-900">Tarefa de casa:</span>{" "}
-                      {entry.homework || "—"}
-                    </div>
+                    <TextBox label="Conteúdo" value={entry.content_taught} />
+                    <TextBox label="Metodologia" value={entry.methodology} />
+                    <TextBox label="Atividades" value={entry.activities} />
+                    <TextBox label="Observações" value={entry.notes} />
+                    <TextBox
+                      label="Tarefa de casa"
+                      value={entry.homework}
+                      className="md:col-span-2"
+                    />
                   </div>
                 </div>
               ))}

@@ -147,14 +147,20 @@ function drawFooter(params: {
   doc: PDFKit.PDFDocument;
   className: string;
   referenceMonthLabel: string;
+  lessonDate: string;
+  pageNumber: number;
+  totalPages: number;
 }) {
-  const { doc, className, referenceMonthLabel } = params;
+  const { doc, className, referenceMonthLabel, lessonDate, pageNumber, totalPages } = params;
 
   const margin = 40;
   const safeBottom = doc.page.height - margin;
-  const lineY = safeBottom - 18;
-  const textY = safeBottom - 12;
+  const lineY = safeBottom - 24;
+  const leftTextY = safeBottom - 16;
+  const rightTextY = safeBottom - 16;
+
   const emitDate = new Date().toLocaleDateString("pt-BR");
+  const schoolDay = brDateFromISO(lessonDate);
 
   doc
     .moveTo(margin, lineY)
@@ -168,22 +174,28 @@ function drawFooter(params: {
     .fontSize(8)
     .fillColor("#6b7280")
     .text(
-      `Turma: ${className}  •  Mês: ${referenceMonthLabel}  •  Emitido em: ${emitDate}`,
+      `Turma: ${className}  •  Aula do dia: ${schoolDay}  •  Mês: ${referenceMonthLabel}  •  Emitido em: ${emitDate}`,
       margin,
-      textY,
+      leftTextY,
       {
-        width: doc.page.width - margin * 2,
-        align: "center",
+        width: doc.page.width - margin * 2 - 90,
+        align: "left",
         lineBreak: false,
       }
     );
+
+  doc
+    .font("Helvetica")
+    .fontSize(8)
+    .fillColor("#6b7280")
+    .text(`Página ${pageNumber} de ${totalPages}`, doc.page.width - margin - 90, rightTextY, {
+      width: 90,
+      align: "right",
+      lineBreak: false,
+    });
 }
 
-function estimateSectionHeight(
-  doc: PDFKit.PDFDocument,
-  value: string,
-  width: number
-) {
+function estimateSectionHeight(doc: PDFKit.PDFDocument, value: string, width: number) {
   const titleGap = 16;
   const text = value?.trim() ? value.trim() : "—";
   const textHeight = getTextHeight(doc, text, width - 24, 10);
@@ -403,7 +415,7 @@ export async function GET(req: Request) {
     .font("Helvetica-Bold")
     .fontSize(11)
     .fillColor("#111827")
-    .text(`Data: ${brDateFromISO(entry.lesson_date)}`, margin, y);
+    .text(`Data da aula: ${brDateFromISO(entry.lesson_date)}`, margin, y);
 
   y += 24;
 
@@ -452,6 +464,9 @@ export async function GET(req: Request) {
       doc,
       className,
       referenceMonthLabel,
+      lessonDate: entry.lesson_date,
+      pageNumber: i + 1,
+      totalPages,
     });
   }
 

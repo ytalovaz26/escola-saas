@@ -32,7 +32,6 @@ type AssignmentApi = {
   teacherUserId: string;
   classId: string;
   createdAt: string | null;
-
   teacherName?: string | null;
   teacherEmail?: string | null;
   className?: string | null;
@@ -58,6 +57,21 @@ function teacherLabel(t: TeacherApi) {
   if (name) return name;
   if (email) return email;
   return t.userId;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString("pt-BR");
+}
+
+function getInitials(name?: string | null) {
+  const safe = String(name || "").trim();
+  if (!safe) return "PR";
+  const parts = safe.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
 }
 
 export default function SchoolTeacherClassesPage() {
@@ -101,7 +115,7 @@ export default function SchoolTeacherClassesPage() {
     const aJson = await aRes.json().catch(() => null);
 
     if (!aRes.ok || !aJson?.ok) {
-      throw new Error(aJson?.error || "Falha ao carregar vínculos professor↔turma.");
+      throw new Error(aJson?.error || "Falha ao carregar vínculos professor↔️turma.");
     }
 
     setAssignments((aJson.assignments ?? []) as AssignmentApi[]);
@@ -115,7 +129,6 @@ export default function SchoolTeacherClassesPage() {
       const token = await getTokenOrRedirect();
       if (!token) return;
 
-      // 1) /api/me
       const meRes = await fetch("/api/me", {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
@@ -140,7 +153,12 @@ export default function SchoolTeacherClassesPage() {
         return;
       }
 
-      const allowed = role === "diretor" || role === "director" || role === "coordenador" || role === "coordinator";
+      const allowed =
+        role === "diretor" ||
+        role === "director" ||
+        role === "coordenador" ||
+        role === "coordinator";
+
       if (!allowed) {
         router.replace(meJson?.redirectTo || "/login");
         return;
@@ -148,7 +166,6 @@ export default function SchoolTeacherClassesPage() {
 
       setMe(meJson);
 
-      // 2) professores
       const tRes = await fetch("/api/school/teachers/list", {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
@@ -160,7 +177,6 @@ export default function SchoolTeacherClassesPage() {
       const tList = (tJson.teachers ?? []) as TeacherApi[];
       setTeachers(tList);
 
-      // 3) turmas
       const cRes = await fetch("/api/school/classes/list", {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
@@ -172,10 +188,8 @@ export default function SchoolTeacherClassesPage() {
       const cList = (cJson.classes ?? []) as ClassApi[];
       setClasses(cList);
 
-      // 4) vínculos
       await reloadAssignments(token);
 
-      // defaults
       if (!selectedTeacherId && tList[0]?.userId) setSelectedTeacherId(tList[0].userId);
       if (!selectedClassId && cList[0]?.id) setSelectedClassId(cList[0].id);
     } catch (e: any) {
@@ -221,7 +235,6 @@ export default function SchoolTeacherClassesPage() {
       const token = await getTokenOrRedirect();
       if (!token) return;
 
-      // ✅ envia snake_case (compatível com API e com banco)
       const res = await fetch("/api/school/teacher-classes/assign", {
         method: "POST",
         headers: {
@@ -262,7 +275,6 @@ export default function SchoolTeacherClassesPage() {
       const token = await getTokenOrRedirect();
       if (!token) return;
 
-      // ✅ seu unassign atual exige { id }
       const res = await fetch("/api/school/teacher-classes/unassign", {
         method: "POST",
         headers: {
@@ -288,152 +300,304 @@ export default function SchoolTeacherClassesPage() {
     }
   }
 
-  if (loading) return <div className="p-4">Carregando...</div>;
+  if (loading) {
+    return (
+      <main className="min-h-[60vh]">
+        <div className="mx-auto max-w-7xl space-y-6">
+          <div className="animate-pulse rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="h-8 w-64 rounded bg-slate-200" />
+            <div className="mt-3 h-4 w-96 rounded bg-slate-100" />
+          </div>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <div className="h-36 rounded-[28px] bg-slate-100" />
+            <div className="h-36 rounded-[28px] bg-slate-100" />
+            <div className="h-36 rounded-[28px] bg-slate-100" />
+          </div>
+          <div className="h-96 rounded-[28px] bg-slate-100" />
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <main className="max-w-5xl mx-auto p-4">
-      <div className="flex items-start justify-between gap-4 flex-col sm:flex-row">
-        <div>
-          <h1 className="text-2xl font-semibold">Vincular Professor ↔ Turmas</h1>
-          <p className="text-xs text-gray-500 mt-1">
-            Role: <span className="font-mono">{me?.school?.role ?? "—"}</span> • Escola:{" "}
-            <span className="font-mono">{me?.school?.schoolId ?? "—"}</span>
-          </p>
-        </div>
-
-        <div className="flex gap-2">
-          <button className="px-3 py-2 rounded-xl border hover:bg-gray-50 text-sm" onClick={() => router.push("/school")}>
-            Voltar ao painel
-          </button>
-
-          <button className="px-3 py-2 rounded-xl border hover:bg-gray-50 text-sm" onClick={loadAll}>
-            Atualizar
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="mt-6 bg-red-50 border border-red-200 text-red-700 rounded-2xl p-4 text-sm">{error}</div>
-      )}
-
-      {!canManage ? (
-        <div className="mt-6 bg-white rounded-2xl shadow p-5">
-          <p className="text-sm text-gray-700">Você não tem permissão para vincular professores.</p>
-        </div>
-      ) : (
-        <>
-          <section className="mt-6 bg-white rounded-2xl shadow p-5">
-            <h2 className="text-lg font-semibold">Criar vínculo</h2>
-
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+    <main className="min-h-[60vh]">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 px-6 py-8 text-white md:px-8">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <label className="text-xs text-gray-600">Professor</label>
-                <select
-                  className="mt-1 w-full border rounded-xl px-3 py-2"
-                  value={selectedTeacherId}
-                  onChange={(e) => setSelectedTeacherId(e.target.value)}
-                >
-                  {teachers.length === 0 ? (
-                    <option value="">Cadastre professores primeiro</option>
-                  ) : (
-                    teachers.map((t) => (
-                      <option key={t.userId} value={t.userId}>
-                        {teacherLabel(t)}
-                      </option>
-                    ))
-                  )}
-                </select>
+                <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
+                  Gestão Acadêmica
+                </div>
+
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
+                  Vínculo Professor ↔️ Turmas
+                </h1>
+
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
+                  Defina com clareza quais turmas cada professor atende e mantenha o painel docente correto.
+                </p>
               </div>
 
-              <div>
-                <label className="text-xs text-gray-600">Turma</label>
-                <select
-                  className="mt-1 w-full border rounded-xl px-3 py-2"
-                  value={selectedClassId}
-                  onChange={(e) => setSelectedClassId(e.target.value)}
-                >
-                  {classes.length === 0 ? (
-                    <option value="">Cadastre turmas primeiro</option>
-                  ) : (
-                    classes.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {classLabel(c)}
-                      </option>
-                    ))
-                  )}
-                </select>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 backdrop-blur">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-300">
+                    Role
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-white">
+                    {me?.school?.role ?? "—"}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 backdrop-blur">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-300">
+                    Escola
+                  </div>
+                  <div className="mt-1 break-all text-sm font-medium text-white">
+                    {me?.school?.schoolId ?? "—"}
+                  </div>
+                </div>
               </div>
             </div>
+          </div>
+        </section>
 
-            <div className="mt-4 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-              <p className="text-xs text-gray-500">O professor só verá as próprias turmas no painel dele (via teacher_classes).</p>
+        {error && (
+          <div className="rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700 shadow-sm">
+            {error}
+          </div>
+        )}
 
-              <button
-                className="px-4 py-2 rounded-xl bg-black text-white disabled:opacity-60"
-                onClick={handleAssign}
-                disabled={!selectedTeacherId || !selectedClassId || busyKey?.startsWith("assign:")}
-              >
-                {busyKey?.startsWith("assign:") ? "Vinculando..." : "Vincular"}
-              </button>
-            </div>
+        {!canManage ? (
+          <section className="rounded-[28px] border border-amber-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Acesso restrito</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              Você não tem permissão para vincular professores às turmas.
+            </p>
           </section>
+        ) : (
+          <>
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Professores
+                </div>
+                <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+                  {teachers.length}
+                </div>
+                <div className="mt-2 text-sm text-slate-500">
+                  Total de professores disponíveis para vínculo.
+                </div>
+              </div>
 
-          <section className="mt-6 bg-white rounded-2xl shadow p-5">
-            <h2 className="text-lg font-semibold">Vínculos atuais</h2>
-            <p className="text-xs text-gray-500 mt-1">Mostra o que cada professor está vinculado hoje.</p>
+              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Turmas
+                </div>
+                <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+                  {classes.length}
+                </div>
+                <div className="mt-2 text-sm text-slate-500">
+                  Total de turmas cadastradas para atribuição.
+                </div>
+              </div>
 
-            {teachers.length === 0 ? (
-              <p className="text-sm text-gray-600 mt-3">Nenhum professor cadastrado.</p>
-            ) : (
-              <div className="mt-4 space-y-4">
-                {teachers.map((t) => {
-                  const tAssign = assignmentsByTeacher.get(t.userId) ?? [];
+              <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Vínculos ativos
+                </div>
+                <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+                  {assignments.length}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                    onClick={() => router.push("/school")}
+                  >
+                    Painel
+                  </button>
 
-                  return (
-                    <div key={t.userId} className="border rounded-2xl p-4">
-                      <div className="font-medium">{teacherLabel(t)}</div>
-                      <div className="text-xs text-gray-500 mt-1 font-mono break-all">{t.userId}</div>
+                  <button
+                    className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+                    onClick={loadAll}
+                  >
+                    Atualizar
+                  </button>
+                </div>
+              </div>
+            </section>
 
-                      {tAssign.length === 0 ? (
-                        <p className="text-sm text-gray-600 mt-3">Sem turmas vinculadas.</p>
-                      ) : (
-                        <ul className="mt-3 space-y-2">
-                          {tAssign.map((a) => {
-                            const c = classById.get(a.classId);
-                            const key = `unassign:${a.id}`;
-                            const busy = busyKey === key;
+            <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Criar vínculo</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    O professor verá somente as turmas vinculadas no painel dele.
+                  </p>
+                </div>
 
-                            return (
-                              <li key={a.id} className="flex items-center justify-between gap-3 border rounded-xl p-3">
-                                <div>
-                                  <div className="text-sm font-medium">{c ? c.name : a.classId}</div>
-                                  <div className="text-xs text-gray-600 mt-1">{c ? classLabel(c) : "Turma não encontrada."}</div>
-                                  <div className="text-[11px] text-gray-500 mt-1">
-                                    Vinculado em: {a.createdAt ? new Date(a.createdAt).toLocaleString() : "—"}
-                                  </div>
-                                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  teacher_classes ativo
+                </div>
+              </div>
 
-                                <button
-                                  className="text-xs rounded-xl border px-3 py-2 disabled:opacity-60"
-                                  disabled={busy}
-                                  onClick={() => handleUnassign(a.id)}
-                                  title="Desvincular"
+              <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <div>
+                  <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Professor
+                  </label>
+                  <select
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
+                    value={selectedTeacherId}
+                    onChange={(e) => setSelectedTeacherId(e.target.value)}
+                  >
+                    {teachers.length === 0 ? (
+                      <option value="">Cadastre professores primeiro</option>
+                    ) : (
+                      teachers.map((t) => (
+                        <option key={t.userId} value={t.userId}>
+                          {teacherLabel(t)}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Turma
+                  </label>
+                  <select
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
+                    value={selectedClassId}
+                    onChange={(e) => setSelectedClassId(e.target.value)}
+                  >
+                    {classes.length === 0 ? (
+                      <option value="">Cadastre turmas primeiro</option>
+                    ) : (
+                      classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {classLabel(c)}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-slate-500">
+                  O vínculo afeta diretamente o acesso do professor às turmas e aos lançamentos.
+                </p>
+
+                <button
+                  className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-60"
+                  onClick={handleAssign}
+                  disabled={!selectedTeacherId || !selectedClassId || busyKey?.startsWith("assign:")}
+                >
+                  {busyKey?.startsWith("assign:") ? "Vinculando..." : "Vincular professor"}
+                </button>
+              </div>
+            </section>
+
+            <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900">Vínculos atuais</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Visualize por professor todas as turmas atribuídas atualmente.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  {assignments.length} vínculo(s)
+                </div>
+              </div>
+
+              {teachers.length === 0 ? (
+                <p className="mt-4 text-sm text-slate-500">Nenhum professor cadastrado.</p>
+              ) : (
+                <div className="mt-5 space-y-4">
+                  {teachers.map((t) => {
+                    const tAssign = assignmentsByTeacher.get(t.userId) ?? [];
+
+                    return (
+                      <div
+                        key={t.userId}
+                        className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4"
+                      >
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="flex items-start gap-3">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-sm font-semibold text-slate-700 shadow-sm">
+                              {getInitials(t.fullName)}
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="text-base font-semibold text-slate-900">
+                                {t.fullName || "Professor sem nome"}
+                              </div>
+                              <div className="mt-1 break-all text-sm text-slate-500">
+                                {t.email || "Sem e-mail"}
+                              </div>
+                              <div className="mt-1 break-all font-mono text-xs text-slate-400">
+                                {t.userId}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
+                            {tAssign.length} turma(s)
+                          </div>
+                        </div>
+
+                        {tAssign.length === 0 ? (
+                          <p className="mt-4 text-sm text-slate-500">Sem turmas vinculadas.</p>
+                        ) : (
+                          <div className="mt-4 grid grid-cols-1 gap-3">
+                            {tAssign.map((a) => {
+                              const c = classById.get(a.classId);
+                              const key = `unassign:${a.id}`;
+                              const busy = busyKey === key;
+
+                              return (
+                                <div
+                                  key={a.id}
+                                  className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between"
                                 >
-                                  {busy ? "..." : "Desvincular"}
-                                </button>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        </>
-      )}
+                                  <div className="min-w-0">
+                                    <div className="text-sm font-semibold text-slate-900">
+                                      {c ? c.name : a.classId}
+                                    </div>
+                                    <div className="mt-1 text-sm text-slate-500">
+                                      {c ? classLabel(c) : "Turma não encontrada."}
+                                    </div>
+                                    <div className="mt-1 text-xs text-slate-400">
+                                      Vinculado em: {formatDateTime(a.createdAt)}
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    className="rounded-2xl border border-red-200 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-60"
+                                    disabled={busy}
+                                    onClick={() => handleUnassign(a.id)}
+                                    title="Desvincular"
+                                  >
+                                    {busy ? "Desvinculando..." : "Desvincular"}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </>
+        )}
+      </div>
     </main>
   );
 }

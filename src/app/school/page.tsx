@@ -79,6 +79,61 @@ function categoryIcon(category: QuickAction["category"]) {
   return "🏫";
 }
 
+function MetricCard({
+  label,
+  value,
+  help,
+}: {
+  label: string;
+  value: string;
+  help: string;
+}) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </div>
+      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </div>
+      <div className="mt-2 text-sm leading-6 text-slate-500">{help}</div>
+    </div>
+  );
+}
+
+function HighlightCard({
+  title,
+  description,
+  onClick,
+}: {
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-base font-semibold text-slate-900">{title}</div>
+          <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
+        </div>
+
+        <div className="rounded-2xl bg-slate-100 px-3 py-2 text-sm text-slate-600">
+          →
+        </div>
+      </div>
+
+      <div className="mt-4 text-sm font-medium text-slate-700 group-hover:text-slate-900">
+        Abrir agora
+      </div>
+    </button>
+  );
+}
+
 function ModuleCard({
   item,
   onOpen,
@@ -90,7 +145,7 @@ function ModuleCard({
     <button
       type="button"
       onClick={() => onOpen(item.href)}
-      className="group w-full rounded-3xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      className="group w-full rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-xl">
@@ -151,7 +206,7 @@ export default function SchoolDashboardPage() {
     {
       label: "Matrículas",
       href: "/school/enrollments",
-      description: "Controle o vínculo aluno ↔ turma com segurança e consistência histórica.",
+      description: "Controle o vínculo aluno ↔️ turma com segurança e consistência histórica.",
       status: "ativo",
       category: "Gestão Acadêmica",
     },
@@ -170,7 +225,7 @@ export default function SchoolDashboardPage() {
       category: "Gestão Acadêmica",
     },
     {
-      label: "Vínculo Professor ↔ Turmas",
+      label: "Vínculo Professor ↔️ Turmas",
       href: "/school/teacher-classes",
       description: "Defina quais professores atendem cada turma e mantenha o painel docente correto.",
       status: "ativo",
@@ -194,7 +249,7 @@ export default function SchoolDashboardPage() {
       label: "Diário de Classe",
       href: "/school/class-diary",
       description: "Acompanhe o diário pedagógico lançado pelos professores por turma e período.",
-      status: "implantacao",
+      status: "ativo",
       category: "Gestão Acadêmica",
     },
     {
@@ -212,6 +267,10 @@ export default function SchoolDashboardPage() {
       category: "Relacionamento",
     },
   ];
+
+  const availableCount = actions.filter((a) => a.status === "ativo").length;
+  const inProgressCount = actions.filter((a) => a.status === "implantacao").length;
+  const nextCount = actions.filter((a) => a.status === "proximo").length;
 
   useEffect(() => {
     (async () => {
@@ -278,257 +337,255 @@ export default function SchoolDashboardPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-slate-50 p-6">
-        <div className="mx-auto max-w-7xl">
-          <div className="animate-pulse rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
-            <div className="h-8 w-64 rounded bg-slate-200" />
-            <div className="mt-3 h-4 w-96 rounded bg-slate-100" />
-            <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="h-40 rounded-3xl bg-slate-100" />
-              <div className="h-40 rounded-3xl bg-slate-100" />
-              <div className="h-40 rounded-3xl bg-slate-100" />
+      <main className="space-y-6">
+        <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
+          <div className="animate-pulse">
+            <div className="h-8 w-64 rounded-xl bg-slate-200" />
+            <div className="mt-3 h-4 w-96 rounded-xl bg-slate-100" />
+            <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-4">
+              <div className="h-36 rounded-[28px] bg-slate-100" />
+              <div className="h-36 rounded-[28px] bg-slate-100" />
+              <div className="h-36 rounded-[28px] bg-slate-100" />
+              <div className="h-36 rounded-[28px] bg-slate-100" />
             </div>
           </div>
-        </div>
+        </section>
       </main>
     );
   }
 
   if (error) {
     return (
-      <main className="min-h-screen bg-slate-50 p-6">
-        <div className="mx-auto flex min-h-[70vh] max-w-xl items-center justify-center">
-          <div className="w-full rounded-3xl border border-red-200 bg-white p-8 shadow-sm">
-            <h1 className="text-xl font-semibold text-slate-900">Não foi possível entrar</h1>
-            <p className="mt-3 text-sm leading-6 text-slate-600">{error}</p>
+      <main className="min-h-[70vh] flex items-center justify-center">
+        <div className="w-full max-w-xl rounded-[28px] border border-red-200 bg-white p-8 shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">Não foi possível entrar</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600">{error}</p>
 
-            <button
-              onClick={() => router.replace("/login")}
-              className="mt-6 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90"
-            >
-              Voltar ao login
-            </button>
-          </div>
+          <button
+            onClick={() => router.replace("/login")}
+            className="mt-6 inline-flex rounded-2xl bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:opacity-90"
+          >
+            Voltar ao login
+          </button>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto max-w-7xl p-4 md:p-6">
-        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 px-6 py-8 text-white md:px-8">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-center gap-4">
-                {logoUrl ? (
-                  <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-3xl border border-white/15 bg-white/10 p-2 backdrop-blur">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={logoUrl}
-                      alt={brandName}
-                      className="max-h-full max-w-full object-contain"
-                    />
-                  </div>
-                ) : (
-                  <div className="flex h-24 w-24 items-center justify-center rounded-3xl border border-white/15 bg-white/10 text-2xl font-bold backdrop-blur">
-                    {getInitials(brandName)}
-                  </div>
-                )}
-
-                <div>
-                  <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
-                    Gestão Escolar • Versão operacional
-                  </div>
-
-                  <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
-                    Painel da Escola
-                  </h1>
-
-                  <p className="mt-2 text-sm text-slate-200 md:text-base">
-                    {brandName} • Perfil {roleLabel} • Usuário {me?.user.email || me?.user.id}
-                  </p>
+    <main className="space-y-6">
+      <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+        <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-8 text-white md:px-8">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex flex-col gap-5 md:flex-row md:items-center">
+              {logoUrl ? (
+                <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-3xl border border-white/15 bg-white/10 p-2 backdrop-blur">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={logoUrl}
+                    alt={brandName}
+                    className="max-h-full max-w-full object-contain"
+                  />
                 </div>
-              </div>
+              ) : (
+                <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-3xl border border-white/15 bg-white/10 text-2xl font-bold backdrop-blur">
+                  {getInitials(brandName)}
+                </div>
+              )}
 
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => go("/school/settings/branding")}
-                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
-                >
-                  Personalizar escola
-                </button>
+              <div className="min-w-0">
+                <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
+                  Painel executivo da escola
+                </div>
 
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
-                >
-                  Sair
-                </button>
-              </div>
-            </div>
-          </div>
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
+                  {brandName}
+                </h1>
 
-          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-3 md:p-6">
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <div className="text-sm font-medium text-slate-500">Escola vinculada</div>
-              <div className="mt-3 break-all font-mono text-sm text-slate-800">{schoolId}</div>
-            </div>
+                <p className="mt-2 text-sm text-slate-200 md:text-base">
+                  Perfil {roleLabel} • Usuário {me?.user.email || me?.user.id}
+                </p>
 
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <div className="text-sm font-medium text-slate-500">Identidade visual</div>
-              <div className="mt-3 text-sm text-slate-800">
-                {logoUrl
-                  ? "Logo configurada e pronta para uso nos painéis e PDFs."
-                  : "Logo ainda não configurada. Defina a identidade visual da escola."}
+                <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
+                  Controle os módulos acadêmicos, pedagógicos e operacionais da escola
+                  em uma experiência contínua, profissional e preparada para crescimento.
+                </p>
               </div>
             </div>
 
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <div className="text-sm font-medium text-slate-500">Entrega de hoje</div>
-              <div className="mt-3 text-sm text-slate-800">
-                Painel central da diretoria com acesso aos módulos acadêmicos e operacionais.
-              </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => go("/school/settings/branding")}
+                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Personalizar escola
+              </button>
+
+              <button
+                type="button"
+                onClick={() => go("/school/class-diary")}
+                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Diário de classe
+              </button>
+
+              <button
+                type="button"
+                onClick={logout}
+                className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+              >
+                Sair
+              </button>
             </div>
           </div>
-        </section>
+        </div>
 
-        <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-4 md:p-6">
+          <MetricCard
+            label="Módulos ativos"
+            value={String(availableCount)}
+            help="Áreas prontas para uso operacional imediato."
+          />
+
+          <MetricCard
+            label="Em implantação"
+            value={String(inProgressCount)}
+            help="Recursos em evolução para ampliar o sistema."
+          />
+
+          <MetricCard
+            label="Próximas entregas"
+            value={String(nextCount)}
+            help="Itens estratégicos planejados para novas versões."
+          />
+
+          <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Turmas
+              Escola vinculada
             </div>
-            <div className="mt-2 text-sm text-slate-700">
-              Organização de séries, anos e turnos.
+            <div className="mt-3 break-all font-mono text-xs text-slate-700">{schoolId}</div>
+            <div className="mt-3 text-sm leading-6 text-slate-500">
+              Ambiente multi-tenant ativo e isolado por escola.
             </div>
-            <button
-              onClick={() => go("/school/classes")}
-              className="mt-4 rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
-            >
-              Acessar
-            </button>
           </div>
+        </div>
+      </section>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Alunos
-            </div>
-            <div className="mt-2 text-sm text-slate-700">
-              Cadastro, visualização e vínculo com turma.
-            </div>
-            <button
-              onClick={() => go("/school/students")}
-              className="mt-4 rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
-            >
-              Acessar
-            </button>
-          </div>
+      <section>
+        <div className="mb-4">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+            Atalhos principais
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Os módulos mais usados pela gestão no dia a dia.
+          </p>
+        </div>
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Professores
-            </div>
-            <div className="mt-2 text-sm text-slate-700">
-              Cadastro docente e vínculo com turmas.
-            </div>
-            <button
-              onClick={() => go("/school/teachers")}
-              className="mt-4 rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
-            >
-              Acessar
-            </button>
-          </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <HighlightCard
+            title="Turmas"
+            description="Organize séries, anos e turnos e mantenha a base acadêmica estruturada."
+            onClick={() => go("/school/classes")}
+          />
 
-          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Responsáveis
-            </div>
-            <div className="mt-2 text-sm text-slate-700">
-              Login dos pais e relacionamento escolar.
-            </div>
-            <button
-              onClick={() => go("/school/parents")}
-              className="mt-4 rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
-            >
-              Acessar
-            </button>
-          </div>
-        </section>
+          <HighlightCard
+            title="Alunos"
+            description="Cadastre alunos, defina turmas ativas e acompanhe a base escolar."
+            onClick={() => go("/school/students")}
+          />
 
-        <section className="mt-8">
-          <div className="mb-4">
+          <HighlightCard
+            title="Professores"
+            description="Gerencie o corpo docente e os vínculos com turmas e operação pedagógica."
+            onClick={() => go("/school/teachers")}
+          />
+
+          <HighlightCard
+            title="Responsáveis"
+            description="Mantenha acessos e vínculos familiares prontos para a comunicação escolar."
+            onClick={() => go("/school/parents")}
+          />
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
             <h2 className="text-xl font-semibold tracking-tight text-slate-900">
               Módulos da gestão escolar
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              A diretoria pode acessar rapidamente tudo o que já está operacional na plataforma.
+              Acesso rápido ao que já está operacional e visão clara do roadmap.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {actions.map((item) => (
-              <ModuleCard key={item.href} item={item} onOpen={go} />
-            ))}
+          <div className="rounded-2xl bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700">
+            Multi-tenant ativo
           </div>
-        </section>
+        </div>
 
-        <section className="mt-6 rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div>
-              <h3 className="text-lg font-semibold text-slate-900">Orientação da entrega</h3>
-              <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
-                Para a apresentação de hoje, o ponto mais forte é mostrar que a direção já possui
-                um painel central com controle sobre turmas, alunos, professores, responsáveis,
-                branding e expansão pedagógica do sistema.
-              </p>
-            </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          {actions.map((item) => (
+            <ModuleCard key={item.href} item={item} onOpen={go} />
+          ))}
+        </div>
+      </section>
 
-            <div className="rounded-2xl bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700">
-              Multi-tenant ativo
-            </div>
+      <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900">Resumo estratégico</h3>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
+              Este painel concentra os pilares da operação escolar: gestão acadêmica,
+              relacionamento com responsáveis, branding da escola e expansão para
+              financeiro, boletins e comunicação centralizada.
+            </p>
           </div>
 
-          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-3xl border border-slate-200 p-5">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Acadêmico
-              </div>
-              <div className="mt-2 text-sm text-slate-700">
-                Turmas, alunos, matrículas, professores e vínculos já acessíveis pela direção.
-              </div>
-            </div>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            Produto pronto para demonstração comercial
+          </div>
+        </div>
 
-            <div className="rounded-3xl border border-slate-200 p-5">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Professor
-              </div>
-              <div className="mt-2 text-sm text-slate-700">
-                Chamada digital, diário de classe e PDFs pedagógicos já fazem parte da operação.
-              </div>
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded-3xl border border-slate-200 p-5">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Acadêmico
             </div>
-
-            <div className="rounded-3xl border border-slate-200 p-5">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Responsáveis
-              </div>
-              <div className="mt-2 text-sm text-slate-700">
-                Estrutura pronta para login, vinculação e expansão da comunicação com pais.
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-slate-200 p-5">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Próximos passos
-              </div>
-              <div className="mt-2 text-sm text-slate-700">
-                Financeiro completo, boletim bimestral e mensagens da direção.
-              </div>
+            <div className="mt-2 text-sm leading-6 text-slate-700">
+              Turmas, alunos, matrículas, professores e vínculos já fazem parte da operação da direção.
             </div>
           </div>
-        </section>
-      </div>
+
+          <div className="rounded-3xl border border-slate-200 p-5">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Pedagógico
+            </div>
+            <div className="mt-2 text-sm leading-6 text-slate-700">
+              Diário de classe, presença e relatórios em PDF já fortalecem a rotina escolar.
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 p-5">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Relacionamento
+            </div>
+            <div className="mt-2 text-sm leading-6 text-slate-700">
+              A base de responsáveis já está pronta para login, vínculo e futura comunicação oficial.
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 p-5">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Próxima expansão
+            </div>
+            <div className="mt-2 text-sm leading-6 text-slate-700">
+              Financeiro completo, boletim bimestral, mensagens e cobrança recorrente por assinatura.
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
   );
 }

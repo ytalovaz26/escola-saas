@@ -23,6 +23,7 @@ type NavItem = {
   label: string;
   href: string;
   icon: string;
+  section: "principal" | "operacao" | "configuracao";
 };
 
 function safeJson(text: string) {
@@ -59,6 +60,61 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+function NavSection({
+  title,
+  items,
+  pathname,
+  onGo,
+}: {
+  title: string;
+  items: NavItem[];
+  pathname: string;
+  onGo: (href: string) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+        {title}
+      </div>
+
+      <nav className="space-y-1">
+        {items.map((item) => {
+          const active = isActive(pathname, item.href);
+
+          return (
+            <button
+              key={item.href}
+              type="button"
+              onClick={() => onGo(item.href)}
+              className={[
+                "group flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm transition",
+                active
+                  ? "bg-slate-900 text-white shadow-sm"
+                  : "text-slate-700 hover:bg-slate-100",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "flex h-9 w-9 items-center justify-center rounded-xl text-base transition",
+                  active
+                    ? "bg-white/10 text-white"
+                    : "bg-slate-100 text-slate-700 group-hover:bg-slate-200",
+                ].join(" ")}
+              >
+                {item.icon}
+              </span>
+
+              <div className="min-w-0">
+                <div className="truncate font-medium">{item.label}</div>
+              </div>
+            </button>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
 export default function SchoolLayout({
   children,
 }: {
@@ -73,21 +129,29 @@ export default function SchoolLayout({
   const brandName = me?.branding?.brandName || "Minha Escola";
   const logoUrl = me?.branding?.brandLogoUrl || null;
   const roleLabel = getRoleLabel(me?.school?.role);
+  const userEmail = me?.user?.email || "Acesso escolar";
 
   const navItems: NavItem[] = useMemo(
     () => [
-      { label: "Dashboard", href: "/school", icon: "🏠" },
-      { label: "Turmas", href: "/school/classes", icon: "🏫" },
-      { label: "Alunos", href: "/school/students", icon: "🎓" },
-      { label: "Matrículas", href: "/school/enrollments", icon: "🧾" },
-      { label: "Responsáveis", href: "/school/parents", icon: "👨‍👩‍👧‍👦" },
-      { label: "Professores", href: "/school/teachers", icon: "👩‍🏫" },
-      { label: "Presença", href: "/school/attendance", icon: "✅" },
-      { label: "Financeiro", href: "/school/finance", icon: "💳" },
-      { label: "Branding", href: "/school/settings/branding", icon: "🎨" },
+      { label: "Dashboard", href: "/school", icon: "🏠", section: "principal" },
+      { label: "Turmas", href: "/school/classes", icon: "🏫", section: "principal" },
+      { label: "Alunos", href: "/school/students", icon: "🎓", section: "principal" },
+      { label: "Matrículas", href: "/school/enrollments", icon: "🧾", section: "principal" },
+
+      { label: "Responsáveis", href: "/school/parents", icon: "👨‍👩‍👧‍👦", section: "operacao" },
+      { label: "Professores", href: "/school/teachers", icon: "👩‍🏫", section: "operacao" },
+      { label: "Presença", href: "/school/attendance", icon: "✅", section: "operacao" },
+      { label: "Diário de classe", href: "/school/class-diary", icon: "📘", section: "operacao" },
+
+      { label: "Financeiro", href: "/school/finance", icon: "💳", section: "configuracao" },
+      { label: "Branding", href: "/school/settings/branding", icon: "🎨", section: "configuracao" },
     ],
     []
   );
+
+  const mainItems = navItems.filter((i) => i.section === "principal");
+  const operationItems = navItems.filter((i) => i.section === "operacao");
+  const configItems = navItems.filter((i) => i.section === "configuracao");
 
   useEffect(() => {
     (async () => {
@@ -110,7 +174,7 @@ export default function SchoolLayout({
           setMe(json as MePayload);
         }
       } catch {
-        // layout não deve quebrar a página por erro de branding
+        // não quebrar layout por branding
       }
     })();
   }, []);
@@ -129,12 +193,12 @@ export default function SchoolLayout({
     <div className="min-h-screen bg-slate-100">
       <div className="flex min-h-screen">
         {/* Sidebar desktop */}
-        <aside className="hidden lg:flex w-72 shrink-0 border-r border-slate-200 bg-white/95 backdrop-blur">
+        <aside className="hidden w-80 shrink-0 border-r border-slate-200 bg-white xl:flex">
           <div className="flex w-full flex-col">
             <div className="border-b border-slate-200 px-5 py-5">
               <div className="flex items-center gap-3">
                 {logoUrl ? (
-                  <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+                  <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl border border-slate-200 bg-white p-2 shadow-sm">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={logoUrl}
@@ -143,77 +207,69 @@ export default function SchoolLayout({
                     />
                   </div>
                 ) : (
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-900 text-sm font-bold text-white shadow-sm">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-900 text-base font-bold text-white shadow-sm">
                     {getInitials(brandName)}
                   </div>
                 )}
 
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-slate-900">
+                  <div className="truncate text-base font-semibold text-slate-900">
                     {brandName}
                   </div>
-                  <div className="text-xs text-slate-500">{roleLabel}</div>
+                  <div className="mt-0.5 text-xs text-slate-500">{roleLabel}</div>
+                  <div className="mt-1 truncate text-[11px] text-slate-400">{userEmail}</div>
                 </div>
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 py-5">
-              <div className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                Navegação
+              <div className="space-y-6">
+                <NavSection title="Principal" items={mainItems} pathname={pathname} onGo={go} />
+                <NavSection title="Operação" items={operationItems} pathname={pathname} onGo={go} />
+                <NavSection title="Configuração" items={configItems} pathname={pathname} onGo={go} />
               </div>
-
-              <nav className="space-y-1">
-                {navItems.map((item) => {
-                  const active = isActive(pathname, item.href);
-
-                  return (
-                    <button
-                      key={item.href}
-                      type="button"
-                      onClick={() => go(item.href)}
-                      className={[
-                        "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm transition",
-                        active
-                          ? "bg-slate-900 text-white shadow-sm"
-                          : "text-slate-700 hover:bg-slate-100",
-                      ].join(" ")}
-                    >
-                      <span className="text-base">{item.icon}</span>
-                      <span className="font-medium">{item.label}</span>
-                    </button>
-                  );
-                })}
-              </nav>
             </div>
 
             <div className="border-t border-slate-200 px-4 py-4">
-              <button
-                type="button"
-                onClick={logout}
-                className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-              >
-                Sair do sistema
-              </button>
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Ambiente
+                </div>
+                <div className="mt-2 text-sm font-medium text-slate-800">
+                  Multi-tenant ativo
+                </div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">
+                  Cada escola opera em ambiente isolado e seguro.
+                </div>
+
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="mt-4 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90"
+                >
+                  Sair do sistema
+                </button>
+              </div>
             </div>
           </div>
         </aside>
 
-        {/* Área principal */}
+        {/* Main area */}
         <div className="flex min-w-0 flex-1 flex-col">
           {/* Topbar */}
-          <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/85 backdrop-blur">
+          <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
             <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-6">
-              <div className="flex items-center gap-3">
+              <div className="flex min-w-0 items-center gap-3">
                 <button
                   type="button"
                   onClick={() => setMenuOpen((v) => !v)}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-300 bg-white text-slate-700 shadow-sm lg:hidden"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-300 bg-white text-slate-700 shadow-sm xl:hidden"
                 >
                   ☰
                 </button>
 
                 <div className="min-w-0">
-                  <div className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
                     Plataforma escolar
                   </div>
                   <div className="truncate text-sm font-semibold text-slate-900 md:text-base">
@@ -222,7 +278,7 @@ export default function SchoolLayout({
                 </div>
               </div>
 
-              <div className="hidden md:flex items-center gap-2">
+              <div className="hidden items-center gap-2 md:flex">
                 <button
                   type="button"
                   onClick={() => go("/school/settings/branding")}
@@ -241,9 +297,9 @@ export default function SchoolLayout({
               </div>
             </div>
 
-            {/* Menu mobile */}
+            {/* Mobile menu */}
             {menuOpen && (
-              <div className="border-t border-slate-200 bg-white px-4 py-4 lg:hidden">
+              <div className="border-t border-slate-200 bg-white px-4 py-4 xl:hidden">
                 <div className="mb-4 flex items-center gap-3">
                   {logoUrl ? (
                     <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
@@ -260,41 +316,24 @@ export default function SchoolLayout({
                     </div>
                   )}
 
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-slate-900">
                       {brandName}
                     </div>
                     <div className="text-xs text-slate-500">{roleLabel}</div>
                   </div>
                 </div>
 
-                <nav className="space-y-2">
-                  {navItems.map((item) => {
-                    const active = isActive(pathname, item.href);
-
-                    return (
-                      <button
-                        key={item.href}
-                        type="button"
-                        onClick={() => go(item.href)}
-                        className={[
-                          "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm transition",
-                          active
-                            ? "bg-slate-900 text-white shadow-sm"
-                            : "bg-slate-50 text-slate-700 hover:bg-slate-100",
-                        ].join(" ")}
-                      >
-                        <span>{item.icon}</span>
-                        <span className="font-medium">{item.label}</span>
-                      </button>
-                    );
-                  })}
-                </nav>
+                <div className="space-y-5">
+                  <NavSection title="Principal" items={mainItems} pathname={pathname} onGo={go} />
+                  <NavSection title="Operação" items={operationItems} pathname={pathname} onGo={go} />
+                  <NavSection title="Configuração" items={configItems} pathname={pathname} onGo={go} />
+                </div>
 
                 <button
                   type="button"
                   onClick={logout}
-                  className="mt-4 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700"
+                  className="mt-5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700"
                 >
                   Sair do sistema
                 </button>
@@ -302,7 +341,7 @@ export default function SchoolLayout({
             )}
           </header>
 
-          {/* Conteúdo com shell profissional */}
+          {/* Content shell */}
           <main className="flex-1">
             <div className="mx-auto w-full max-w-[1600px] p-4 md:p-6">
               {children}

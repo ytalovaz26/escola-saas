@@ -62,6 +62,13 @@ async function safeJson(res: Response) {
   }
 }
 
+function formatDateBR(value?: string | null) {
+  if (!value) return "—";
+  const [y, m, d] = String(value).split("-");
+  if (!y || !m || !d) return value;
+  return `${d}/${m}/${y}`;
+}
+
 export default function EnrollmentsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -77,7 +84,6 @@ export default function EnrollmentsPage() {
   const [enrollments, setEnrollments] = useState<EnrollmentRow[]>([]);
   const [saving, setSaving] = useState(false);
 
-  // UI: adicionar aluno
   const [studentQuery, setStudentQuery] = useState("");
   const [selectedStudentId, setSelectedStudentId] = useState<string>("");
 
@@ -93,19 +99,24 @@ export default function EnrollmentsPage() {
     return m;
   }, [enrollments]);
 
+  const selectedClass = useMemo(() => {
+    return classById.get(selectedClassId || "") || null;
+  }, [classById, selectedClassId]);
+
   const filteredStudentsForAdd = useMemo(() => {
     const q = studentQuery.trim().toLowerCase();
-
-    // não sugerir quem já está ativo nessa turma
     const activeStudentIds = new Set(enrollments.map((e) => e.student_id));
 
     let list = students.filter((s) => !activeStudentIds.has(s.id));
 
     if (q) {
-      list = list.filter((s) => s.full_name.toLowerCase().includes(q));
+      list = list.filter((s) => {
+        const name = s.full_name.toLowerCase();
+        const reg = String(s.registration_number || "").toLowerCase();
+        return name.includes(q) || reg.includes(q);
+      });
     }
 
-    // limita para não ficar pesado
     return list.slice(0, 30);
   }, [students, enrollments, studentQuery]);
 
@@ -120,7 +131,6 @@ export default function EnrollmentsPage() {
           return;
         }
 
-        // valida perfil/role via /api/me
         const meRes = await fetch("/api/me", {
           method: "GET",
           headers: { Authorization: `Bearer ${token}` },
@@ -153,10 +163,8 @@ export default function EnrollmentsPage() {
         }
         setSchoolId(sid);
 
-        // carrega turmas + alunos
         await Promise.all([loadClasses(token), loadStudents(token)]);
 
-        // se vier classId por URL (ex: /school/enrollments?classId=xxx)
         const fromUrl = searchParams.get("classId");
         if (fromUrl) {
           setSelectedClassId(fromUrl);
@@ -170,7 +178,6 @@ export default function EnrollmentsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // quando selecionar turma, carrega matrículas ativas
   useEffect(() => {
     (async () => {
       if (!selectedClassId) return;
@@ -195,7 +202,6 @@ export default function EnrollmentsPage() {
     const list = (json.classes ?? []) as ClassRow[];
     setClasses(list);
 
-    // se ainda não tiver selecionada, escolhe a primeira
     if (!selectedClassId && list[0]?.id) setSelectedClassId(list[0].id);
     if (list.length === 0) setSelectedClassId("");
   }
@@ -217,9 +223,12 @@ export default function EnrollmentsPage() {
   async function loadEnrollments(token: string, classId: string) {
     setError(null);
 
-    const res = await fetch(`/api/school/enrollments?classId=${encodeURIComponent(classId)}&active=1`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(
+      `/api/school/enrollments?classId=${encodeURIComponent(classId)}&active=1`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
     const json = await safeJson(res);
 
     if (!res.ok || !json?.ok) {
@@ -250,7 +259,7 @@ export default function EnrollmentsPage() {
         body: JSON.stringify({
           studentId,
           classId,
-          mode: "rpc", // tenta rpc e faz fallback
+          mode: "rpc",
         }),
       });
 
@@ -262,7 +271,6 @@ export default function EnrollmentsPage() {
 
       setSelectedStudentId("");
       setStudentQuery("");
-
       await loadEnrollments(token, classId);
     } finally {
       setSaving(false);
@@ -309,13 +317,13 @@ export default function EnrollmentsPage() {
     const from = classById.get(selectedClassId)?.name || "Turma atual";
     const to = classById.get(newClassId)?.name || "Nova turma";
 
-    const ok = confirm(`Trocar turma ativa deste aluno?\n\nDe: ${from}\nPara: ${to}\n\nIsso fica no histórico.`);
+    const ok = confirm(
+      `Trocar turma ativa deste aluno?\n\nDe: ${from}\nPara: ${to}\n\nIsso fica no histórico.`
+    );
     if (!ok) return;
 
     await enrollStudent(studentId, newClassId);
 
-    // se moveu pra outra turma, e estamos vendo a turma antiga, o aluno some da lista (correto).
-    // recarrega lista atual
     const token = await getAccessToken();
     if (token) await loadEnrollments(token, selectedClassId);
   }
@@ -325,57 +333,171 @@ export default function EnrollmentsPage() {
     router.replace("/login");
   }
 
-  if (loading) return <main className="p-6">Carregando...</main>;
-
-  if (error) {
+  if (loading) {
     return (
-      <main className="min-h-screen flex items-center justify-center p-6">
-        <div className="max-w-lg w-full bg-white rounded-2xl shadow p-6">
-          <h1 className="text-xl font-semibold">Erro</h1>
-          <p className="text-sm text-gray-600 mt-2">{error}</p>
-          <button
-            onClick={() => router.push("/school")}
-            className="mt-4 w-full rounded-xl bg-gray-900 text-white p-3"
-          >
-            Voltar ao painel
-          </button>
+      <main className="min-h-[60vh]">
+        <div className="mx-auto max-w-7xl">
+          <div className="animate-pulse space-y-6">
+            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="h-8 w-72 rounded bg-slate-200" />
+              <div className="mt-3 h-4 w-96 rounded bg-slate-100" />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              <div className="h-40 rounded-[28px] bg-slate-100" />
+              <div className="h-40 rounded-[28px] bg-slate-100" />
+              <div className="h-40 rounded-[28px] bg-slate-100" />
+            </div>
+
+            <div className="h-96 rounded-[28px] bg-slate-100" />
+          </div>
         </div>
       </main>
     );
   }
 
-  const selectedClass = classById.get(selectedClassId || "");
+  if (error) {
+    return (
+      <main className="min-h-[70vh]">
+        <div className="mx-auto flex max-w-xl items-center justify-center">
+          <div className="w-full rounded-[28px] border border-red-200 bg-white p-8 shadow-sm">
+            <h1 className="text-xl font-semibold text-slate-900">Não foi possível carregar</h1>
+            <p className="mt-3 text-sm leading-6 text-slate-600">{error}</p>
+
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+              <button
+                onClick={() => router.push("/school")}
+                className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90"
+              >
+                Voltar ao painel
+              </button>
+
+              <button
+                onClick={logout}
+                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Sair
+              </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <main className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-5xl mx-auto">
-        <header className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">Matrículas (Aluno ↔ Turma)</h1>
-            <p className="text-sm text-gray-600 mt-1">
-              Escola: <span className="font-mono text-xs">{schoolId}</span>
-            </p>
+    <main className="min-h-[60vh]">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 px-6 py-8 text-white md:px-8">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
+                  Gestão Acadêmica
+                </div>
+
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
+                  Matrículas
+                </h1>
+
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
+                  Controle o vínculo aluno ↔ turma com segurança, histórico e operação centralizada.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 backdrop-blur">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-300">
+                    Escola vinculada
+                  </div>
+                  <div className="mt-1 break-all text-sm font-medium text-white">
+                    {schoolId || "—"}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 backdrop-blur">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-300">
+                    Turma atual
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-white">
+                    {selectedClass?.name || "Selecione uma turma"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Turma selecionada
+            </div>
+            <div className="mt-3 text-lg font-semibold text-slate-900">
+              {selectedClass?.name || "—"}
+            </div>
+            <div className="mt-2 text-sm text-slate-500">
+              {selectedClass
+                ? `${selectedClass.grade || "Sem série"} • ${selectedClass.shift || "Sem turno"}`
+                : "Escolha uma turma para começar."}
+            </div>
           </div>
 
-          <div className="flex gap-2">
-            <button onClick={() => router.push("/school")} className="rounded-xl border px-4 py-2">
-              Painel
-            </button>
-            <button onClick={logout} className="rounded-xl bg-gray-900 text-white px-4 py-2">
-              Sair
-            </button>
+          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Matrículas ativas
+            </div>
+            <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+              {selectedClassId ? enrollments.length : 0}
+            </div>
+            <div className="mt-2 text-sm text-slate-500">
+              Quantidade de alunos com vínculo ativo nesta turma.
+            </div>
           </div>
-        </header>
 
-        {/* Selecionar Turma */}
-        <section className="mt-6 bg-white rounded-2xl shadow p-5">
-          <h2 className="font-semibold">Turma</h2>
+          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Ação rápida
+            </div>
+            <div className="mt-3 text-sm text-slate-600">
+              Selecione a turma, pesquise o aluno e faça a matrícula com histórico preservado.
+            </div>
 
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                onClick={() => router.push("/school")}
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Painel
+              </button>
+
+              <button
+                onClick={logout}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+              >
+                Sair
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Turma</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Escolha a turma para visualizar e gerenciar as matrículas ativas.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="md:col-span-2">
-              <div className="text-xs text-gray-600 mb-1">Selecionar turma</div>
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Selecionar turma
+              </label>
               <select
-                className="border rounded-xl p-3 w-full"
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
                 value={selectedClassId}
                 onChange={(e) => setSelectedClassId(e.target.value)}
                 disabled={classes.length === 0}
@@ -395,31 +517,47 @@ export default function EnrollmentsPage() {
             </div>
 
             <div>
-              <div className="text-xs text-gray-600 mb-1">Matriculados (ativos)</div>
-              <div className="border rounded-xl p-3 text-sm bg-gray-50">
-                {selectedClassId ? enrollments.length : "—"}
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Total nesta turma
+              </label>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-800">
+                {selectedClassId ? `${enrollments.length} matriculado(s)` : "—"}
               </div>
             </div>
           </div>
 
           {!selectedClassId && (
-            <p className="text-xs text-red-600 mt-2">Você precisa criar e selecionar uma turma.</p>
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Você precisa criar e selecionar uma turma para continuar.
+            </div>
           )}
         </section>
 
-        {/* Adicionar aluno */}
-        <section className="mt-6 bg-white rounded-2xl shadow p-5">
-          <h2 className="font-semibold">Adicionar aluno na turma</h2>
-          <p className="text-xs text-gray-500 mt-1">
-            Isso ativa vínculo em <span className="font-mono">student_classes</span> e mantém histórico.
-          </p>
+        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Adicionar aluno na turma</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Isso ativa o vínculo em <span className="font-mono">student_classes</span> e preserva histórico.
+              </p>
+            </div>
 
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="md:col-span-2">
-              <div className="text-xs text-gray-600 mb-1">Buscar aluno por nome</div>
+            {selectedClass && (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                <span className="font-medium">Turma:</span> {selectedClass.name}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <div className="xl:col-span-2">
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Buscar aluno por nome ou matrícula
+              </label>
+
               <input
-                className="border rounded-xl p-3 w-full"
-                placeholder="Digite parte do nome (ex: João)"
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-400"
+                placeholder="Digite parte do nome ou número de matrícula"
                 value={studentQuery}
                 onChange={(e) => {
                   setStudentQuery(e.target.value);
@@ -427,132 +565,250 @@ export default function EnrollmentsPage() {
                 }}
                 disabled={!selectedClassId || saving}
               />
+
               {studentQuery.trim().length > 0 && filteredStudentsForAdd.length > 0 && (
-                <div className="mt-2 border rounded-xl overflow-hidden">
-                  {filteredStudentsForAdd.map((s) => (
-                    <button
-                      key={s.id}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 ${
-                        selectedStudentId === s.id ? "bg-gray-50" : "bg-white"
-                      }`}
-                      onClick={() => setSelectedStudentId(s.id)}
-                      type="button"
-                    >
-                      <div className="font-medium">{s.full_name}</div>
-                      <div className="text-xs text-gray-500">
-                        {s.registration_number ? `Matrícula: ${s.registration_number}` : "Matrícula: —"} •{" "}
-                        <span className="font-mono">{s.id}</span>
-                      </div>
-                    </button>
-                  ))}
+                <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
+                    {filteredStudentsForAdd.map((s) => (
+                      <button
+                        key={s.id}
+                        className={[
+                          "w-full px-4 py-3 text-left transition hover:bg-slate-50",
+                          selectedStudentId === s.id ? "bg-slate-50" : "bg-white",
+                        ].join(" ")}
+                        onClick={() => setSelectedStudentId(s.id)}
+                        type="button"
+                      >
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="truncate font-medium text-slate-900">{s.full_name}</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {s.registration_number
+                                ? `Matrícula: ${s.registration_number}`
+                                : "Matrícula: —"}
+                            </div>
+                          </div>
+
+                          <div className="truncate text-[11px] text-slate-400 sm:text-right">
+                            {s.id}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
               {studentQuery.trim().length > 0 && filteredStudentsForAdd.length === 0 && (
-                <div className="mt-2 text-xs text-gray-500">Nenhum aluno disponível para adicionar.</div>
+                <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                  Nenhum aluno disponível para adicionar.
+                </div>
               )}
             </div>
 
             <div>
-              <div className="text-xs text-gray-600 mb-1">Ação</div>
-              <button
-                className="rounded-xl bg-gray-900 text-white px-4 py-3 w-full disabled:opacity-60"
-                disabled={!selectedClassId || !selectedStudentId || saving}
-                onClick={() => enrollStudent(selectedStudentId, selectedClassId)}
-              >
-                {saving ? "Salvando..." : "Matricular na turma"}
-              </button>
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Ação
+              </label>
 
-              <div className="mt-2 text-xs text-gray-500">
-                Turma selecionada:{" "}
-                <span className="font-medium">{selectedClass?.name ?? "—"}</span>
+              <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+                <button
+                  className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-60"
+                  disabled={!selectedClassId || !selectedStudentId || saving}
+                  onClick={() => enrollStudent(selectedStudentId, selectedClassId)}
+                >
+                  {saving ? "Salvando..." : "Matricular na turma"}
+                </button>
+
+                <div className="mt-4 space-y-2 text-sm text-slate-600">
+                  <div>
+                    <span className="font-medium text-slate-800">Turma:</span>{" "}
+                    {selectedClass?.name ?? "—"}
+                  </div>
+                  <div>
+                    <span className="font-medium text-slate-800">Aluno selecionado:</span>{" "}
+                    {students.find((s) => s.id === selectedStudentId)?.full_name || "—"}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Lista matriculados */}
-        <section className="mt-6 bg-white rounded-2xl shadow p-5">
-          <div className="flex items-end justify-between gap-3">
-            <div>
-              <h2 className="font-semibold">Alunos matriculados (ativos)</h2>
-              <p className="text-xs text-gray-500 mt-1">
-                Remover encerra vínculo (não apaga histórico). Trocar turma cria novo vínculo ativo e encerra o anterior.
-              </p>
-            </div>
+        <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-6 py-5">
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Alunos matriculados (ativos)
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Remover encerra vínculo. Trocar turma cria novo vínculo ativo e preserva o histórico.
+                </p>
+              </div>
 
-            <button
-              className="rounded-xl border px-4 py-2 text-sm"
-              disabled={!selectedClassId || saving}
-              onClick={async () => {
-                const token = await getAccessToken();
-                if (!token || !selectedClassId) return;
-                await loadEnrollments(token, selectedClassId);
-              }}
-            >
-              Atualizar
-            </button>
+              <button
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                disabled={!selectedClassId || saving}
+                onClick={async () => {
+                  const token = await getAccessToken();
+                  if (!token || !selectedClassId) return;
+                  await loadEnrollments(token, selectedClassId);
+                }}
+              >
+                Atualizar
+              </button>
+            </div>
           </div>
 
           {!selectedClassId ? (
-            <p className="text-sm text-gray-600 mt-4">Selecione uma turma para ver as matrículas.</p>
-          ) : enrollments.length === 0 ? (
-            <p className="text-sm text-gray-600 mt-4">Nenhum aluno matriculado nesta turma.</p>
-          ) : (
-            <div className="mt-4 overflow-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left border-b">
-                    <th className="py-2">Aluno</th>
-                    <th className="py-2">Matrícula</th>
-                    <th className="py-2">Início</th>
-                    <th className="py-2">Trocar turma</th>
-                    <th className="py-2">Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {enrollments.map((e) => {
-                    const st = e.students;
-                    const displayName = st?.full_name || e.student_id;
-                    const reg = st?.registration_number || "—";
-
-                    return (
-                      <tr key={e.id} className="border-b">
-                        <td className="py-2">
-                          <div className="font-medium">{displayName}</div>
-                          <div className="text-xs text-gray-500 font-mono">{e.student_id}</div>
-                        </td>
-                        <td className="py-2">{reg}</td>
-                        <td className="py-2">{e.started_at || "—"}</td>
-                        <td className="py-2">
-                          <select
-                            className="border rounded-xl p-2"
-                            value={enrollmentByStudentId.get(e.student_id)?.class_id || selectedClassId}
-                            onChange={(ev) => moveStudentToClass(e.student_id, ev.target.value)}
-                            disabled={saving || classes.length === 0}
-                          >
-                            {classes.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="py-2">
-                          <button
-                            className="rounded-xl border px-3 py-2 text-sm disabled:opacity-60"
-                            disabled={saving}
-                            onClick={() => removeEnrollment(e.id)}
-                          >
-                            Remover
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="px-6 py-8 text-sm text-slate-500">
+              Selecione uma turma para ver as matrículas.
             </div>
+          ) : enrollments.length === 0 ? (
+            <div className="px-6 py-8 text-sm text-slate-500">
+              Nenhum aluno matriculado nesta turma.
+            </div>
+          ) : (
+            <>
+              <div className="hidden overflow-x-auto lg:block">
+                <table className="w-full min-w-[920px] text-sm">
+                  <thead className="bg-slate-50">
+                    <tr className="text-left text-slate-500">
+                      <th className="px-6 py-4 font-medium">Aluno</th>
+                      <th className="px-6 py-4 font-medium">Matrícula</th>
+                      <th className="px-6 py-4 font-medium">Início</th>
+                      <th className="px-6 py-4 font-medium">Trocar turma</th>
+                      <th className="px-6 py-4 font-medium">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200">
+                    {enrollments.map((e) => {
+                      const st = e.students;
+                      const displayName = st?.full_name || e.student_id;
+                      const reg = st?.registration_number || "—";
+
+                      return (
+                        <tr key={e.id} className="align-middle">
+                          <td className="px-6 py-4">
+                            <div className="font-medium text-slate-900">{displayName}</div>
+                            <div className="mt-1 text-xs text-slate-400">{e.student_id}</div>
+                          </td>
+                          <td className="px-6 py-4 text-slate-700">{reg}</td>
+                          <td className="px-6 py-4 text-slate-700">
+                            {formatDateBR(e.started_at)}
+                          </td>
+                          <td className="px-6 py-4">
+                            <select
+                              className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-slate-400"
+                              value={
+                                enrollmentByStudentId.get(e.student_id)?.class_id ||
+                                selectedClassId
+                              }
+                              onChange={(ev) =>
+                                moveStudentToClass(e.student_id, ev.target.value)
+                              }
+                              disabled={saving || classes.length === 0}
+                            >
+                              {classes.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-6 py-4">
+                            <button
+                              className="rounded-2xl border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-60"
+                              disabled={saving}
+                              onClick={() => removeEnrollment(e.id)}
+                            >
+                              Remover
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="space-y-4 p-4 lg:hidden">
+                {enrollments.map((e) => {
+                  const st = e.students;
+                  const displayName = st?.full_name || e.student_id;
+                  const reg = st?.registration_number || "—";
+
+                  return (
+                    <div
+                      key={e.id}
+                      className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate text-base font-semibold text-slate-900">
+                            {displayName}
+                          </div>
+                          <div className="mt-1 break-all text-xs text-slate-400">
+                            {e.student_id}
+                          </div>
+                        </div>
+
+                        <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                          Ativo
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                          <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                            Matrícula
+                          </div>
+                          <div className="mt-1 text-sm font-medium text-slate-800">{reg}</div>
+                        </div>
+
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                          <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                            Início
+                          </div>
+                          <div className="mt-1 text-sm font-medium text-slate-800">
+                            {formatDateBR(e.started_at)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4">
+                        <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                          Trocar turma
+                        </label>
+                        <select
+                          className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
+                          value={
+                            enrollmentByStudentId.get(e.student_id)?.class_id || selectedClassId
+                          }
+                          onChange={(ev) => moveStudentToClass(e.student_id, ev.target.value)}
+                          disabled={saving || classes.length === 0}
+                        >
+                          {classes.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <button
+                        className="mt-4 w-full rounded-2xl border border-red-200 px-4 py-3 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-60"
+                        disabled={saving}
+                        onClick={() => removeEnrollment(e.id)}
+                      >
+                        Remover matrícula
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </section>
       </div>

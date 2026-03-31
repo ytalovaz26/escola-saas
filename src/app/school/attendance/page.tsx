@@ -40,6 +40,27 @@ function currentMonthISO() {
   return `${yyyy}-${mm}`;
 }
 
+function formatDateLabel(iso?: string) {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y}`;
+}
+
+function formatMonthLabel(iso?: string) {
+  if (!iso) return "—";
+  const [y, m] = iso.split("-");
+  if (!y || !m) return iso;
+
+  const date = new Date(Number(y), Number(m) - 1, 1);
+  if (Number.isNaN(date.getTime())) return iso;
+
+  return date.toLocaleDateString("pt-BR", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
 function openLoadingTab() {
   const newTab = window.open("", "_blank");
 
@@ -320,44 +341,121 @@ export default function SchoolAttendancePage() {
   );
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-6">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div>
-              <div className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                Gestão Escolar
+    <main className="min-h-[60vh]">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+          <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 px-6 py-8 text-white md:px-8">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
+                  Gestão Escolar
+                </div>
+
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
+                  Chamada Escolar
+                </h1>
+
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
+                  Gere relatórios diários, mensais ou por período com abertura direta do PDF em nova aba.
+                </p>
               </div>
 
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
-                Chamada Escolar
-              </h1>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 backdrop-blur">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-300">
+                    Turmas disponíveis
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-white">
+                    {classes.length}
+                  </div>
+                </div>
 
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
-                Gere os PDFs de chamada diária, mensal ou por período pela visão da direção.
-              </p>
+                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 backdrop-blur">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-300">
+                    Modo atual
+                  </div>
+                  <div className="mt-1 text-sm font-medium text-white">
+                    {reportMode === "period" ? "Por período" : "Mensal"}
+                  </div>
+                </div>
+              </div>
             </div>
+          </div>
+        </section>
 
-            <div className="flex gap-2">
+        <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Relatório diário
+            </div>
+            <div className="mt-3 text-sm text-slate-600">
+              Gera a chamada com base no dia letivo selecionado.
+            </div>
+            <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              {formatDateLabel(date)}
+            </div>
+          </div>
+
+          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Referência mensal
+            </div>
+            <div className="mt-3 text-sm text-slate-600">
+              Use o mês para consolidar o PDF mensal da chamada.
+            </div>
+            <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              {formatMonthLabel(month)}
+            </div>
+          </div>
+
+          <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Ações rápidas
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => router.push("/school")}
-                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
               >
-                Voltar ao painel
+                Painel
+              </button>
+
+              <button
+                type="button"
+                onClick={loadClasses}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+                disabled={classesLoading}
+              >
+                {classesLoading ? "Recarregando..." : "Atualizar turmas"}
               </button>
             </div>
           </div>
-        </div>
+        </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-xs text-slate-500">Turma</label>
+        <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">Gerador de relatórios</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Escolha a turma, a data e o tipo de relatório antes de abrir o PDF.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              Abertura automática em nova aba
+            </div>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-4">
+            <div className="xl:col-span-2">
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Turma
+              </label>
               <select
                 value={classId}
                 onChange={(e) => setClassId(e.target.value)}
-                className="w-full rounded-2xl border border-slate-300 px-3 py-2"
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
                 disabled={classesLoading}
               >
                 <option value="">
@@ -375,21 +473,25 @@ export default function SchoolAttendancePage() {
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-slate-500">Data (PDF diário)</label>
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Data do PDF diário
+              </label>
               <input
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="w-full rounded-2xl border border-slate-300 px-3 py-2"
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-slate-500">Tipo de relatório</label>
+              <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Tipo de relatório
+              </label>
               <select
                 value={reportMode}
                 onChange={(e) => setReportMode(e.target.value as "month" | "period")}
-                className="w-full rounded-2xl border border-slate-300 px-3 py-2"
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
               >
                 <option value="month">Mensal</option>
                 <option value="period">Por período</option>
@@ -400,54 +502,51 @@ export default function SchoolAttendancePage() {
           <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
             {reportMode === "month" ? (
               <div>
-                <label className="mb-1 block text-xs text-slate-500">Mês</label>
+                <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Mês
+                </label>
                 <input
                   type="month"
                   value={month}
                   onChange={(e) => setMonth(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-300 px-3 py-2"
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
                 />
               </div>
             ) : (
               <>
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Início</label>
+                  <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Início
+                  </label>
                   <input
                     type="date"
                     value={start}
                     onChange={(e) => setStart(e.target.value)}
-                    className="w-full rounded-2xl border border-slate-300 px-3 py-2"
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Fim</label>
+                  <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Fim
+                  </label>
                   <input
                     type="date"
                     value={end}
                     onChange={(e) => setEnd(e.target.value)}
-                    className="w-full rounded-2xl border border-slate-300 px-3 py-2"
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
                   />
                 </div>
               </>
             )}
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={loadClasses}
-              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
-              disabled={classesLoading}
-            >
-              {classesLoading ? "Recarregando..." : "Recarregar"}
-            </button>
-
+          <div className="mt-5 flex flex-wrap gap-3">
             <button
               type="button"
               onClick={openDailyPdf}
               disabled={!classId || loading || dailyGenerating}
-              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+              className="rounded-2xl border border-slate-300 px-5 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
             >
               {dailyGenerating ? "Gerando PDF diário..." : "Gerar PDF diário"}
             </button>
@@ -456,7 +555,7 @@ export default function SchoolAttendancePage() {
               type="button"
               onClick={openMonthlyPdf}
               disabled={!classId || loading || monthlyGenerating}
-              className="rounded-2xl bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
             >
               {monthlyGenerating
                 ? reportMode === "period"
@@ -469,8 +568,9 @@ export default function SchoolAttendancePage() {
           </div>
 
           {selectedClass ? (
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-              <b>Turma selecionada:</b> {selectedClass.name}
+            <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
+              <span className="font-semibold text-slate-900">Turma selecionada:</span>{" "}
+              {selectedClass.name}
               {selectedClass.series ? ` • ${selectedClass.series}` : ""}
               {selectedClass.shift ? ` • ${selectedClass.shift}` : ""}
             </div>

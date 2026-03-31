@@ -42,9 +42,7 @@ export default function LoginPage() {
   const handledRecoveryRef = useRef(false);
 
   async function redirectByMe() {
-    const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
-    if (sessErr) throw new Error(sessErr.message);
-
+    const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token;
     if (!token) return;
 
@@ -72,15 +70,13 @@ export default function LoginPage() {
     if (hashErrorCode || hashErrorDescription) {
       handledRecoveryRef.current = true;
 
-      if (hashErrorCode === "otp_expired") {
-        setError("O link de recuperação expirou. Solicite um novo email.");
-      } else {
-        setError(
-          decodeURIComponent(
-            hashErrorDescription || "Não foi possível validar o link de recuperação."
-          )
-        );
-      }
+      setError(
+        hashErrorCode === "otp_expired"
+          ? "O link de recuperação expirou. Solicite um novo email."
+          : decodeURIComponent(
+              hashErrorDescription || "Erro ao validar recuperação."
+            )
+      );
 
       window.history.replaceState({}, document.title, "/login");
       return true;
@@ -95,12 +91,10 @@ export default function LoginPage() {
       });
 
       if (error) {
-        setError(error.message || "Não foi possível validar a recuperação.");
-        window.history.replaceState({}, document.title, "/login");
+        setError(error.message);
         return true;
       }
 
-      window.history.replaceState({}, document.title, "/reset-password");
       router.replace("/reset-password");
       return true;
     }
@@ -130,19 +124,19 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const { error: signInErr } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
 
-      if (signInErr) {
-        setError(signInErr.message || "Erro ao entrar.");
+      if (error) {
+        setError(error.message);
         return;
       }
 
       await redirectByMe();
     } catch (err: any) {
-      setError(err?.message || "Erro inesperado ao entrar.");
+      setError(err?.message || "Erro inesperado");
     } finally {
       setLoading(false);
     }
@@ -150,85 +144,105 @@ export default function LoginPage() {
 
   useEffect(() => {
     (async () => {
-      try {
-        const handled = await handleRecoveryRedirect();
-        if (handled) return;
+      const handled = await handleRecoveryRedirect();
+      if (handled) return;
 
-        const { data } = await supabase.auth.getSession();
-        if (data.session?.access_token) {
-          await redirectByMe();
-          return;
-        }
-      } catch (err: any) {
-        setError(err?.message || "Erro ao verificar sessão.");
-      } finally {
-        setCheckingSession(false);
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.access_token) {
+        await redirectByMe();
+        return;
       }
+
+      setCheckingSession(false);
     })();
   }, []);
 
   if (checkingSession) {
     return (
-      <div className="min-h-[70vh] flex items-start justify-center p-6">
-        <div className="w-full max-w-md space-y-4">
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
-            <h1 className="text-2xl font-semibold text-slate-900">Carregando...</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              Validando sessão ou link de recuperação.
-            </p>
-          </div>
-        </div>
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="animate-pulse text-slate-600">Carregando...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-[70vh] flex items-start justify-center p-6">
-      <div className="w-full max-w-md space-y-4">
+    <div className="min-h-screen flex">
+      {/* LADO ESQUERDO (branding SaaS) */}
+      <div className="hidden lg:flex w-1/2 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 text-white p-12 flex-col justify-between">
         <div>
-          <h1 className="text-3xl font-semibold">Entrar</h1>
-          <p className="text-sm text-gray-600">Acesse com seu e-mail e senha.</p>
+          <h1 className="text-3xl font-bold">Sua escola digital</h1>
+          <p className="mt-3 text-slate-300">
+            Gestão acadêmica, financeira e comunicação em um só lugar.
+          </p>
         </div>
 
-        {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={onSubmit} className="space-y-3">
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">E-mail</label>
-            <input
-              className="w-full rounded-md border px-3 py-2 text-sm"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="email"
-              type="email"
-              required
-            />
+        <div className="space-y-4">
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+            <p className="text-sm">
+              “Organizamos toda a escola em poucos dias.”
+            </p>
           </div>
 
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Senha</label>
-            <input
-              className="w-full rounded-md border px-3 py-2 text-sm"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              type="password"
-              required
-            />
+          <div className="text-xs text-slate-400">
+            Plataforma SaaS educacional • 2026
           </div>
+        </div>
+      </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md bg-black px-4 py-2 text-sm text-white hover:opacity-90 disabled:opacity-60"
-          >
-            {loading ? "Entrando..." : "Entrar"}
-          </button>
-        </form>
+      {/* LADO DIREITO */}
+      <div className="flex flex-1 items-center justify-center bg-slate-50 p-6">
+        <div className="w-full max-w-md">
+          <div className="bg-white rounded-3xl shadow-lg border border-slate-200 p-8">
+            <h2 className="text-2xl font-semibold text-slate-900">
+              Entrar na plataforma
+            </h2>
+            <p className="text-sm text-slate-500 mt-1">
+              Use seu e-mail e senha cadastrados
+            </p>
+
+            {error && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={onSubmit} className="mt-6 space-y-4">
+              <div>
+                <label className="text-xs text-slate-500">E-mail</label>
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  type="email"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-500">Senha</label>
+                <input
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  type="password"
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-xl bg-slate-900 text-white py-3 font-medium hover:opacity-90 transition disabled:opacity-60"
+              >
+                {loading ? "Entrando..." : "Entrar"}
+              </button>
+            </form>
+
+            <p className="mt-6 text-center text-xs text-slate-400">
+              Sistema escolar • Seguro • Multi-tenant
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );
