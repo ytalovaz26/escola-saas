@@ -1,0 +1,56 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export async function POST(req: Request) {
+  try {
+    const { email, password, schoolName } = await req.json();
+
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+
+    // 1. cria usuário
+    const { data: userData, error: userError } =
+      await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+      });
+
+    if (userError) throw userError;
+
+    const userId = userData.user.id;
+
+    // 2. cria escola
+    const { data: school, error: schoolError } = await supabase
+      .from("schools")
+      .insert({
+        name: schoolName,
+      })
+      .select()
+      .single();
+
+    if (schoolError) throw schoolError;
+
+    // 3. cria profile
+    await supabase.from("profiles").insert({
+      id: userId,
+      full_name: email,
+    });
+
+    // 4. vincula como diretor
+    await supabase.from("school_users").insert({
+      user_id: userId,
+      school_id: school.id,
+      role: "diretor",
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json(
+      { ok: false, error: e.message },
+      { status: 500 }
+    );
+  }
+}
