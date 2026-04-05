@@ -45,24 +45,15 @@ export async function POST(req: Request) {
     const password = String(body.password || "");
 
     if (!fullName) {
-      return NextResponse.json(
-        { ok: false, error: "Informe o nome do diretor." },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Informe o nome do diretor." }, { status: 400 });
     }
 
     if (!schoolName) {
-      return NextResponse.json(
-        { ok: false, error: "Informe o nome da escola." },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Informe o nome da escola." }, { status: 400 });
     }
 
     if (!email) {
-      return NextResponse.json(
-        { ok: false, error: "Informe o e-mail." },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Informe o e-mail." }, { status: 400 });
     }
 
     if (password.length < 6) {
@@ -119,11 +110,10 @@ export async function POST(req: Request) {
     createdSchoolId = school.id;
 
     // 3) cria profile
-    // IMPORTANTE: no seu banco a coluna correta é user_id
+    // IMPORTANTE: sem coluna email, porque ela não existe na sua tabela
     const { error: profileError } = await supabase.from("profiles").insert({
       user_id: createdUserId,
       full_name: fullName,
-      email,
     });
 
     if (profileError) {
@@ -141,7 +131,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4) vincula usuário à escola como diretor
+    // 4) vincula diretor à escola
     const { error: schoolUserError } = await supabase.from("school_users").insert({
       user_id: createdUserId,
       school_id: createdSchoolId,
