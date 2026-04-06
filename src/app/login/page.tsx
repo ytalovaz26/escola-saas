@@ -15,6 +15,13 @@ type MeResponse =
     }
   | { ok: false; error?: string };
 
+const DIRECTOR_GOOGLE_DRAFT_KEY = "director_signup_google_draft";
+
+type DirectorGoogleDraft = {
+  fullName: string;
+  schoolName: string;
+};
+
 async function callMe(accessToken: string): Promise<MeResponse> {
   const res = await fetch("/api/me", {
     method: "GET",
@@ -27,6 +34,16 @@ async function callMe(accessToken: string): Promise<MeResponse> {
 function parseHashParams(hash: string) {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   return new URLSearchParams(raw);
+}
+
+function saveDirectorGoogleDraft(draft: DirectorGoogleDraft) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(DIRECTOR_GOOGLE_DRAFT_KEY, JSON.stringify(draft));
+}
+
+function clearDirectorGoogleDraft() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(DIRECTOR_GOOGLE_DRAFT_KEY);
 }
 
 function BrandLogo({
@@ -245,6 +262,8 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      clearDirectorGoogleDraft();
+
       const { error: signInErr } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
@@ -296,6 +315,8 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
+      clearDirectorGoogleDraft();
+
       const res = await fetch("/api/auth/register-director", {
         method: "POST",
         headers: {
@@ -340,10 +361,31 @@ export default function LoginPage() {
     try {
       const origin = typeof window !== "undefined" ? window.location.origin : "";
 
+      if (mode === "signup") {
+        if (!directorName.trim()) {
+          setError("Informe o nome do diretor antes de continuar com Google.");
+          setGoogleLoading(false);
+          return;
+        }
+
+        if (!schoolName.trim()) {
+          setError("Informe o nome da escola antes de continuar com Google.");
+          setGoogleLoading(false);
+          return;
+        }
+
+        saveDirectorGoogleDraft({
+          fullName: directorName.trim(),
+          schoolName: schoolName.trim(),
+        });
+      } else {
+        clearDirectorGoogleDraft();
+      }
+
       const redirectTo =
         mode === "signup"
-          ? `${origin}/auth/callback?flow=director_signup_google`
-          : `${origin}/auth/callback?flow=login_google`;
+          ? `${origin}/auth/oauth-callback?flow=director_signup_google`
+          : `${origin}/auth/oauth-callback?flow=login_google`;
 
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
