@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -49,7 +49,7 @@ function clearDirectorGoogleDraft() {
   window.localStorage.removeItem(DIRECTOR_GOOGLE_DRAFT_KEY);
 }
 
-export default function OAuthCallbackPage() {
+function OAuthCallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -150,9 +150,7 @@ export default function OAuthCallbackPage() {
           {error ? "Erro na autenticação" : "Conectando com Google"}
         </h1>
 
-        <p className="mt-3 text-sm text-slate-600">
-          {error || status}
-        </p>
+        <p className="mt-3 text-sm text-slate-600">{error || status}</p>
 
         <div className="mt-6">
           <button
@@ -165,5 +163,22 @@ export default function OAuthCallbackPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function OAuthCallbackPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+          <div className="w-full max-w-lg rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
+            <h1 className="text-2xl font-semibold text-slate-900">Conectando com Google</h1>
+            <p className="mt-3 text-sm text-slate-600">Carregando autenticação...</p>
+          </div>
+        </div>
+      }
+    >
+      <OAuthCallbackInner />
+    </Suspense>
   );
 }
