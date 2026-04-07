@@ -364,13 +364,11 @@ export default function LoginPage() {
       if (mode === "signup") {
         if (!directorName.trim()) {
           setError("Informe o nome do diretor antes de continuar com Google.");
-          setGoogleLoading(false);
           return;
         }
 
         if (!schoolName.trim()) {
           setError("Informe o nome da escola antes de continuar com Google.");
-          setGoogleLoading(false);
           return;
         }
 
@@ -387,10 +385,11 @@ export default function LoginPage() {
           ? `${origin}/auth/oauth-callback?flow=director_signup_google`
           : `${origin}/auth/oauth-callback?flow=login_google`;
 
-      const { error } = await supabase.auth.signInWithOAuth({
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo,
+          skipBrowserRedirect: false,
           queryParams: {
             access_type: "offline",
             prompt: "select_account",
@@ -400,6 +399,11 @@ export default function LoginPage() {
 
       if (error) {
         setError(error.message || "Não foi possível iniciar login com Google.");
+        return;
+      }
+
+      if (data?.url && typeof window !== "undefined") {
+        window.location.href = data.url;
       }
     } catch (err: any) {
       setError(err?.message || "Erro inesperado ao iniciar Google.");

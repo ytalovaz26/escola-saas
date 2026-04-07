@@ -10,13 +10,6 @@ type RegisterDirectorBody = {
   password?: string;
 };
 
-type ProfilesShape = {
-  hasId: boolean;
-  hasUserId: boolean;
-  hasFullName: boolean;
-  hasEmail: boolean;
-};
-
 function getAdminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -37,27 +30,6 @@ function getAdminClient() {
   });
 }
 
-async function getProfilesShape(supabase: ReturnType<typeof getAdminClient>): Promise<ProfilesShape> {
-  const { data, error } = await supabase
-    .from("information_schema.columns")
-    .select("column_name")
-    .eq("table_schema", "public")
-    .eq("table_name", "profiles");
-
-  if (error) {
-    throw new Error("Não foi possível ler schema de profiles: " + error.message);
-  }
-
-  const cols = new Set((data || []).map((r: any) => String(r.column_name)));
-
-  return {
-    hasId: cols.has("id"),
-    hasUserId: cols.has("user_id"),
-    hasFullName: cols.has("full_name"),
-    hasEmail: cols.has("email"),
-  };
-}
-
 async function saveProfileSafe(params: {
   supabase: ReturnType<typeof getAdminClient>;
   userId: string;
@@ -66,76 +38,83 @@ async function saveProfileSafe(params: {
 }) {
   const { supabase, userId, fullName, email } = params;
 
-  const shape = await getProfilesShape(supabase);
+  const payloadFull = {
+    id: userId,
+    user_id: userId,
+    full_name: fullName || null,
+    email: email || null,
+  };
 
-  const payload: Record<string, any> = {};
-  if (shape.hasId) payload.id = userId;
-  if (shape.hasUserId) payload.user_id = userId;
-  if (shape.hasFullName) payload.full_name = fullName || null;
-  if (shape.hasEmail) payload.email = email || null;
+  const payloadNoEmail = {
+    id: userId,
+    user_id: userId,
+    full_name: fullName || null,
+  };
 
-  let existingByUserId: any = null;
-  let existingById: any = null;
+  const payloadOnlyUserId = {
+    user_id: userId,
+    full_name: fullName || null,
+  };
 
-  if (shape.hasUserId) {
-    const { data, error } = await supabase
+  const payloadOnlyId = {
+    id: userId,
+    full_name: fullName || null,
+  };
+
+  // tenta atualizar registro existente por user_id
+  {
+    const { data } = await supabase
       .from("profiles")
-      .select("*")
+      .select("user_id")
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (error) {
-      throw new Error("Falha ao buscar profiles por user_id: " + error.message);
-    }
+    if (data) {
+      let result = await supabase.from("profiles").update(payloadFull).eq("user_id", userId);
+      if (!result.error) return;
 
-    existingByUserId = data;
+      result = await supabase.from("profiles").update(payloadNoEmail).eq("user_id", userId);
+      if (!result.error) return;
+
+      result = await supabase.from("profiles").update(payloadOnlyUserId).eq("user_id", userId);
+      if (!result.error) return;
+    }
   }
 
-  if (!existingByUserId && shape.hasId) {
-    const { data, error } = await supabase
+  // tenta atualizar registro existente por id
+  {
+    const { data } = await supabase
       .from("profiles")
-      .select("*")
+      .select("id")
       .eq("id", userId)
       .maybeSingle();
 
-    if (error) {
-      throw new Error("Falha ao buscar profiles por id: " + error.message);
+    if (data) {
+      let result = await supabase.from("profiles").update(payloadFull).eq("id", userId);
+      if (!result.error) return;
+
+      result = await supabase.from("profiles").update(payloadNoEmail).eq("id", userId);
+      if (!result.error) return;
+
+      result = await supabase.from("profiles").update(payloadOnlyId).eq("id", userId);
+      if (!result.error) return;
     }
-
-    existingById = data;
   }
 
-  if (existingByUserId) {
-    const { error } = await supabase
-      .from("profiles")
-      .update(payload)
-      .eq("user_id", userId);
+  // se não existir, tenta inserir em formatos compatíveis
+  let result = await supabase.from("profiles").insert(payloadFull);
+  if (!result.error) return;
 
-    if (error) {
-      throw new Error("Falha ao atualizar profile por user_id: " + error.message);
-    }
+  result = await supabase.from("profiles").insert(payloadNoEmail);
+  if (!result.error) return;
 
-    return;
-  }
+  result = await supabase.from("profiles").insert(payloadOnlyUserId);
+  if (!result.error) return;
 
-  if (existingById) {
-    const { error } = await supabase
-      .from("profiles")
-      .update(payload)
-      .eq("id", userId);
+  result = await supabase.from("profiles").insert(payloadOnlyId);
+  if (!result.error) return;
 
-    if (error) {
-      throw new Error("Falha ao atualizar profile por id: " + error.message);
-    }
-
-    return;
-  }
-
-  const { error } = await supabase.from("profiles").insert(payload);
-
-  if (error) {
-    throw new Error("Falha ao inserir profile: " + error.message);
-  }
+  throw new Error(result.error?.message || "Não foi possível gravar profile.");
 }
 
 async function cleanupProfileSafe(params: {
