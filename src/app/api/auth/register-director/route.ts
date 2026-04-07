@@ -30,6 +30,66 @@ function getAdminClient() {
   });
 }
 
+async function upsertProfileSafe(params: {
+  supabase: ReturnType<typeof getAdminClient>;
+  userId: string;
+  fullName: string;
+}) {
+  const { supabase, userId, fullName } = params;
+
+  const attempts = [
+    async () =>
+      supabase.from("profiles").upsert(
+        {
+          id: userId,
+          full_name: fullName || null,
+        },
+        { onConflict: "id" }
+      ),
+
+    async () =>
+      supabase.from("profiles").upsert(
+        {
+          user_id: userId,
+          full_name: fullName || null,
+        },
+        { onConflict: "user_id" }
+      ),
+
+    async () =>
+      supabase.from("profiles").insert({
+        id: userId,
+        full_name: fullName || null,
+      }),
+
+    async () =>
+      supabase.from("profiles").insert({
+        user_id: userId,
+        full_name: fullName || null,
+      }),
+  ];
+
+  const errors: string[] = [];
+
+  for (const run of attempts) {
+    const { error } = await run();
+    if (!error) return;
+    errors.push(error.message);
+  }
+
+  throw new Error(errors.join(" | "));
+}
+
+async function cleanupProfileSafe(params: {
+  supabase: ReturnType<typeof getAdminClient>;
+  userId: string;
+}) {
+  const { supabase, userId } = params;
+
+  await supabase.from("profiles").delete().eq("id", userId);
+  await supabase.from("profiles").delete().eq("user_id", userId);
+}
+
 export async function POST(req: Request) {
   const supabase = getAdminClient();
 
@@ -45,15 +105,24 @@ export async function POST(req: Request) {
     const password = String(body.password || "");
 
     if (!fullName) {
-      return NextResponse.json({ ok: false, error: "Informe o nome do diretor." }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Informe o nome do diretor." },
+        { status: 400 }
+      );
     }
 
     if (!schoolName) {
-      return NextResponse.json({ ok: false, error: "Informe o nome da escola." }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Informe o nome da escola." },
+        { status: 400 }
+      );
     }
 
     if (!email) {
-      return NextResponse.json({ ok: false, error: "Informe o e-mail." }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Informe o e-mail." },
+        { status: 400 }
+      );
     }
 
     if (password.length < 6) {
@@ -109,14 +178,14 @@ export async function POST(req: Request) {
 
     createdSchoolId = school.id;
 
-    // 3) cria profile
-    // IMPORTANTE: sem coluna email, porque ela não existe na sua tabela
-    const { error: profileError } = await supabase.from("profiles").insert({
-      user_id: createdUserId,
-      full_name: fullName,
-    });
-
-    if (profileError) {
+    // 3) cria/atualiza profile com fallback seguro
+    try {
+      await upsertProfileSafe({
+        supabase,
+        userId: createdUserId,
+        fullName,
+      });
+    } catch (err: any) {
       if (createdSchoolId) {
         await supabase.from("schools").delete().eq("id", createdSchoolId);
       }
@@ -125,7 +194,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           ok: false,
-          error: profileError.message || "Não foi possível criar o perfil.",
+          error: err?.message || "Não foi possível criar o perfil.",
         },
         { status: 400 }
       );
@@ -140,10 +209,12 @@ export async function POST(req: Request) {
     });
 
     if (schoolUserError) {
-      await supabase.from("profiles").delete().eq("user_id", createdUserId);
+      await cleanupProfileSafe({ supabase, userId: createdUserId });
+
       if (createdSchoolId) {
         await supabase.from("schools").delete().eq("id", createdSchoolId);
       }
+
       await supabase.auth.admin.deleteUser(createdUserId);
 
       return NextResponse.json(
@@ -164,7 +235,7 @@ export async function POST(req: Request) {
   } catch (e: any) {
     if (createdUserId) {
       try {
-        await supabase.from("profiles").delete().eq("user_id", createdUserId);
+        await cleanupProfileSafe({ supabase, userId: createdUserId });
       } catch {}
 
       try {

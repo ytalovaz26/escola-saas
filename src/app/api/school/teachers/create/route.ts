@@ -75,27 +75,15 @@ async function findAuthUserByEmail(email: string) {
 async function upsertProfileSafe(params: {
   userId: string;
   fullName: string;
-  email: string;
 }) {
-  const { userId, fullName, email } = params;
+  const { userId, fullName } = params;
 
   const attempts = [
     async () =>
       supabaseAdmin.from("profiles").upsert(
         {
-          user_id: userId,
-          full_name: fullName || null,
-          email: email || null,
-        },
-        { onConflict: "user_id" }
-      ),
-
-    async () =>
-      supabaseAdmin.from("profiles").upsert(
-        {
           id: userId,
           full_name: fullName || null,
-          email: email || null,
         },
         { onConflict: "id" }
       ),
@@ -110,13 +98,16 @@ async function upsertProfileSafe(params: {
       ),
 
     async () =>
-      supabaseAdmin.from("profiles").upsert(
-        {
-          id: userId,
-          full_name: fullName || null,
-        },
-        { onConflict: "id" }
-      ),
+      supabaseAdmin.from("profiles").insert({
+        id: userId,
+        full_name: fullName || null,
+      }),
+
+    async () =>
+      supabaseAdmin.from("profiles").insert({
+        user_id: userId,
+        full_name: fullName || null,
+      }),
   ];
 
   const errors: string[] = [];
@@ -173,10 +164,7 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => ({}));
 
-    const email = String(body?.email || "")
-      .trim()
-      .toLowerCase();
-
+    const email = String(body?.email || "").trim().toLowerCase();
     const fullName = String(body?.full_name || "").trim();
     const tempPassword = String(body?.temp_password || "").trim();
 
@@ -261,7 +249,6 @@ export async function POST(req: Request) {
       await upsertProfileSafe({
         userId: teacherUserId,
         fullName,
-        email,
       });
     } catch (err: any) {
       return jsonError(
