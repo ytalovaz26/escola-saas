@@ -10,6 +10,13 @@ type RegisterDirectorBody = {
   password?: string;
 };
 
+type ProfilesShape = {
+  hasId: boolean;
+  hasUserId: boolean;
+  hasFullName: boolean;
+  hasEmail: boolean;
+};
+
 function getAdminClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -30,54 +37,105 @@ function getAdminClient() {
   });
 }
 
-async function upsertProfileSafe(params: {
+async function getProfilesShape(supabase: ReturnType<typeof getAdminClient>): Promise<ProfilesShape> {
+  const { data, error } = await supabase
+    .from("information_schema.columns")
+    .select("column_name")
+    .eq("table_schema", "public")
+    .eq("table_name", "profiles");
+
+  if (error) {
+    throw new Error("Não foi possível ler schema de profiles: " + error.message);
+  }
+
+  const cols = new Set((data || []).map((r: any) => String(r.column_name)));
+
+  return {
+    hasId: cols.has("id"),
+    hasUserId: cols.has("user_id"),
+    hasFullName: cols.has("full_name"),
+    hasEmail: cols.has("email"),
+  };
+}
+
+async function saveProfileSafe(params: {
   supabase: ReturnType<typeof getAdminClient>;
   userId: string;
   fullName: string;
+  email: string;
 }) {
-  const { supabase, userId, fullName } = params;
+  const { supabase, userId, fullName, email } = params;
 
-  const attempts = [
-    async () =>
-      supabase.from("profiles").upsert(
-        {
-          id: userId,
-          full_name: fullName || null,
-        },
-        { onConflict: "id" }
-      ),
+  const shape = await getProfilesShape(supabase);
 
-    async () =>
-      supabase.from("profiles").upsert(
-        {
-          user_id: userId,
-          full_name: fullName || null,
-        },
-        { onConflict: "user_id" }
-      ),
+  const payload: Record<string, any> = {};
+  if (shape.hasId) payload.id = userId;
+  if (shape.hasUserId) payload.user_id = userId;
+  if (shape.hasFullName) payload.full_name = fullName || null;
+  if (shape.hasEmail) payload.email = email || null;
 
-    async () =>
-      supabase.from("profiles").insert({
-        id: userId,
-        full_name: fullName || null,
-      }),
+  let existingByUserId: any = null;
+  let existingById: any = null;
 
-    async () =>
-      supabase.from("profiles").insert({
-        user_id: userId,
-        full_name: fullName || null,
-      }),
-  ];
+  if (shape.hasUserId) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
 
-  const errors: string[] = [];
+    if (error) {
+      throw new Error("Falha ao buscar profiles por user_id: " + error.message);
+    }
 
-  for (const run of attempts) {
-    const { error } = await run();
-    if (!error) return;
-    errors.push(error.message);
+    existingByUserId = data;
   }
 
-  throw new Error(errors.join(" | "));
+  if (!existingByUserId && shape.hasId) {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error("Falha ao buscar profiles por id: " + error.message);
+    }
+
+    existingById = data;
+  }
+
+  if (existingByUserId) {
+    const { error } = await supabase
+      .from("profiles")
+      .update(payload)
+      .eq("user_id", userId);
+
+    if (error) {
+      throw new Error("Falha ao atualizar profile por user_id: " + error.message);
+    }
+
+    return;
+  }
+
+  if (existingById) {
+    const { error } = await supabase
+      .from("profiles")
+      .update(payload)
+      .eq("id", userId);
+
+    if (error) {
+      throw new Error("Falha ao atualizar profile por id: " + error.message);
+    }
+
+    return;
+  }
+
+  const { error } = await supabase.from("profiles").insert(payload);
+
+  if (error) {
+    throw new Error("Falha ao inserir profile: " + error.message);
+  }
 }
 
 async function cleanupProfileSafe(params: {
@@ -86,8 +144,13 @@ async function cleanupProfileSafe(params: {
 }) {
   const { supabase, userId } = params;
 
-  await supabase.from("profiles").delete().eq("id", userId);
-  await supabase.from("profiles").delete().eq("user_id", userId);
+  try {
+    await supabase.from("profiles").delete().eq("user_id", userId);
+  } catch {}
+
+  try {
+    await supabase.from("profiles").delete().eq("id", userId);
+  } catch {}
 }
 
 export async function POST(req: Request) {
@@ -105,24 +168,15 @@ export async function POST(req: Request) {
     const password = String(body.password || "");
 
     if (!fullName) {
-      return NextResponse.json(
-        { ok: false, error: "Informe o nome do diretor." },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Informe o nome do diretor." }, { status: 400 });
     }
 
     if (!schoolName) {
-      return NextResponse.json(
-        { ok: false, error: "Informe o nome da escola." },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Informe o nome da escola." }, { status: 400 });
     }
 
     if (!email) {
-      return NextResponse.json(
-        { ok: false, error: "Informe o e-mail." },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Informe o e-mail." }, { status: 400 });
     }
 
     if (password.length < 6) {
@@ -132,7 +186,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1) cria usuário no Auth
     const { data: createdUser, error: createUserError } =
       await supabase.auth.admin.createUser({
         email,
@@ -155,7 +208,6 @@ export async function POST(req: Request) {
 
     createdUserId = createdUser.user.id;
 
-    // 2) cria escola
     const { data: school, error: schoolError } = await supabase
       .from("schools")
       .insert({
@@ -178,12 +230,12 @@ export async function POST(req: Request) {
 
     createdSchoolId = school.id;
 
-    // 3) cria/atualiza profile com fallback seguro
     try {
-      await upsertProfileSafe({
+      await saveProfileSafe({
         supabase,
         userId: createdUserId,
         fullName,
+        email,
       });
     } catch (err: any) {
       if (createdSchoolId) {
@@ -200,7 +252,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4) vincula diretor à escola
     const { error: schoolUserError } = await supabase.from("school_users").insert({
       user_id: createdUserId,
       school_id: createdSchoolId,

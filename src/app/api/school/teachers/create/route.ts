@@ -11,6 +11,13 @@ type SchoolUserRow = {
   created_at?: string | null;
 };
 
+type ProfilesShape = {
+  hasId: boolean;
+  hasUserId: boolean;
+  hasFullName: boolean;
+  hasEmail: boolean;
+};
+
 function jsonError(message: string, status: number, details?: any) {
   return NextResponse.json(
     {
@@ -72,53 +79,104 @@ async function findAuthUserByEmail(email: string) {
   return null;
 }
 
-async function upsertProfileSafe(params: {
-  userId: string;
-  fullName: string;
-}) {
-  const { userId, fullName } = params;
+async function getProfilesShape(): Promise<ProfilesShape> {
+  const { data, error } = await supabaseAdmin
+    .from("information_schema.columns")
+    .select("column_name")
+    .eq("table_schema", "public")
+    .eq("table_name", "profiles");
 
-  const attempts = [
-    async () =>
-      supabaseAdmin.from("profiles").upsert(
-        {
-          id: userId,
-          full_name: fullName || null,
-        },
-        { onConflict: "id" }
-      ),
-
-    async () =>
-      supabaseAdmin.from("profiles").upsert(
-        {
-          user_id: userId,
-          full_name: fullName || null,
-        },
-        { onConflict: "user_id" }
-      ),
-
-    async () =>
-      supabaseAdmin.from("profiles").insert({
-        id: userId,
-        full_name: fullName || null,
-      }),
-
-    async () =>
-      supabaseAdmin.from("profiles").insert({
-        user_id: userId,
-        full_name: fullName || null,
-      }),
-  ];
-
-  const errors: string[] = [];
-
-  for (const run of attempts) {
-    const { error } = await run();
-    if (!error) return;
-    errors.push(error.message);
+  if (error) {
+    throw new Error("Não foi possível ler schema de profiles: " + error.message);
   }
 
-  throw new Error(errors.join(" | "));
+  const cols = new Set((data || []).map((r: any) => String(r.column_name)));
+
+  return {
+    hasId: cols.has("id"),
+    hasUserId: cols.has("user_id"),
+    hasFullName: cols.has("full_name"),
+    hasEmail: cols.has("email"),
+  };
+}
+
+async function saveProfileSafe(params: {
+  userId: string;
+  fullName: string;
+  email: string;
+}) {
+  const { userId, fullName, email } = params;
+
+  const shape = await getProfilesShape();
+
+  const payload: Record<string, any> = {};
+  if (shape.hasId) payload.id = userId;
+  if (shape.hasUserId) payload.user_id = userId;
+  if (shape.hasFullName) payload.full_name = fullName || null;
+  if (shape.hasEmail) payload.email = email || null;
+
+  let existingByUserId: any = null;
+  let existingById: any = null;
+
+  if (shape.hasUserId) {
+    const { data, error } = await supabaseAdmin
+      .from("profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error("Falha ao buscar profiles por user_id: " + error.message);
+    }
+
+    existingByUserId = data;
+  }
+
+  if (!existingByUserId && shape.hasId) {
+    const { data, error } = await supabaseAdmin
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error("Falha ao buscar profiles por id: " + error.message);
+    }
+
+    existingById = data;
+  }
+
+  if (existingByUserId) {
+    const { error } = await supabaseAdmin
+      .from("profiles")
+      .update(payload)
+      .eq("user_id", userId);
+
+    if (error) {
+      throw new Error("Falha ao atualizar profile por user_id: " + error.message);
+    }
+
+    return;
+  }
+
+  if (existingById) {
+    const { error } = await supabaseAdmin
+      .from("profiles")
+      .update(payload)
+      .eq("id", userId);
+
+    if (error) {
+      throw new Error("Falha ao atualizar profile por id: " + error.message);
+    }
+
+    return;
+  }
+
+  const { error } = await supabaseAdmin.from("profiles").insert(payload);
+
+  if (error) {
+    throw new Error("Falha ao inserir profile: " + error.message);
+  }
 }
 
 export async function POST(req: Request) {
@@ -246,9 +304,10 @@ export async function POST(req: Request) {
     }
 
     try {
-      await upsertProfileSafe({
+      await saveProfileSafe({
         userId: teacherUserId,
         fullName,
+        email,
       });
     } catch (err: any) {
       return jsonError(
