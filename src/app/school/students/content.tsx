@@ -59,6 +59,7 @@ export default function StudentsPage() {
   const [selectedClassId, setSelectedClassId] = useState("");
 
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activeMap = useMemo(() => {
@@ -179,18 +180,13 @@ export default function StudentsPage() {
 
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
 
-      if (sessionError) {
-        setError(sessionError.message);
-        return;
-      }
-
-      const token = sessionData.session?.access_token;
-
-      if (!token) {
-        setError("Sessão inválida. Faça login novamente.");
+      if (sessionError || !sessionData.session) {
+        setError(sessionError?.message || "Sessão expirada. Faça login novamente.");
         router.replace("/login");
         return;
       }
+
+      const token = sessionData.session.access_token;
 
       const res = await fetch("/api/school/students/create", {
         method: "POST",
@@ -209,7 +205,7 @@ export default function StudentsPage() {
       const json = await safeJson(res);
 
       if (!res.ok || !json?.ok) {
-        setError(json?.error || "Erro ao criar aluno.");
+        setError(json?.error || "Erro ao cadastrar aluno.");
         return;
       }
 
@@ -247,6 +243,52 @@ export default function StudentsPage() {
       setError(e?.message || "Erro inesperado ao trocar turma.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deleteStudent(studentId: string, studentName: string) {
+    const confirmed = window.confirm(
+      `Tem certeza que deseja excluir o aluno "${studentName}"?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setDeletingId(studentId);
+      setError(null);
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError || !sessionData.session) {
+        setError(sessionError?.message || "Sessão expirada. Faça login novamente.");
+        router.replace("/login");
+        return;
+      }
+
+      const token = sessionData.session.access_token;
+
+      const res = await fetch(`/api/school/students/${studentId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(
+          json?.error ||
+            "Não foi possível excluir o aluno. Se ele já possui histórico, remova/desative os vínculos antes."
+        );
+        return;
+      }
+
+      await loadAll();
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao excluir aluno.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -369,7 +411,7 @@ export default function StudentsPage() {
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
                     <div className="text-sm text-slate-600 min-w-[140px]">
                       {cls?.name || "Sem turma"}
                     </div>
@@ -378,7 +420,7 @@ export default function StudentsPage() {
                       className="input"
                       value={classId || ""}
                       onChange={(e) => changeClass(s.id, e.target.value)}
-                      disabled={saving}
+                      disabled={saving || deletingId === s.id}
                     >
                       <option value="">Trocar</option>
                       {classes.map((c) => (
@@ -387,6 +429,15 @@ export default function StudentsPage() {
                         </option>
                       ))}
                     </select>
+
+                    <button
+                      type="button"
+                      onClick={() => deleteStudent(s.id, s.full_name)}
+                      disabled={saving || deletingId === s.id}
+                      className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+                    >
+                      {deletingId === s.id ? "Excluindo..." : "Excluir"}
+                    </button>
                   </div>
                 </div>
               );
