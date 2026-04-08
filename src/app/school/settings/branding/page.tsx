@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -17,8 +17,36 @@ type MePayload = {
   };
 };
 
+function safeRole(role: string | null | undefined) {
+  return String(role || "").trim().toLowerCase();
+}
+
+function canManageBranding(role: string | null | undefined) {
+  const r = safeRole(role);
+  return (
+    r === "diretor" ||
+    r === "director" ||
+    r === "coordenador" ||
+    r === "coordinator"
+  );
+}
+
+async function safeJson(res: Response) {
+  const text = await res.text();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: false, error: text || "Resposta inválida do servidor." };
+  }
+}
+
 export default function BrandingSettingsPage() {
   const router = useRouter();
+
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const iconInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [schoolId, setSchoolId] = useState<string | null>(null);
@@ -32,65 +60,84 @@ export default function BrandingSettingsPage() {
   const [uploading, setUploading] = useState<"logo" | "icon" | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData.session?.access_token;
-        if (!token) {
-          router.replace("/login");
-          return;
-        }
+  async function getTokenOrRedirect() {
+    const { data, error } = await supabase.auth.getSession();
 
-        const res = await fetch("/api/me", { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
-        const json = (await res.json()) as MePayload;
+    if (error || !data.session?.access_token) {
+      router.replace("/login");
+      return null;
+    }
 
-        if (!res.ok || !json?.ok) {
-          router.replace("/login");
-          return;
-        }
+    return data.session.access_token;
+  }
 
-        if (json.isPlatformAdmin) {
-          router.replace("/admin-master");
-          return;
-        }
-
-        const r = json.school?.role || null;
-        const sid = json.school?.schoolId || null;
-
-        setRole(r);
-        setSchoolId(sid);
-
-        if (r !== "diretor" && r !== "coordenador") {
-          router.replace("/school");
-          return;
-        }
-
-        setBrandName(json.branding?.brandName || "");
-        setBrandLogoUrl(json.branding?.brandLogoUrl || null);
-        setBrandIconUrl(json.branding?.brandIconUrl || null);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [router]);
-
-  async function saveBrandName() {
-    if (!schoolId) return;
-    setMsg(null);
-
+  async function loadPage() {
     try {
-      setSavingName(true);
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) {
+      setMsg(null);
+
+      const token = await getTokenOrRedirect();
+      if (!token) return;
+
+      const res = await fetch("/api/me", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+
+      const json = (await safeJson(res)) as MePayload | { ok?: false; error?: string } | null;
+
+      if (!res.ok || !json || !("ok" in json) || !json.ok) {
         router.replace("/login");
         return;
       }
 
+      if (json.isPlatformAdmin) {
+        router.replace("/admin-master");
+        return;
+      }
+
+      const r = json.school?.role || null;
+      const sid = json.school?.schoolId || null;
+
+      setRole(r);
+      setSchoolId(sid);
+
+      if (!canManageBranding(r)) {
+        router.replace("/school");
+        return;
+      }
+
+      setBrandName(json.branding?.brandName || "");
+      setBrandLogoUrl(json.branding?.brandLogoUrl || null);
+      setBrandIconUrl(json.branding?.brandIconUrl || null);
+    } catch (e: any) {
+      setMsg(e?.message || "Erro ao carregar branding.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function saveBrandName() {
+    if (!schoolId) {
+      setMsg("School ID não encontrado.");
+      return;
+    }
+
+    setMsg(null);
+
+    try {
+      setSavingName(true);
+
+      const token = await getTokenOrRedirect();
+      if (!token) return;
+
       const form = new FormData();
       form.append("schoolId", schoolId);
-      form.append("kind", "logo"); // kind é obrigatório na API, mas aqui não enviaremos arquivo.
+      form.append("kind", "logo");
       form.append("brandName", brandName.trim());
 
       const res = await fetch("/api/school/branding/upload", {
@@ -99,35 +146,38 @@ export default function BrandingSettingsPage() {
         body: form,
       });
 
-      const text = await res.text();
-      const json = text ? JSON.parse(text) : null;
+      const json = await safeJson(res);
 
       if (!res.ok || !json?.ok) {
         setMsg("Erro ao salvar nome: " + (json?.error || "desconhecido"));
         return;
       }
 
-      setMsg("Nome salvo ✅");
+      if (json?.brandName) {
+        setBrandName(String(json.brandName));
+      }
+
+      setMsg("Nome salvo com sucesso ✅");
     } catch (e: any) {
-      setMsg(e?.message || "Erro inesperado ao salvar nome");
+      setMsg(e?.message || "Erro inesperado ao salvar nome.");
     } finally {
       setSavingName(false);
     }
   }
 
   async function upload(kind: "logo" | "icon", file: File) {
-    if (!schoolId) return;
+    if (!schoolId) {
+      setMsg("School ID não encontrado.");
+      return;
+    }
+
     setMsg(null);
 
     try {
       setUploading(kind);
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) {
-        router.replace("/login");
-        return;
-      }
+      const token = await getTokenOrRedirect();
+      if (!token) return;
 
       const form = new FormData();
       form.append("schoolId", schoolId);
@@ -141,26 +191,30 @@ export default function BrandingSettingsPage() {
         body: form,
       });
 
-      const text = await res.text();
-      const json = text ? JSON.parse(text) : null;
+      const json = await safeJson(res);
 
       if (!res.ok || !json?.ok) {
-        setMsg(`Erro ao enviar ${kind}: ` + (json?.error || "desconhecido"));
+        setMsg(`Erro ao enviar ${kind === "logo" ? "logo" : "ícone"}: ` + (json?.error || "desconhecido"));
         return;
       }
 
-      if (kind === "logo") setBrandLogoUrl(json.url || null);
-      if (kind === "icon") setBrandIconUrl(json.url || null);
+      if (kind === "logo") {
+        setBrandLogoUrl(json?.url || json?.brandLogoUrl || null);
+      } else {
+        setBrandIconUrl(json?.url || json?.brandIconUrl || null);
+      }
 
-      setMsg(`${kind === "logo" ? "Logo" : "Ícone"} atualizado ✅`);
+      setMsg(`${kind === "logo" ? "Logo" : "Ícone"} atualizado com sucesso ✅`);
     } catch (e: any) {
-      setMsg(e?.message || "Erro inesperado no upload");
+      setMsg(e?.message || "Erro inesperado no upload.");
     } finally {
       setUploading(null);
     }
   }
 
-  if (loading) return <main className="p-6">Carregando...</main>;
+  if (loading) {
+    return <main className="p-6">Carregando...</main>;
+  }
 
   return (
     <main className="min-h-screen bg-gray-50 p-4 md:p-6">
@@ -169,9 +223,10 @@ export default function BrandingSettingsPage() {
           <div>
             <h1 className="text-2xl font-semibold">Identidade Visual</h1>
             <p className="text-sm text-gray-600 mt-1">
-              Perfil: <span className="font-medium">{role}</span>{" "}
+              Perfil: <span className="font-medium">{role || "-"}</span>
               {schoolId ? (
                 <>
+                  {" "}
                   • Escola: <span className="font-mono text-xs">{schoolId}</span>
                 </>
               ) : null}
@@ -179,21 +234,27 @@ export default function BrandingSettingsPage() {
           </div>
 
           <div className="flex gap-2">
-            <button onClick={() => router.push("/school")} className="rounded-xl border px-4 py-2">
+            <button
+              onClick={() => router.push("/school")}
+              className="rounded-xl border px-4 py-2 hover:bg-white"
+            >
               Voltar
             </button>
           </div>
         </header>
 
         {msg ? (
-          <div className="mt-4 rounded-xl border bg-white p-3 text-sm">{msg}</div>
+          <div className="mt-4 rounded-xl border bg-white p-3 text-sm">
+            {msg}
+          </div>
         ) : null}
 
         <section className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Nome */}
           <div className="bg-white rounded-2xl shadow p-5">
             <h2 className="font-semibold">Nome de exibição</h2>
-            <p className="text-sm text-gray-600 mt-1">Esse nome pode aparecer no topo do portal dos pais.</p>
+            <p className="text-sm text-gray-600 mt-1">
+              Esse nome pode aparecer no topo do portal dos pais.
+            </p>
 
             <div className="mt-4">
               <input
@@ -213,13 +274,17 @@ export default function BrandingSettingsPage() {
             </button>
           </div>
 
-          {/* Preview */}
           <div className="bg-white rounded-2xl shadow p-5">
             <h2 className="font-semibold">Pré-visualização</h2>
+
             <div className="mt-4 flex items-center gap-3">
               {brandLogoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={brandLogoUrl} alt="Logo" className="h-12 w-auto rounded bg-gray-50 border p-1" />
+                <img
+                  src={brandLogoUrl}
+                  alt="Logo"
+                  className="h-12 w-auto rounded bg-gray-50 border p-1 object-contain"
+                />
               ) : (
                 <div className="h-12 w-28 rounded bg-gray-100 border flex items-center justify-center text-xs text-gray-600">
                   Sem logo
@@ -235,29 +300,36 @@ export default function BrandingSettingsPage() {
             <div className="mt-4 flex items-center gap-3">
               {brandIconUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={brandIconUrl} alt="Ícone" className="h-14 w-14 rounded-2xl border bg-gray-50 p-1" />
+                <img
+                  src={brandIconUrl}
+                  alt="Ícone"
+                  className="h-14 w-14 rounded-2xl border bg-gray-50 p-1 object-contain"
+                />
               ) : (
                 <div className="h-14 w-14 rounded-2xl bg-gray-100 border flex items-center justify-center text-xs text-gray-600">
                   Sem ícone
                 </div>
               )}
+
               <div className="text-xs text-gray-600">
-                Recomendado: PNG 512×512 (quadrado). Esse será o ícone do app (PWA) no futuro.
+                Recomendado: PNG 512×512 quadrado. Esse será o ícone do app (PWA).
               </div>
             </div>
           </div>
         </section>
 
         <section className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Upload Logo */}
           <div className="bg-white rounded-2xl shadow p-5">
             <h2 className="font-semibold">Logo da escola</h2>
-            <p className="text-sm text-gray-600 mt-1">PNG/JPG/WEBP/SVG. Preferível fundo transparente.</p>
+            <p className="text-sm text-gray-600 mt-1">
+              PNG/JPG/WEBP/SVG. Preferível fundo transparente.
+            </p>
 
             <input
+              ref={logoInputRef}
               type="file"
               accept="image/png,image/jpeg,image/webp,image/svg+xml"
-              className="mt-4 block w-full text-sm"
+              className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) upload("logo", f);
@@ -266,31 +338,44 @@ export default function BrandingSettingsPage() {
               disabled={uploading !== null}
             />
 
-            <div className="text-xs text-gray-500 mt-2">
-              Dica: use largura de 600–1200px (boa qualidade no desktop e no mobile).
-            </div>
-
-            <div className="mt-4">
+            <div className="mt-4 flex flex-wrap gap-3">
               <button
-                onClick={() => router.push("/school")}
-                className="rounded-xl border px-4 py-2 text-sm"
+                type="button"
+                onClick={() => logoInputRef.current?.click()}
+                disabled={uploading !== null}
+                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm disabled:opacity-60"
               >
-                Ver no painel
+                {uploading === "logo" ? "Enviando logo..." : "Selecionar logo"}
               </button>
+
+              {brandLogoUrl ? (
+                <a
+                  href={brandLogoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-xl border px-4 py-2 text-sm hover:bg-slate-50"
+                >
+                  Ver logo atual
+                </a>
+              ) : null}
             </div>
 
-            {uploading === "logo" ? <div className="text-sm mt-3">Enviando logo...</div> : null}
+            <div className="text-xs text-gray-500 mt-3">
+              Dica: use largura entre 600 e 1200px para boa qualidade no desktop e mobile.
+            </div>
           </div>
 
-          {/* Upload Ícone */}
           <div className="bg-white rounded-2xl shadow p-5">
             <h2 className="font-semibold">Ícone do app (PWA)</h2>
-            <p className="text-sm text-gray-600 mt-1">PNG/WEBP quadrado. Ideal: 512×512.</p>
+            <p className="text-sm text-gray-600 mt-1">
+              PNG/WEBP/JPG quadrado. Ideal: 512×512.
+            </p>
 
             <input
+              ref={iconInputRef}
               type="file"
               accept="image/png,image/webp,image/jpeg"
-              className="mt-4 block w-full text-sm"
+              className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) upload("icon", f);
@@ -299,11 +384,31 @@ export default function BrandingSettingsPage() {
               disabled={uploading !== null}
             />
 
-            <div className="text-xs text-gray-500 mt-2">
-              Mais pra frente vamos usar isso no manifest do PWA por escola (ideal com subdomínio).
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => iconInputRef.current?.click()}
+                disabled={uploading !== null}
+                className="rounded-xl bg-slate-900 text-white px-4 py-2 text-sm disabled:opacity-60"
+              >
+                {uploading === "icon" ? "Enviando ícone..." : "Selecionar ícone"}
+              </button>
+
+              {brandIconUrl ? (
+                <a
+                  href={brandIconUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-xl border px-4 py-2 text-sm hover:bg-slate-50"
+                >
+                  Ver ícone atual
+                </a>
+              ) : null}
             </div>
 
-            {uploading === "icon" ? <div className="text-sm mt-3">Enviando ícone...</div> : null}
+            <div className="text-xs text-gray-500 mt-3">
+              Esse arquivo será usado futuramente no PWA da escola.
+            </div>
           </div>
         </section>
       </div>

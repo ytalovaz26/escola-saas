@@ -60,6 +60,7 @@ export default function StudentsPage() {
 
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [unassigningId, setUnassigningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activeMap = useMemo(() => {
@@ -79,26 +80,23 @@ export default function StudentsPage() {
     return students.filter((s) => activeMap.get(s.id) === filterClassId);
   }, [students, filterClassId, activeMap]);
 
+  async function getAccessToken() {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError || !sessionData.session) {
+      throw new Error(sessionError?.message || "Not authenticated");
+    }
+
+    return sessionData.session.access_token;
+  }
+
   async function loadAll() {
     setError(null);
 
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-
-    if (sessionError) {
-      setError(sessionError.message);
-      router.replace("/login");
-      return;
-    }
-
-    if (!sessionData.session) {
-      router.replace("/login");
-      return;
-    }
-
-    const token = sessionData.session.access_token;
-
     try {
-      const [cRes, sRes] = await Promise.all([
+      const token = await getAccessToken();
+
+      const [cRes, sRes, linksRes] = await Promise.all([
         fetch("/api/school/classes", {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
@@ -107,10 +105,15 @@ export default function StudentsPage() {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         }),
+        fetch("/api/school/class-students/list", {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        }),
       ]);
 
       const cJson = await safeJson(cRes);
       const sJson = await safeJson(sRes);
+      const linksJson = await safeJson(linksRes);
 
       if (!cRes.ok || !cJson?.ok) {
         setError(cJson?.error || "Erro ao carregar turmas.");
@@ -131,16 +134,11 @@ export default function StudentsPage() {
         setStudents(sJson.students || []);
       }
 
-      const { data: linksData, error: linksError } = await supabase
-        .from("student_classes")
-        .select("student_id,class_id")
-        .eq("is_active", true);
-
-      if (linksError) {
-        setError((prev) => prev || `Erro ao carregar vínculos: ${linksError.message}`);
+      if (!linksRes.ok || !linksJson?.ok) {
+        setError((prev) => prev || linksJson?.error || "Erro ao carregar vínculos.");
         setLinks([]);
       } else {
-        setLinks(linksData || []);
+        setLinks(linksJson.links || []);
       }
 
       const classFromUrl = searchParams.get("classId");
@@ -148,7 +146,12 @@ export default function StudentsPage() {
         setFilterClassId(classFromUrl);
       }
     } catch (e: any) {
-      setError(e?.message || "Erro inesperado ao carregar dados.");
+      const msg = e?.message || "Erro inesperado ao carregar dados.";
+      setError(msg);
+
+      if (msg === "Not authenticated" || String(msg).toLowerCase().includes("sessão")) {
+        router.replace("/login");
+      }
     }
   }
 
@@ -178,17 +181,9 @@ export default function StudentsPage() {
       setSaving(true);
       setError(null);
 
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const token = await getAccessToken();
 
-      if (sessionError || !sessionData.session) {
-        setError(sessionError?.message || "Sessão expirada. Faça login novamente.");
-        router.replace("/login");
-        return;
-      }
-
-      const token = sessionData.session.access_token;
-
-      const res = await fetch("/api/school/students/create", {
+      const res = await fetch("/api/school/students", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -198,14 +193,35 @@ export default function StudentsPage() {
           full_name: fullName.trim(),
           birth_date: birthDate || null,
           registration_number: registrationNumber.trim() || null,
-          class_id: selectedClassId,
         }),
       });
 
       const json = await safeJson(res);
 
-      if (!res.ok || !json?.ok) {
+      if (!res.ok || !json?.ok || !json?.student?.id) {
         setError(json?.error || "Erro ao cadastrar aluno.");
+        return;
+      }
+
+      const studentId = json.student.id as string;
+
+      const assignRes = await fetch("/api/school/class-students/assign", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          student_id: studentId,
+          class_id: selectedClassId,
+        }),
+      });
+
+      const assignJson = await safeJson(assignRes);
+
+      if (!assignRes.ok || !assignJson?.ok) {
+        setError(assignJson?.error || "Aluno criado, mas houve erro ao vincular à turma.");
+        await loadAll();
         return;
       }
 
@@ -215,7 +231,12 @@ export default function StudentsPage() {
 
       await loadAll();
     } catch (e: any) {
-      setError(e?.message || "Erro inesperado ao cadastrar aluno.");
+      const msg = e?.message || "Erro inesperado ao cadastrar aluno.";
+      setError(msg);
+
+      if (msg === "Not authenticated") {
+        router.replace("/login");
+      }
     } finally {
       setSaving(false);
     }
@@ -228,21 +249,81 @@ export default function StudentsPage() {
       setSaving(true);
       setError(null);
 
-      const { error: rpcError } = await supabase.rpc("set_active_class", {
-        p_student_id: studentId,
-        p_class_id: classId,
+      const token = await getAccessToken();
+
+      const res = await fetch("/api/school/class-students/assign", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          student_id: studentId,
+          class_id: classId,
+        }),
       });
 
-      if (rpcError) {
-        setError(`Erro ao trocar turma: ${rpcError.message}`);
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "Erro ao trocar turma.");
         return;
       }
 
       await loadAll();
     } catch (e: any) {
-      setError(e?.message || "Erro inesperado ao trocar turma.");
+      const msg = e?.message || "Erro inesperado ao trocar turma.";
+      setError(msg);
+
+      if (msg === "Not authenticated") {
+        router.replace("/login");
+      }
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function unassignStudent(studentId: string, studentName: string) {
+    const confirmed = window.confirm(
+      `Deseja remover o aluno "${studentName}" da turma atual?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setUnassigningId(studentId);
+      setError(null);
+
+      const token = await getAccessToken();
+
+      const res = await fetch("/api/school/class-students/unassign", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          student_id: studentId,
+        }),
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "Erro ao remover aluno da turma.");
+        return;
+      }
+
+      await loadAll();
+    } catch (e: any) {
+      const msg = e?.message || "Erro inesperado ao remover vínculo da turma.";
+      setError(msg);
+
+      if (msg === "Not authenticated") {
+        router.replace("/login");
+      }
+    } finally {
+      setUnassigningId(null);
     }
   }
 
@@ -257,15 +338,7 @@ export default function StudentsPage() {
       setDeletingId(studentId);
       setError(null);
 
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-
-      if (sessionError || !sessionData.session) {
-        setError(sessionError?.message || "Sessão expirada. Faça login novamente.");
-        router.replace("/login");
-        return;
-      }
-
-      const token = sessionData.session.access_token;
+      const token = await getAccessToken();
 
       const res = await fetch(`/api/school/students/${studentId}`, {
         method: "DELETE",
@@ -279,14 +352,19 @@ export default function StudentsPage() {
       if (!res.ok || !json?.ok) {
         setError(
           json?.error ||
-            "Não foi possível excluir o aluno. Se ele já possui histórico, remova/desative os vínculos antes."
+            "Não foi possível excluir o aluno. Se ele possui histórico, remova o vínculo da turma antes."
         );
         return;
       }
 
       await loadAll();
     } catch (e: any) {
-      setError(e?.message || "Erro inesperado ao excluir aluno.");
+      const msg = e?.message || "Erro inesperado ao excluir aluno.";
+      setError(msg);
+
+      if (msg === "Not authenticated") {
+        router.replace("/login");
+      }
     } finally {
       setDeletingId(null);
     }
@@ -420,7 +498,7 @@ export default function StudentsPage() {
                       className="input"
                       value={classId || ""}
                       onChange={(e) => changeClass(s.id, e.target.value)}
-                      disabled={saving || deletingId === s.id}
+                      disabled={saving || deletingId === s.id || unassigningId === s.id}
                     >
                       <option value="">Trocar</option>
                       {classes.map((c) => (
@@ -430,10 +508,21 @@ export default function StudentsPage() {
                       ))}
                     </select>
 
+                    {classId ? (
+                      <button
+                        type="button"
+                        onClick={() => unassignStudent(s.id, s.full_name)}
+                        disabled={saving || deletingId === s.id || unassigningId === s.id}
+                        className="rounded-xl border px-4 py-2 text-sm font-medium transition hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        {unassigningId === s.id ? "Removendo..." : "Remover da turma"}
+                      </button>
+                    ) : null}
+
                     <button
                       type="button"
                       onClick={() => deleteStudent(s.id, s.full_name)}
-                      disabled={saving || deletingId === s.id}
+                      disabled={saving || deletingId === s.id || unassigningId === s.id}
                       className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-60"
                     >
                       {deletingId === s.id ? "Excluindo..." : "Excluir"}
