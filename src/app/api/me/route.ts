@@ -8,7 +8,7 @@ type MeResponse = {
   user: { id: string; email: string | null };
   isPlatformAdmin: boolean;
   school?: { schoolId: string; role: string };
-  parent?: { parentId: string; schoolId: string };
+  parent?: { parentId: string; schoolId: string | null };
   branding?: {
     brandName: string | null;
     brandLogoUrl: string | null;
@@ -21,7 +21,7 @@ function jsonError(message: string, status: number) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }
 
-function normRole(role: any) {
+function normRole(role: unknown) {
   return String(role || "").trim().toLowerCase();
 }
 
@@ -37,9 +37,11 @@ export async function GET(req: Request) {
 
     // 1) Validar token e descobrir user
     const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
-    if (userErr || !userData?.user) return jsonError("Invalid token/session.", 401);
+    if (userErr || !userData?.user) {
+      return jsonError("Invalid token/session.", 401);
+    }
 
-    const userId = userData.user.id;
+    const userId = String(userData.user.id);
     const email = userData.user.email ?? null;
 
     // 2) Checar se é platform admin
@@ -49,11 +51,13 @@ export async function GET(req: Request) {
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (paErr) return jsonError("platform_admins check failed: " + paErr.message, 500);
+    if (paErr) {
+      return jsonError("platform_admins check failed: " + paErr.message, 500);
+    }
 
     const isPlatformAdmin = !!pa?.user_id;
 
-    // 3) Buscar vínculo em school_users (qualquer role escolar)
+    // 3) Buscar vínculo em school_users
     let school: MeResponse["school"] = undefined;
 
     if (!isPlatformAdmin) {
@@ -66,10 +70,15 @@ export async function GET(req: Request) {
         .limit(1)
         .maybeSingle();
 
-      if (linkErr) return jsonError("school_users lookup failed: " + linkErr.message, 500);
+      if (linkErr) {
+        return jsonError("school_users lookup failed: " + linkErr.message, 500);
+      }
 
       if (link?.school_id) {
-        school = { schoolId: link.school_id, role: String(link.role) };
+        school = {
+          schoolId: String(link.school_id),
+          role: String(link.role || ""),
+        };
       }
     }
 
@@ -83,10 +92,15 @@ export async function GET(req: Request) {
         .eq("user_id", userId)
         .maybeSingle();
 
-      if (pErr) return jsonError("parents lookup failed: " + pErr.message, 500);
+      if (pErr) {
+        return jsonError("parents lookup failed: " + pErr.message, 500);
+      }
 
       if (p?.id) {
-        parent = { parentId: p.id, schoolId: p.school_id ?? null };
+        parent = {
+          parentId: String(p.id),
+          schoolId: p.school_id ? String(p.school_id) : null,
+        };
       }
     }
 
@@ -98,9 +112,14 @@ export async function GET(req: Request) {
     } else if (school?.role) {
       const r = normRole(school.role);
 
-      if (r === "diretor" || r === "director" || r === "coordenador" || r === "coordinator") {
+      if (
+        r === "diretor" ||
+        r === "director" ||
+        r === "coordenador" ||
+        r === "coordinator"
+      ) {
         redirectTo = "/school";
-      } else if (r === "professor") {
+      } else if (r === "professor" || r === "teacher") {
         redirectTo = "/teacher";
       } else {
         redirectTo = "/";
@@ -109,13 +128,10 @@ export async function GET(req: Request) {
       redirectTo = "/parent";
     }
 
-    // ✅ 6) Branding (REGRA PROFISSIONAL)
-    // - Se for usuário escolar (school_users), usa school.schoolId
-    // - Se for parent, descobre a escola via student_parents -> students.school_id (fonte de verdade)
+    // 6) Branding
     let schoolIdForBranding: string | null = school?.schoolId ?? null;
 
     if (!schoolIdForBranding && parent?.parentId) {
-      // pega 1 filho ativo e puxa a escola real dele
       const { data: sp, error: spErr } = await supabaseAdmin
         .from("student_parents")
         .select("student_id")
@@ -125,7 +141,9 @@ export async function GET(req: Request) {
         .limit(1)
         .maybeSingle();
 
-      if (spErr) return jsonError("student_parents lookup failed: " + spErr.message, 500);
+      if (spErr) {
+        return jsonError("student_parents lookup failed: " + spErr.message, 500);
+      }
 
       if (sp?.student_id) {
         const { data: st, error: stErr } = await supabaseAdmin
@@ -134,8 +152,11 @@ export async function GET(req: Request) {
           .eq("id", sp.student_id)
           .maybeSingle();
 
-        if (stErr) return jsonError("students school lookup failed: " + stErr.message, 500);
-        schoolIdForBranding = (st?.school_id ?? null) as string | null;
+        if (stErr) {
+          return jsonError("students school lookup failed: " + stErr.message, 500);
+        }
+
+        schoolIdForBranding = st?.school_id ? String(st.school_id) : null;
       }
     }
 
@@ -148,11 +169,12 @@ export async function GET(req: Request) {
         .eq("id", schoolIdForBranding)
         .maybeSingle();
 
-      if (schErr) return jsonError("schools branding lookup failed: " + schErr.message, 500);
+      if (schErr) {
+        return jsonError("schools branding lookup failed: " + schErr.message, 500);
+      }
 
-      const brandName = (sch?.brand_name ?? sch?.name ?? null) as string | null;
       branding = {
-        brandName,
+        brandName: (sch?.brand_name ?? sch?.name ?? null) as string | null,
         brandLogoUrl: (sch?.brand_logo_url ?? null) as string | null,
         brandIconUrl: (sch?.brand_icon_url ?? null) as string | null,
       };
