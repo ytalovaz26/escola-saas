@@ -7,45 +7,69 @@ import { supabase } from "@/lib/supabaseClient";
 type MeResponse =
   | {
       ok: true;
-      redirectTo: string;
       user: { id: string; email: string | null };
       isPlatformAdmin: boolean;
       school?: { schoolId: string; role: string };
       parent?: { parentId: string; schoolId: string };
+      redirectTo: string;
     }
   | { ok: false; error?: string };
+
+const DIRECTOR_GOOGLE_DRAFT_KEY = "director_signup_google_draft";
+
+type DirectorGoogleDraft = {
+  fullName: string;
+  schoolName: string;
+};
 
 async function callMe(accessToken: string): Promise<MeResponse> {
   const res = await fetch("/api/me", {
     method: "GET",
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
     cache: "no-store",
   });
 
   return res.json();
 }
 
+function readDirectorGoogleDraft(): DirectorGoogleDraft | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(DIRECTOR_GOOGLE_DRAFT_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as DirectorGoogleDraft;
+  } catch {
+    return null;
+  }
+}
+
+function clearDirectorGoogleDraft() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(DIRECTOR_GOOGLE_DRAFT_KEY);
+}
+
 export default function AuthCallbackPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+
   const [error, setError] = useState<string | null>(null);
+  const [loadingText, setLoadingText] = useState("Validando autenticação...");
 
   useEffect(() => {
-    (async () => {
+    async function run() {
       try {
         const code = searchParams.get("code");
-        const flow = searchParams.get("flow") || "login_google";
+        const flow = searchParams.get("flow");
 
-        if (!code) {
-          setError("Código de autenticação não encontrado.");
-          return;
-        }
-
-        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-
-        if (exchangeError) {
-          setError(exchangeError.message || "Não foi possível concluir o login com Google.");
-          return;
+        if (code) {
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          if (exchangeError) {
+            setError(exchangeError.message || "Não foi possível concluir o login.");
+            return;
+          }
         }
 
         const {
@@ -54,31 +78,29 @@ export default function AuthCallbackPage() {
         } = await supabase.auth.getSession();
 
         if (sessionError || !session?.access_token || !session.user) {
-          setError(sessionError?.message || "Sessão inválida após autenticação.");
+          setError("Sessão não encontrada após autenticação.");
           return;
         }
 
         if (flow === "director_signup_google") {
-          const fullName =
-            String(session.user.user_metadata?.full_name || "").trim() ||
-            String(session.user.user_metadata?.name || "").trim() ||
-            "Diretor";
+          setLoadingText("Finalizando cadastro do diretor...");
 
-          const email = String(session.user.email || "").trim().toLowerCase();
+          const draft = readDirectorGoogleDraft();
 
-          const schoolName =
-            String(session.user.user_metadata?.school_name || "").trim() || "Nova Escola";
+          if (!draft?.fullName?.trim() || !draft?.schoolName?.trim()) {
+            setError("Não foi possível concluir o cadastro com Google. Dados da escola não encontrados.");
+            return;
+          }
 
-          const res = await fetch("/api/auth/register-director-google", {
+          const res = await fetch("/api/auth/register-director/google", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               Authorization: `Bearer ${session.access_token}`,
             },
             body: JSON.stringify({
-              fullName,
-              schoolName,
-              email,
+              fullName: draft.fullName.trim(),
+              schoolName: draft.schoolName.trim(),
             }),
           });
 
@@ -88,7 +110,11 @@ export default function AuthCallbackPage() {
             setError(json?.error || "Não foi possível concluir o cadastro com Google.");
             return;
           }
+
+          clearDirectorGoogleDraft();
         }
+
+        setLoadingText("Redirecionando...");
 
         const me = await callMe(session.access_token);
 
@@ -101,7 +127,9 @@ export default function AuthCallbackPage() {
       } catch (err: any) {
         setError(err?.message || "Erro inesperado na autenticação.");
       }
-    })();
+    }
+
+    run();
   }, [router, searchParams]);
 
   return (
@@ -110,8 +138,9 @@ export default function AuthCallbackPage() {
         {error ? (
           <>
             <h1 className="text-2xl font-semibold text-slate-900">Erro na autenticação</h1>
-            <p className="mt-2 text-sm text-slate-600">{error}</p>
+            <p className="mt-2 text-sm text-red-600">{error}</p>
             <button
+              type="button"
               onClick={() => router.replace("/login")}
               className="mt-6 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white"
             >
@@ -120,10 +149,8 @@ export default function AuthCallbackPage() {
           </>
         ) : (
           <>
-            <h1 className="text-2xl font-semibold text-slate-900">Concluindo acesso...</h1>
-            <p className="mt-2 text-sm text-slate-600">
-              Aguarde enquanto validamos sua autenticação.
-            </p>
+            <h1 className="text-2xl font-semibold text-slate-900">Carregando...</h1>
+            <p className="mt-2 text-sm text-slate-600">{loadingText}</p>
           </>
         )}
       </div>
