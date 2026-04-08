@@ -1,8 +1,8 @@
-// src/app/api/school/students/create/route.ts
-
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
 import { jsonFail, jsonOk, logRouteError, readJsonBody } from "@/lib/http";
+
+export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
@@ -11,51 +11,80 @@ export async function POST(req: Request) {
   try {
     const { json } = await readJsonBody(req);
 
-    const full_name = String(json?.full_name || "").trim();
-    const birth_date = json?.birth_date || null;
-    const registration_number = json?.registration_number || null;
-    const class_id = json?.class_id;
+    const fullName = String(json?.full_name || "").trim();
+    const birthDate = json?.birth_date ? String(json.birth_date).trim() : null;
+    const registrationNumber = json?.registration_number
+      ? String(json.registration_number).trim()
+      : null;
+    const classId = String(json?.class_id || "").trim();
 
-    if (!full_name) {
-      return jsonFail(422, "Nome do aluno é obrigatório");
-    }
+    if (!fullName) return jsonFail(422, "Informe o nome completo do aluno.");
+    if (!classId) return jsonFail(422, "Selecione a turma do aluno.");
 
-    if (!class_id) {
-      return jsonFail(422, "Turma é obrigatória");
-    }
+    // 1) valida se a turma pertence à escola do diretor/coordenador
+    const { data: classRow, error: classErr } = await supabaseAdmin
+      .from("classes")
+      .select("id, school_id")
+      .eq("id", classId)
+      .eq("school_id", guard.schoolId)
+      .maybeSingle();
 
-    // 1️⃣ cria aluno
-    const { data: student, error: insertError } = await supabaseAdmin
+    if (classErr) return jsonFail(500, classErr.message);
+    if (!classRow) return jsonFail(404, "Turma não encontrada para esta escola.");
+
+    // 2) cria aluno já com school_id
+    const { data: student, error: studentErr } = await supabaseAdmin
       .from("students")
       .insert({
         school_id: guard.schoolId,
-        full_name,
-        birth_date,
-        registration_number,
+        full_name: fullName,
+        birth_date: birthDate,
+        registration_number: registrationNumber,
       })
-      .select("id")
+      .select("id, school_id, full_name, birth_date, registration_number, created_at")
       .single();
 
-    if (insertError) {
-      return jsonFail(500, insertError.message);
+    if (studentErr) {
+      return jsonFail(500, `Erro ao criar aluno: ${studentErr.message}`);
     }
 
-    // 2️⃣ vincula turma (RPC que você já usa)
-    const { error: rpcError } = await supabaseAdmin.rpc("set_active_class", {
-      p_student_id: student.id,
-      p_class_id: class_id,
+    // 3) desativa vínculos antigos só por segurança
+    const { error: deactivateErr } = await supabaseAdmin
+      .from("student_classes")
+      .update({ is_active: false })
+      .eq("student_id", student.id)
+      .eq("school_id", guard.schoolId)
+      .eq("is_active", true);
+
+    if (deactivateErr) {
+      await supabaseAdmin.from("students").delete().eq("id", student.id).eq("school_id", guard.schoolId);
+      return jsonFail(500, `Erro ao preparar vínculo da turma: ${deactivateErr.message}`);
+    }
+
+    // 4) cria vínculo ativo com a turma
+    const { error: linkErr } = await supabaseAdmin
+      .from("student_classes")
+      .insert({
+        school_id: guard.schoolId,
+        student_id: student.id,
+        class_id: classId,
+        is_active: true,
+      });
+
+    if (linkErr) {
+      await supabaseAdmin.from("students").delete().eq("id", student.id).eq("school_id", guard.schoolId);
+      return jsonFail(500, `Erro ao vincular aluno na turma: ${linkErr.message}`);
+    }
+
+    return jsonOk({
+      student,
+      active_class: {
+        student_id: student.id,
+        class_id: classId,
+      },
     });
-
-    if (rpcError) {
-      return jsonFail(500, rpcError.message);
-    }
-
-    return jsonOk({ student });
   } catch (err) {
-    logRouteError("POST /api/school/students/create", err, {
-      schoolId: guard.schoolId,
-    });
-
-    return jsonFail(500, "Erro interno ao criar aluno");
+    logRouteError("POST /api/school/students/create", err);
+    return jsonFail(500, "Internal error");
   }
 }
