@@ -128,7 +128,10 @@ export default function StudentsPage() {
       }
 
       if (!sRes.ok || !sJson?.ok) {
-        setError((prev) => prev || sJson?.error || "Erro ao carregar alunos.");
+        const errMsg = String(sJson?.error || "");
+        if (!errMsg.toLowerCase().includes("classid")) {
+          setError((prev) => prev || errMsg || "Erro ao carregar alunos.");
+        }
         setStudents([]);
       } else {
         setStudents(sJson.students || []);
@@ -339,6 +342,30 @@ export default function StudentsPage() {
       setError(null);
 
       const token = await getAccessToken();
+
+      const activeClassId = activeMap.get(studentId);
+
+      if (activeClassId) {
+        const unassignRes = await fetch("/api/school/class-students/unassign", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            student_id: studentId,
+          }),
+        });
+
+        const unassignJson = await safeJson(unassignRes);
+
+        if (!unassignRes.ok || !unassignJson?.ok) {
+          setError(
+            unassignJson?.error || "Não foi possível remover o aluno da turma antes de excluir."
+          );
+          return;
+        }
+      }
 
       const res = await fetch(`/api/school/students/${studentId}`, {
         method: "DELETE",
