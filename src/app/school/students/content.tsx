@@ -177,33 +177,39 @@ export default function StudentsPage() {
       setSaving(true);
       setError(null);
 
-      const { data: insertedStudent, error: insertError } = await supabase
-        .from("students")
-        .insert({
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        setError(sessionError.message);
+        return;
+      }
+
+      const token = sessionData.session?.access_token;
+
+      if (!token) {
+        setError("Sessão inválida. Faça login novamente.");
+        router.replace("/login");
+        return;
+      }
+
+      const res = await fetch("/api/school/students/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
           full_name: fullName.trim(),
           birth_date: birthDate || null,
           registration_number: registrationNumber.trim() || null,
-        })
-        .select("id")
-        .single();
-
-      if (insertError) {
-        setError(`Erro ao criar aluno: ${insertError.message}`);
-        return;
-      }
-
-      if (!insertedStudent?.id) {
-        setError("Aluno criado sem retorno de ID. Tente novamente.");
-        return;
-      }
-
-      const { error: rpcError } = await supabase.rpc("set_active_class", {
-        p_student_id: insertedStudent.id,
-        p_class_id: selectedClassId,
+          class_id: selectedClassId,
+        }),
       });
 
-      if (rpcError) {
-        setError(`Aluno criado, mas houve erro ao vincular turma: ${rpcError.message}`);
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "Erro ao criar aluno.");
         return;
       }
 
