@@ -3,8 +3,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
-function jsonFail(status: number, error: string) {
-  return NextResponse.json({ ok: false, error }, { status });
+function jsonFail(status: number, error: string, details?: any) {
+  return NextResponse.json({ ok: false, error, details: details ?? null }, { status });
 }
 
 function jsonOk(payload: any, status = 200) {
@@ -42,13 +42,8 @@ export async function GET(req: Request) {
       .limit(1)
       .maybeSingle();
 
-    if (schoolErr) {
-      return jsonFail(500, schoolErr.message);
-    }
-
-    if (!schoolLink?.school_id) {
-      return jsonFail(403, "Professor não vinculado a nenhuma escola.");
-    }
+    if (schoolErr) return jsonFail(500, schoolErr.message);
+    if (!schoolLink?.school_id) return jsonFail(403, "Professor não vinculado a nenhuma escola.");
 
     const role = normRole(schoolLink.role);
     if (!(role === "professor" || role === "teacher")) {
@@ -62,6 +57,7 @@ export async function GET(req: Request) {
       .select(`
         id,
         class_id,
+        teacher_user_id,
         created_at,
         classes (
           id,
@@ -70,13 +66,11 @@ export async function GET(req: Request) {
           shift
         )
       `)
-      .eq("teacher_id", userId)
+      .eq("teacher_user_id", userId)
       .eq("school_id", schoolId)
       .order("created_at", { ascending: false });
 
-    if (error) {
-      return jsonFail(500, error.message);
-    }
+    if (error) return jsonFail(500, error.message);
 
     const classes = (data || []).map((item: any) => ({
       assignmentId: item.id,
