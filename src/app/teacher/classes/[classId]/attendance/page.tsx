@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { openPdfFromResponse } from "@/lib/openPdfOnClient";
 
 type RosterRow = {
   student_id: string;
@@ -44,6 +45,16 @@ function currentMonthISO() {
   return `${yyyy}-${mm}`;
 }
 
+function slugifyFileName(value: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+}
+
 async function safeJson(res: Response) {
   const text = await res.text();
   if (!text) return null;
@@ -61,6 +72,9 @@ export default function TeacherAttendancePage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [generatingDailyPdf, setGeneratingDailyPdf] = useState(false);
+  const [generatingReportPdf, setGeneratingReportPdf] = useState(false);
+
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
@@ -291,66 +305,111 @@ export default function TeacherAttendancePage() {
   async function openPdfDaily() {
     setErr(null);
     setMsg(null);
+    setGeneratingDailyPdf(true);
 
-    const token = await ensureToken();
-    if (!token) return;
+    try {
+      const token = await ensureToken();
+      if (!token) return;
 
-    const url = `/api/teacher/attendance/report?classId=${encodeURIComponent(classId)}&date=${encodeURIComponent(date)}`;
+      const url = `/api/teacher/attendance/report?classId=${encodeURIComponent(
+        classId
+      )}&date=${encodeURIComponent(date)}`;
 
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
 
-    if (!res.ok) {
-      const text = await res.text();
-      try {
-        const j = text ? JSON.parse(text) : null;
-        setErr((j?.error || "Falha ao gerar PDF.") + (j?.details ? `\n\nDetalhes: ${j.details}` : ""));
-      } catch {
-        setErr(text || "Falha ao gerar PDF.");
+      if (!res.ok) {
+        const text = await res.text();
+        try {
+          const j = text ? JSON.parse(text) : null;
+          setErr(
+            (j?.error || "Falha ao gerar PDF.") +
+              (j?.details ? `\n\nDetalhes: ${j.details}` : "")
+          );
+        } catch {
+          setErr(text || "Falha ao gerar PDF.");
+        }
+        return;
       }
-      return;
-    }
 
-    const blob = await res.blob();
-    window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
-    setMsg("PDF diário gerado com sucesso.");
+      const fileName = `${slugifyFileName(
+        `${schoolName}-presenca-diaria-${date}`
+      )}.pdf`;
+
+      await openPdfFromResponse(res, {
+        fileName,
+      });
+
+      setMsg("PDF diário gerado com sucesso.");
+    } catch (e: any) {
+      setErr(e?.message || "Erro inesperado ao gerar PDF diário.");
+    } finally {
+      setGeneratingDailyPdf(false);
+    }
   }
 
   async function openPdfReport() {
     setErr(null);
     setMsg(null);
+    setGeneratingReportPdf(true);
 
-    const token = await ensureToken();
-    if (!token) return;
+    try {
+      const token = await ensureToken();
+      if (!token) return;
 
-    const qs =
-      reportMode === "period"
-        ? `start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
-        : `month=${encodeURIComponent(month)}`;
+      const qs =
+        reportMode === "period"
+          ? `start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+          : `month=${encodeURIComponent(month)}`;
 
-    const url = `/api/teacher/attendance/report-month?classId=${encodeURIComponent(classId)}&${qs}`;
+      const url = `/api/teacher/attendance/report-month?classId=${encodeURIComponent(
+        classId
+      )}&${qs}`;
 
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    });
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
 
-    if (!res.ok) {
-      const text = await res.text();
-      try {
-        const j = text ? JSON.parse(text) : null;
-        setErr((j?.error || "Falha ao gerar PDF.") + (j?.details ? `\n\nDetalhes: ${j.details}` : ""));
-      } catch {
-        setErr(text || "Falha ao gerar PDF.");
+      if (!res.ok) {
+        const text = await res.text();
+        try {
+          const j = text ? JSON.parse(text) : null;
+          setErr(
+            (j?.error || "Falha ao gerar PDF.") +
+              (j?.details ? `\n\nDetalhes: ${j.details}` : "")
+          );
+        } catch {
+          setErr(text || "Falha ao gerar PDF.");
+        }
+        return;
       }
-      return;
-    }
 
-    const blob = await res.blob();
-    window.open(URL.createObjectURL(blob), "_blank", "noopener,noreferrer");
-    setMsg("PDF mensal gerado com sucesso.");
+      const fileName =
+        reportMode === "period"
+          ? `${slugifyFileName(
+              `${schoolName}-presenca-periodo-${start}-a-${end}`
+            )}.pdf`
+          : `${slugifyFileName(
+              `${schoolName}-presenca-mensal-${month}`
+            )}.pdf`;
+
+      await openPdfFromResponse(res, {
+        fileName,
+      });
+
+      setMsg(
+        reportMode === "period"
+          ? "PDF por período gerado com sucesso."
+          : "PDF mensal gerado com sucesso."
+      );
+    } catch (e: any) {
+      setErr(e?.message || "Erro inesperado ao gerar PDF do relatório.");
+    } finally {
+      setGeneratingReportPdf(false);
+    }
   }
 
   useEffect(() => {
@@ -492,19 +551,26 @@ export default function TeacherAttendancePage() {
 
             <button
               type="button"
-              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm"
+              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm disabled:opacity-50"
               onClick={openPdfDaily}
-              disabled={roster.length === 0}
+              disabled={roster.length === 0 || generatingDailyPdf}
             >
-              Gerar PDF (Diário)
+              {generatingDailyPdf ? "Gerando PDF diário..." : "Gerar PDF (Diário)"}
             </button>
 
             <button
               type="button"
-              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm"
+              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm disabled:opacity-50"
               onClick={openPdfReport}
+              disabled={generatingReportPdf}
             >
-              Gerar PDF (Mensal)
+              {generatingReportPdf
+                ? reportMode === "period"
+                  ? "Gerando PDF por período..."
+                  : "Gerando PDF mensal..."
+                : reportMode === "period"
+                  ? "Gerar PDF (Período)"
+                  : "Gerar PDF (Mensal)"}
             </button>
 
             <button
