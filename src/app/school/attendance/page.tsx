@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -9,6 +9,12 @@ type ClassItem = {
   name: string;
   series?: string | null;
   shift?: string | null;
+};
+
+type GeneratedPdfState = {
+  kind: "daily" | "monthly";
+  url: string;
+  fileName: string;
 };
 
 async function safeJson(res: Response) {
@@ -61,6 +67,25 @@ function formatMonthLabel(iso?: string) {
   });
 }
 
+function sanitizeFileNamePart(value: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+}
+
+function isLikelyMobile() {
+  if (typeof window === "undefined") return false;
+
+  const ua = window.navigator.userAgent || "";
+  const smallScreen = window.innerWidth <= 900;
+
+  return /Android|iPhone|iPad|iPod|Mobile|Opera Mini|IEMobile/i.test(ua) || smallScreen;
+}
+
 function openLoadingTab() {
   const newTab = window.open("", "_blank");
 
@@ -71,6 +96,7 @@ function openLoadingTab() {
         <head>
           <title>Gerando PDF...</title>
           <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
           <style>
             body {
               font-family: Arial, sans-serif;
@@ -115,6 +141,10 @@ export default function SchoolAttendancePage() {
   const [start, setStart] = useState(todayISO());
   const [end, setEnd] = useState(todayISO());
 
+  const [generatedPdf, setGeneratedPdf] = useState<GeneratedPdfState | null>(null);
+
+  const lastObjectUrlRef = useRef<string | null>(null);
+
   async function ensureToken() {
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
@@ -125,6 +155,99 @@ export default function SchoolAttendancePage() {
     }
 
     return token;
+  }
+
+  function clearPreviousPdfUrl() {
+    if (lastObjectUrlRef.current) {
+      URL.revokeObjectURL(lastObjectUrlRef.current);
+      lastObjectUrlRef.current = null;
+    }
+  }
+
+  function setNewGeneratedPdf(next: GeneratedPdfState | null) {
+    clearPreviousPdfUrl();
+
+    if (next) {
+      lastObjectUrlRef.current = next.url;
+    }
+
+    setGeneratedPdf(next);
+  }
+
+  function buildDailyFileName(selectedClassName?: string | null) {
+    const classPart = sanitizeFileNamePart(selectedClassName || "turma");
+    const datePart = sanitizeFileNamePart(date || todayISO());
+    return `chamada-diaria-${classPart}-${datePart}.pdf`;
+  }
+
+  function buildMonthlyFileName(selectedClassName?: string | null) {
+    const classPart = sanitizeFileNamePart(selectedClassName || "turma");
+
+    if (reportMode === "period") {
+      const startPart = sanitizeFileNamePart(start || todayISO());
+      const endPart = sanitizeFileNamePart(end || todayISO());
+      return `chamada-periodo-${classPart}-${startPart}-a-${endPart}.pdf`;
+    }
+
+    const monthPart = sanitizeFileNamePart(month || currentMonthISO());
+    return `chamada-mensal-${classPart}-${monthPart}.pdf`;
+  }
+
+  function triggerDownload(url: string, fileName: string) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function openOrOfferPdf(params: {
+    blob: Blob;
+    fileName: string;
+    kind: "daily" | "monthly";
+    successMessage: string;
+    previewTab: Window | null;
+  }) {
+    const { blob, fileName, kind, successMessage, previewTab } = params;
+
+    const objectUrl = URL.createObjectURL(blob);
+    setNewGeneratedPdf({
+      kind,
+      url: objectUrl,
+      fileName,
+    });
+
+    const mobile = isLikelyMobile();
+
+    if (mobile) {
+      if (previewTab && !previewTab.closed) {
+        try {
+          previewTab.location.href = objectUrl;
+        } catch {
+          // segue fluxo fallback
+        }
+      }
+
+      setMessage(`${successMessage} Toque em "Baixar PDF" se ele não abrir automaticamente.`);
+      return;
+    }
+
+    if (previewTab && !previewTab.closed) {
+      previewTab.location.href = objectUrl;
+      setMessage(successMessage);
+      return;
+    }
+
+    const popup = window.open(objectUrl, "_blank", "noopener,noreferrer");
+    if (!popup) {
+      setMessage(`${successMessage} Use o botão "Baixar PDF" abaixo.`);
+      return;
+    }
+
+    setMessage(successMessage);
   }
 
   async function loadClasses() {
@@ -197,6 +320,7 @@ export default function SchoolAttendancePage() {
   async function openDailyPdf() {
     setError(null);
     setMessage(null);
+    setNewGeneratedPdf(null);
 
     const token = await ensureToken();
     if (!token) return;
@@ -231,15 +355,14 @@ export default function SchoolAttendancePage() {
       }
 
       const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
 
-      if (previewTab && !previewTab.closed) {
-        previewTab.location.href = objectUrl;
-      } else {
-        window.open(objectUrl, "_blank");
-      }
-
-      setMessage("PDF diário gerado com sucesso.");
+      openOrOfferPdf({
+        blob,
+        fileName: buildDailyFileName(selectedClass?.name || null),
+        kind: "daily",
+        successMessage: "PDF diário gerado com sucesso.",
+        previewTab,
+      });
     } catch (e: any) {
       if (previewTab && !previewTab.closed) previewTab.close();
       setError(e?.message || "Erro inesperado ao gerar PDF diário.");
@@ -251,6 +374,7 @@ export default function SchoolAttendancePage() {
   async function openMonthlyPdf() {
     setError(null);
     setMessage(null);
+    setNewGeneratedPdf(null);
 
     const token = await ensureToken();
     if (!token) return;
@@ -303,19 +427,17 @@ export default function SchoolAttendancePage() {
       }
 
       const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
 
-      if (previewTab && !previewTab.closed) {
-        previewTab.location.href = objectUrl;
-      } else {
-        window.open(objectUrl, "_blank");
-      }
-
-      setMessage(
-        reportMode === "period"
-          ? "PDF por período gerado com sucesso."
-          : "PDF mensal gerado com sucesso."
-      );
+      openOrOfferPdf({
+        blob,
+        fileName: buildMonthlyFileName(selectedClass?.name || null),
+        kind: "monthly",
+        successMessage:
+          reportMode === "period"
+            ? "PDF por período gerado com sucesso."
+            : "PDF mensal gerado com sucesso.",
+        previewTab,
+      });
     } catch (e: any) {
       if (previewTab && !previewTab.closed) previewTab.close();
 
@@ -333,6 +455,12 @@ export default function SchoolAttendancePage() {
   useEffect(() => {
     loadClasses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearPreviousPdfUrl();
+    };
   }, []);
 
   const selectedClass = useMemo(
@@ -356,7 +484,7 @@ export default function SchoolAttendancePage() {
                 </h1>
 
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
-                  Gere relatórios diários, mensais ou por período com abertura direta do PDF em nova aba.
+                  Gere relatórios diários, mensais ou por período com abertura do PDF em desktop e fallback seguro no mobile.
                 </p>
               </div>
 
@@ -443,7 +571,7 @@ export default function SchoolAttendancePage() {
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              Abertura automática em nova aba
+              Abertura automática com fallback para baixar PDF
             </div>
           </div>
 
@@ -565,6 +693,16 @@ export default function SchoolAttendancePage() {
                   ? "Gerar PDF por período"
                   : "Gerar PDF mensal"}
             </button>
+
+            {generatedPdf ? (
+              <button
+                type="button"
+                onClick={() => triggerDownload(generatedPdf.url, generatedPdf.fileName)}
+                className="rounded-2xl border border-emerald-300 bg-emerald-50 px-5 py-3 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100"
+              >
+                Baixar PDF {generatedPdf.kind === "daily" ? "diário" : "do relatório"}
+              </button>
+            ) : null}
           </div>
 
           {selectedClass ? (
@@ -573,6 +711,12 @@ export default function SchoolAttendancePage() {
               {selectedClass.name}
               {selectedClass.series ? ` • ${selectedClass.series}` : ""}
               {selectedClass.shift ? ` • ${selectedClass.shift}` : ""}
+            </div>
+          ) : null}
+
+          {generatedPdf ? (
+            <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+              PDF pronto. Caso ele não abra automaticamente no celular, use o botão <b>Baixar PDF</b>.
             </div>
           ) : null}
 
