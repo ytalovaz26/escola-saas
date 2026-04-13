@@ -9,7 +9,7 @@ type AttendanceStatus = "present" | "absent" | "late";
 type PayloadItem = {
   studentId?: string;
   student_id?: string;
-  status?: AttendanceStatus;
+  status?: AttendanceStatus | string;
   note?: string | null;
 };
 
@@ -137,6 +137,71 @@ async function getOrCreateSession(params: {
   };
 }
 
+async function loadAllowedStudentIds(params: {
+  schoolId: string;
+  classId: string;
+  date: string;
+}) {
+  const { schoolId, classId, date } = params;
+
+  const ids = new Set<string>();
+
+  // 1) Fonte principal: RPC histórica
+  try {
+    const { data: rpcRows, error: rpcErr } = await supabaseAdmin.rpc(
+      "get_active_students_for_class_on_date",
+      {
+        p_class_id: classId,
+        p_date: date,
+      }
+    );
+
+    if (!rpcErr && Array.isArray(rpcRows)) {
+      for (const row of rpcRows) {
+        const studentId = String((row as any)?.student_id ?? (row as any)?.id ?? "").trim();
+        if (studentId) ids.add(studentId);
+      }
+    }
+  } catch {
+    // segue para fallback
+  }
+
+  // 2) Fallback principal: vínculos ativos atuais em student_classes
+  if (ids.size === 0) {
+    const { data: activeLinks, error: linksErr } = await supabaseAdmin
+      .from("student_classes")
+      .select("student_id")
+      .eq("school_id", schoolId)
+      .eq("class_id", classId)
+      .eq("is_active", true);
+
+    if (!linksErr && Array.isArray(activeLinks)) {
+      for (const row of activeLinks) {
+        const studentId = String((row as any)?.student_id || "").trim();
+        if (studentId) ids.add(studentId);
+      }
+    }
+  }
+
+  // 3) Fallback legado: students.class_id
+  if (ids.size === 0) {
+    const { data: legacyStudents, error: legacyErr } = await supabaseAdmin
+      .from("students")
+      .select("id")
+      .eq("school_id", schoolId)
+      .eq("class_id", classId);
+
+    if (!legacyErr && Array.isArray(legacyStudents)) {
+      for (const row of legacyStudents) {
+        const studentId = String((row as any)?.id || "").trim();
+        if (studentId) ids.add(studentId);
+      }
+    }
+  }
+
+  return Array.from(ids);
+}
+
 export async function POST(req: Request) {
   const guard = await requireStaff(req, [
     "diretor",
@@ -196,30 +261,17 @@ export async function POST(req: Request) {
     return jsonError("Professor não está vinculado a esta turma.", 403);
   }
 
-  const { data: activeStudents, error: activeErr } = await supabaseAdmin.rpc(
-    "get_active_students_for_class_on_date",
-    {
-      p_class_id: classId,
-      p_date: date,
-    }
-  );
-
-  if (activeErr) {
-    return jsonError("Falha ao carregar alunos ativos da turma/data.", 500, {
-      details: activeErr.message,
-    });
-  }
-
-  const allowedStudentIds: string[] = Array.from(
-    new Set<string>(
-      (activeStudents || [])
-        .map((student: any) => String(student?.student_id ?? student?.id ?? "").trim())
-        .filter((studentId: string) => Boolean(studentId))
-    )
-  );
+  const allowedStudentIds = await loadAllowedStudentIds({
+    schoolId,
+    classId,
+    date,
+  });
 
   if (allowedStudentIds.length === 0) {
-    return jsonError("Nenhum aluno ativo encontrado para esta turma/data.", 400);
+    return jsonError("Nenhum aluno ativo encontrado para esta turma/data.", 400, {
+      classId,
+      date,
+    });
   }
 
   const incomingMap = new Map<string, NormalizedIncomingItem>();
@@ -235,9 +287,10 @@ export async function POST(req: Request) {
     });
   }
 
-  const receivedStudentIds: string[] = Array.from(incomingMap.keys());
+  const receivedStudentIds = Array.from(incomingMap.keys());
+
   const invalidStudentIds = receivedStudentIds.filter(
-    (studentId: string) => !allowedStudentIds.includes(studentId)
+    (studentId) => !allowedStudentIds.includes(studentId)
   );
 
   if (invalidStudentIds.length > 0) {
@@ -248,19 +301,17 @@ export async function POST(req: Request) {
     });
   }
 
-  const completedItems: NormalizedIncomingItem[] = allowedStudentIds.map(
-    (studentId: string): NormalizedIncomingItem => {
-      const existing = incomingMap.get(studentId);
+  const completedItems: NormalizedIncomingItem[] = allowedStudentIds.map((studentId) => {
+    const existing = incomingMap.get(studentId);
 
-      if (existing) return existing;
+    if (existing) return existing;
 
-      return {
-        student_id: studentId,
-        status: "present",
-        note: null,
-      };
-    }
-  );
+    return {
+      student_id: studentId,
+      status: "present",
+      note: null,
+    };
+  });
 
   const sessionResult = await getOrCreateSession({
     schoolId,
@@ -278,7 +329,7 @@ export async function POST(req: Request) {
 
   const sessionId = sessionResult.sessionId;
 
-  const rows = completedItems.map((item: NormalizedIncomingItem) => ({
+  const rows = completedItems.map((item) => ({
     school_id: schoolId,
     session_id: sessionId,
     student_id: item.student_id,
@@ -302,7 +353,7 @@ export async function POST(req: Request) {
     {
       ok: true,
       sessionId,
-      savedStudentIds: completedItems.map((item: NormalizedIncomingItem) => item.student_id),
+      savedStudentIds: completedItems.map((item) => item.student_id),
       totalSaved: completedItems.length,
     },
     { headers: corsHeaders() }

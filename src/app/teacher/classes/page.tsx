@@ -45,7 +45,10 @@ export default function TeacherClassesPage() {
   const [schoolId, setSchoolId] = useState<string | null>(null);
   const [classes, setClasses] = useState<TeacherClassItem[]>([]);
 
-  const [branding, setBranding] = useState<{ name?: string | null; logoUrl?: string | null } | null>(null);
+  const [branding, setBranding] = useState<{
+    name?: string | null;
+    logoUrl?: string | null;
+  } | null>(null);
 
   const canAccess = useMemo(() => {
     const r = normRole(me?.school?.role);
@@ -155,10 +158,16 @@ export default function TeacherClassesPage() {
           <h1 className="text-xl font-semibold">Não foi possível carregar</h1>
           <p className="text-sm text-slate-600 mt-2">{error}</p>
           <div className="mt-4 flex gap-2">
-            <button onClick={() => router.replace("/teacher")} className="flex-1 rounded-xl border p-3 hover:bg-slate-50">
+            <button
+              onClick={() => router.replace("/teacher")}
+              className="flex-1 rounded-xl border p-3 hover:bg-slate-50"
+            >
               Voltar
             </button>
-            <button onClick={load} className={`flex-1 rounded-xl ${brandBtn} p-3 font-semibold`}>
+            <button
+              onClick={load}
+              className={`flex-1 rounded-xl ${brandBtn} p-3 font-semibold`}
+            >
               Tentar novamente
             </button>
           </div>
@@ -172,8 +181,13 @@ export default function TeacherClassesPage() {
       <main className="min-h-screen flex items-center justify-center p-6">
         <div className="max-w-lg w-full rounded-2xl border bg-white p-6">
           <h1 className="text-xl font-semibold">Acesso negado</h1>
-          <p className="text-sm text-slate-600 mt-2">Esta página é exclusiva para professores.</p>
-          <button onClick={() => router.replace("/login")} className={`mt-4 w-full rounded-xl ${brandBtn} p-3 font-semibold`}>
+          <p className="text-sm text-slate-600 mt-2">
+            Esta página é exclusiva para professores.
+          </p>
+          <button
+            onClick={() => router.replace("/login")}
+            className={`mt-4 w-full rounded-xl ${brandBtn} p-3 font-semibold`}
+          >
             Ir para login
           </button>
         </div>
@@ -189,7 +203,11 @@ export default function TeacherClassesPage() {
             <div className="h-11 w-11 rounded-xl border bg-white overflow-hidden flex items-center justify-center">
               {branding?.logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={branding.logoUrl} alt="Logo da escola" className="h-full w-full object-contain" />
+                <img
+                  src={branding.logoUrl}
+                  alt="Logo da escola"
+                  className="h-full w-full object-contain"
+                />
               ) : (
                 <div className="h-full w-full bg-slate-100" />
               )}
@@ -197,21 +215,35 @@ export default function TeacherClassesPage() {
 
             <div className="min-w-0">
               <div className="text-sm text-slate-500">Portal do Professor</div>
-              <h1 className="text-xl font-semibold truncate">{branding?.name || "Minha escola"}</h1>
+              <h1 className="text-xl font-semibold truncate">
+                {branding?.name || "Minha escola"}
+              </h1>
               <div className="text-xs text-slate-500 mt-1">
-                Escola ID: <span className="font-mono">{schoolId ?? me?.school?.schoolId ?? "—"}</span>
+                Escola ID:{" "}
+                <span className="font-mono">
+                  {schoolId ?? me?.school?.schoolId ?? "—"}
+                </span>
               </div>
             </div>
           </div>
 
           <div className="flex gap-2">
-            <button onClick={() => router.push("/teacher")} className="rounded-xl border px-4 py-2 text-sm hover:bg-slate-50">
+            <button
+              onClick={() => router.push("/teacher")}
+              className="rounded-xl border px-4 py-2 text-sm hover:bg-slate-50"
+            >
               Voltar
             </button>
-            <button onClick={load} className="rounded-xl border px-4 py-2 text-sm hover:bg-slate-50">
+            <button
+              onClick={load}
+              className="rounded-xl border px-4 py-2 text-sm hover:bg-slate-50"
+            >
               Atualizar
             </button>
-            <button onClick={logout} className={`rounded-xl px-4 py-2 text-sm font-semibold ${brandBtn}`}>
+            <button
+              onClick={logout}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold ${brandBtn}`}
+            >
               Sair
             </button>
           </div>
@@ -220,11 +252,13 @@ export default function TeacherClassesPage() {
         <section className="rounded-2xl border bg-white p-5">
           <h2 className="text-2xl font-semibold tracking-tight">Minhas turmas</h2>
           <p className="text-sm text-slate-600 mt-2">
-            Acesse chamada e diário pedagógico da turma.
+            Acesse os alunos, a chamada e o diário pedagógico da turma.
           </p>
 
           {classes.length === 0 ? (
-            <p className="text-sm text-slate-600 mt-4">Nenhuma turma vinculada ao seu usuário.</p>
+            <p className="text-sm text-slate-600 mt-4">
+              Nenhuma turma vinculada ao seu usuário.
+            </p>
           ) : (
             <div className="mt-4 space-y-3">
               {classes.map((c) => (
@@ -234,10 +268,13 @@ export default function TeacherClassesPage() {
                 >
                   <div className="min-w-0">
                     <div className="font-medium">{classLabel(c)}</div>
-                    <div className="text-xs text-slate-500 mt-1 font-mono break-all">{c.classId}</div>
+                    <div className="text-xs text-slate-500 mt-1 font-mono break-all">
+                      {c.classId}
+                    </div>
                     {c.createdAt && (
                       <div className="text-xs text-slate-500 mt-1">
-                        Vinculado em: {new Date(c.createdAt).toLocaleString("pt-BR")}
+                        Vinculado em:{" "}
+                        {new Date(c.createdAt).toLocaleString("pt-BR")}
                       </div>
                     )}
                   </div>
@@ -251,7 +288,9 @@ export default function TeacherClassesPage() {
                     </button>
 
                     <button
-                      onClick={() => router.push(`/teacher/classes/${c.classId}/attendance`)}
+                      onClick={() =>
+                        router.push(`/teacher/classes/${c.classId}/attendance`)
+                      }
                       className={`rounded-xl px-4 py-2 text-sm font-semibold ${brandBtn}`}
                     >
                       Chamada

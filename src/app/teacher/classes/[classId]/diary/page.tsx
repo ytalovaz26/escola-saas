@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { openPdfFromResponse } from "@/lib/openPdfOnClient";
 
 type DiaryEntry = {
   id: string;
@@ -41,6 +42,16 @@ function brDate(iso: string) {
   const [y, m, d] = String(iso || "").split("-");
   if (!y || !m || !d) return iso;
   return `${d}/${m}/${y}`;
+}
+
+function slugifyFileName(value: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
 }
 
 async function safeJson(res: Response) {
@@ -329,13 +340,13 @@ export default function TeacherClassDiaryPage() {
         return;
       }
 
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      window.open(blobUrl, "_blank", "noopener,noreferrer");
+      const fileBase = slugifyFileName(
+        `${diaryMeta?.class_name || "turma"}-${subjectName}-${referenceMonth}-diario`
+      );
 
-      setTimeout(() => {
-        URL.revokeObjectURL(blobUrl);
-      }, 60000);
+      await openPdfFromResponse(res, {
+        fileName: `${fileBase || "diario-de-classe"}.pdf`,
+      });
 
       setMessage("PDF do diário gerado com sucesso ✅");
     } catch (e: any) {
@@ -370,9 +381,9 @@ export default function TeacherClassDiaryPage() {
             <button
               type="button"
               className="rounded-2xl border border-slate-300 px-4 py-2 text-sm"
-              onClick={() => router.push("/teacher/classes")}
+              onClick={() => router.push(`/teacher/classes/${classId}`)}
             >
-              Voltar
+              Voltar para alunos
             </button>
 
             <button
