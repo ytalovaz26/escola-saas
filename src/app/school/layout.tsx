@@ -19,20 +19,51 @@ type MePayload = {
   redirectTo: string;
 };
 
+type RoleKey =
+  | "diretor"
+  | "coordenador"
+  | "secretaria"
+  | "professor"
+  | "admin"
+  | "unknown";
+
 type NavItem = {
   label: string;
   href: string;
   icon: string;
   section: "principal" | "operacao" | "configuracao";
+  roles: RoleKey[];
 };
+
+const SUBJECTS_HREF = "/school/subjects";
+const BRANDING_HREF = "/school/settings/branding";
+const STAFF_HREF = "/school/staff";
 
 function safeJson(text: string) {
   if (!text) return null;
+
   try {
     return JSON.parse(text);
   } catch {
     return null;
   }
+}
+
+function normalizeRole(role?: string): RoleKey {
+  const r = String(role || "").trim().toLowerCase();
+
+  if (r === "diretor" || r === "director") return "diretor";
+  if (r === "coordenador" || r === "coordinator") return "coordenador";
+  if (r === "secretaria" || r === "secretary") return "secretaria";
+  if (r === "professor" || r === "teacher") return "professor";
+  if (r === "admin") return "admin";
+
+  return "unknown";
+}
+
+function canAccessItem(role: RoleKey, item: NavItem) {
+  if (role === "admin") return true;
+  return item.roles.includes(role);
 }
 
 function getInitials(name?: string | null) {
@@ -46,11 +77,13 @@ function getInitials(name?: string | null) {
 }
 
 function getRoleLabel(role?: string) {
-  const r = String(role || "").trim().toLowerCase();
+  const r = normalizeRole(role);
 
-  if (r === "diretor" || r === "director") return "Diretor";
-  if (r === "coordenador" || r === "coordinator") return "Coordenador";
+  if (r === "diretor") return "Diretor";
+  if (r === "coordenador") return "Coordenador";
+  if (r === "secretaria") return "Secretaria";
   if (r === "admin") return "Administrador";
+  if (r === "professor") return "Professor";
 
   return "Gestão Escolar";
 }
@@ -71,6 +104,8 @@ function NavSection({
   pathname: string;
   onGo: (href: string) => void;
 }) {
+  if (items.length === 0) return null;
+
   return (
     <div>
       <div className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
@@ -125,33 +160,129 @@ export default function SchoolLayout({
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [me, setMe] = useState<MePayload | null>(null);
+  const [loadingMe, setLoadingMe] = useState(true);
 
   const brandName = me?.branding?.brandName || "Minha Escola";
   const logoUrl = me?.branding?.brandLogoUrl || null;
+  const role = normalizeRole(me?.school?.role);
   const roleLabel = getRoleLabel(me?.school?.role);
   const userEmail = me?.user?.email || "Acesso escolar";
 
   const navItems: NavItem[] = useMemo(
     () => [
-      { label: "Dashboard", href: "/school", icon: "🏠", section: "principal" },
-      { label: "Turmas", href: "/school/classes", icon: "🏫", section: "principal" },
-      { label: "Alunos", href: "/school/students", icon: "🎓", section: "principal" },
-      { label: "Matrículas", href: "/school/enrollments", icon: "🧾", section: "principal" },
-
-      { label: "Responsáveis", href: "/school/parents", icon: "👨‍👩‍👧‍👦", section: "operacao" },
-      { label: "Professores", href: "/school/teachers", icon: "👩‍🏫", section: "operacao" },
-      { label: "Presença", href: "/school/attendance", icon: "✅", section: "operacao" },
-      { label: "Diário de classe", href: "/school/class-diary", icon: "📘", section: "operacao" },
-
-      { label: "Financeiro", href: "/school/finance", icon: "💳", section: "configuracao" },
-      { label: "Branding", href: "/school/settings/branding", icon: "🎨", section: "configuracao" },
+      {
+        label: "Dashboard",
+        href: "/school",
+        icon: "🏠",
+        section: "principal",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
+        label: "Equipe Escolar",
+        href: STAFF_HREF,
+        icon: "🧑‍💼",
+        section: "principal",
+        roles: ["diretor", "coordenador", "admin"],
+      },
+      {
+        label: "Turmas",
+        href: "/school/classes",
+        icon: "🏫",
+        section: "principal",
+        roles: ["diretor", "coordenador", "admin"],
+      },
+      {
+        label: "Alunos",
+        href: "/school/students",
+        icon: "🎓",
+        section: "principal",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
+        label: "Matrículas",
+        href: "/school/enrollments",
+        icon: "🧾",
+        section: "principal",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
+        label: "Responsáveis",
+        href: "/school/parents",
+        icon: "👨‍👩‍👧‍👦",
+        section: "operacao",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
+        label: "Professores",
+        href: "/school/teachers",
+        icon: "👩‍🏫",
+        section: "operacao",
+        roles: ["diretor", "coordenador", "admin"],
+      },
+      {
+        label: "Disciplinas",
+        href: SUBJECTS_HREF,
+        icon: "📚",
+        section: "operacao",
+        roles: ["diretor", "coordenador", "admin"],
+      },
+      {
+        label: "Presença",
+        href: "/school/attendance",
+        icon: "✅",
+        section: "operacao",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
+        label: "Diário de classe",
+        href: "/school/class-diary",
+        icon: "📘",
+        section: "operacao",
+        roles: ["diretor", "coordenador", "admin"],
+      },
+      {
+        label: "Boletins",
+        href: "/school/report-cards",
+        icon: "📄",
+        section: "operacao",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
+        label: "Financeiro",
+        href: "/school/finance",
+        icon: "💳",
+        section: "configuracao",
+        roles: ["diretor", "secretaria", "admin"],
+      },
+      {
+        label: "Comunicados",
+        href: "/school/messages",
+        icon: "📩",
+        section: "configuracao",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
+        label: "Branding",
+        href: BRANDING_HREF,
+        icon: "🎨",
+        section: "configuracao",
+        roles: ["diretor", "admin"],
+      },
     ],
     []
   );
 
-  const mainItems = navItems.filter((i) => i.section === "principal");
-  const operationItems = navItems.filter((i) => i.section === "operacao");
-  const configItems = navItems.filter((i) => i.section === "configuracao");
+  const allowedNavItems = useMemo(() => {
+    return navItems.filter((item) => canAccessItem(role, item));
+  }, [navItems, role]);
+
+  const mainItems = allowedNavItems.filter((i) => i.section === "principal");
+  const operationItems = allowedNavItems.filter((i) => i.section === "operacao");
+  const configItems = allowedNavItems.filter((i) => i.section === "configuracao");
+
+  const canOpenStaff = role === "diretor" || role === "coordenador" || role === "admin";
+  const canOpenSubjects = role === "diretor" || role === "coordenador" || role === "admin";
+  const canOpenBranding = role === "diretor" || role === "admin";
 
   useEffect(() => {
     (async () => {
@@ -159,7 +290,10 @@ export default function SchoolLayout({
         const { data } = await supabase.auth.getSession();
         const token = data.session?.access_token;
 
-        if (!token) return;
+        if (!token) {
+          router.replace("/login");
+          return;
+        }
 
         const res = await fetch("/api/me", {
           method: "GET",
@@ -170,14 +304,46 @@ export default function SchoolLayout({
         const text = await res.text();
         const json = safeJson(text);
 
-        if (res.ok && json?.ok) {
-          setMe(json as MePayload);
+        if (!res.ok || !json?.ok) {
+          router.replace("/login");
+          return;
         }
+
+        const payload = json as MePayload;
+        const currentRole = normalizeRole(payload?.school?.role);
+
+        if (payload.isPlatformAdmin) {
+          router.replace("/admin-master");
+          return;
+        }
+
+        if (!payload?.school?.schoolId) {
+          router.replace(payload?.redirectTo || "/login");
+          return;
+        }
+
+        if (
+          currentRole !== "diretor" &&
+          currentRole !== "coordenador" &&
+          currentRole !== "secretaria" &&
+          currentRole !== "admin"
+        ) {
+          router.replace(payload?.redirectTo || "/login");
+          return;
+        }
+
+        setMe(payload);
       } catch {
-        // não quebrar layout por branding
+        router.replace("/login");
+      } finally {
+        setLoadingMe(false);
       }
     })();
-  }, []);
+  }, [router]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
 
   async function logout() {
     await supabase.auth.signOut();
@@ -189,10 +355,23 @@ export default function SchoolLayout({
     router.push(href);
   }
 
+  if (loadingMe) {
+    return (
+      <div className="min-h-screen bg-slate-100 p-6">
+        <div className="mx-auto max-w-5xl">
+          <div className="animate-pulse rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
+            <div className="h-8 w-64 rounded-xl bg-slate-200" />
+            <div className="mt-3 h-4 w-96 rounded-xl bg-slate-100" />
+            <div className="mt-8 h-72 rounded-[28px] bg-slate-100" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100">
       <div className="flex min-h-screen">
-        {/* Sidebar desktop */}
         <aside className="hidden w-80 shrink-0 border-r border-slate-200 bg-white xl:flex">
           <div className="flex w-full flex-col">
             <div className="border-b border-slate-200 px-5 py-5">
@@ -217,16 +396,35 @@ export default function SchoolLayout({
                     {brandName}
                   </div>
                   <div className="mt-0.5 text-xs text-slate-500">{roleLabel}</div>
-                  <div className="mt-1 truncate text-[11px] text-slate-400">{userEmail}</div>
+                  <div className="mt-1 truncate text-[11px] text-slate-400">
+                    {userEmail}
+                  </div>
                 </div>
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 py-5">
               <div className="space-y-6">
-                <NavSection title="Principal" items={mainItems} pathname={pathname} onGo={go} />
-                <NavSection title="Operação" items={operationItems} pathname={pathname} onGo={go} />
-                <NavSection title="Configuração" items={configItems} pathname={pathname} onGo={go} />
+                <NavSection
+                  title="Principal"
+                  items={mainItems}
+                  pathname={pathname}
+                  onGo={go}
+                />
+
+                <NavSection
+                  title="Operação"
+                  items={operationItems}
+                  pathname={pathname}
+                  onGo={go}
+                />
+
+                <NavSection
+                  title="Configuração"
+                  items={configItems}
+                  pathname={pathname}
+                  onGo={go}
+                />
               </div>
             </div>
 
@@ -235,9 +433,11 @@ export default function SchoolLayout({
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Ambiente
                 </div>
+
                 <div className="mt-2 text-sm font-medium text-slate-800">
                   Multi-tenant ativo
                 </div>
+
                 <div className="mt-1 text-xs leading-5 text-slate-500">
                   Cada escola opera em ambiente isolado e seguro.
                 </div>
@@ -254,9 +454,7 @@ export default function SchoolLayout({
           </div>
         </aside>
 
-        {/* Main area */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* Topbar */}
           <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
             <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-6">
               <div className="flex min-w-0 items-center gap-3">
@@ -279,13 +477,35 @@ export default function SchoolLayout({
               </div>
 
               <div className="hidden items-center gap-2 md:flex">
-                <button
-                  type="button"
-                  onClick={() => go("/school/settings/branding")}
-                  className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                >
-                  Personalizar
-                </button>
+                {canOpenStaff ? (
+                  <button
+                    type="button"
+                    onClick={() => go(STAFF_HREF)}
+                    className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Equipe
+                  </button>
+                ) : null}
+
+                {canOpenSubjects ? (
+                  <button
+                    type="button"
+                    onClick={() => go(SUBJECTS_HREF)}
+                    className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Disciplinas
+                  </button>
+                ) : null}
+
+                {canOpenBranding ? (
+                  <button
+                    type="button"
+                    onClick={() => go(BRANDING_HREF)}
+                    className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Personalizar
+                  </button>
+                ) : null}
 
                 <button
                   type="button"
@@ -297,7 +517,6 @@ export default function SchoolLayout({
               </div>
             </div>
 
-            {/* Mobile menu */}
             {menuOpen && (
               <div className="border-t border-slate-200 bg-white px-4 py-4 xl:hidden">
                 <div className="mb-4 flex items-center gap-3">
@@ -325,9 +544,26 @@ export default function SchoolLayout({
                 </div>
 
                 <div className="space-y-5">
-                  <NavSection title="Principal" items={mainItems} pathname={pathname} onGo={go} />
-                  <NavSection title="Operação" items={operationItems} pathname={pathname} onGo={go} />
-                  <NavSection title="Configuração" items={configItems} pathname={pathname} onGo={go} />
+                  <NavSection
+                    title="Principal"
+                    items={mainItems}
+                    pathname={pathname}
+                    onGo={go}
+                  />
+
+                  <NavSection
+                    title="Operação"
+                    items={operationItems}
+                    pathname={pathname}
+                    onGo={go}
+                  />
+
+                  <NavSection
+                    title="Configuração"
+                    items={configItems}
+                    pathname={pathname}
+                    onGo={go}
+                  />
                 </div>
 
                 <button
@@ -341,7 +577,6 @@ export default function SchoolLayout({
             )}
           </header>
 
-          {/* Content shell */}
           <main className="flex-1">
             <div className="mx-auto w-full max-w-[1600px] p-4 md:p-6">
               {children}

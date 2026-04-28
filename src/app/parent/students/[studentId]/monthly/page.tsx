@@ -17,6 +17,47 @@ type DayMark = {
   status: string;
 };
 
+type ParentChildrenResponse = {
+  ok: boolean;
+  children?: Array<{
+    id: string;
+    full_name: string | null;
+    registration_number: string | null;
+    relationship?: string | null;
+    active_class?: {
+      class?: {
+        name?: string | null;
+        grade?: string | null;
+        shift?: string | null;
+      } | null;
+    } | null;
+  }>;
+  error?: string;
+};
+
+type MonthlyApiPayload = {
+  ok: boolean;
+  student?: {
+    id: string;
+    full_name: string | null;
+  };
+  month?: string;
+  range?: {
+    startYMD: string;
+    endYMD: string;
+  };
+  sessions?: Array<{
+    id: string;
+    lesson_date: string;
+    lesson_number: number | null;
+  }>;
+  records?: Array<{
+    session_id: string;
+    status: string;
+  }>;
+  error?: string;
+};
+
 async function safeJson(res: Response) {
   const text = await res.text();
   if (!text) return null;
@@ -36,7 +77,7 @@ function ymd(d: Date) {
 }
 
 function monthKey(d: Date) {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`; // YYYY-MM
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
 }
 
 function firstDayOfMonth(d: Date) {
@@ -47,20 +88,96 @@ function firstDayOfNextMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth() + 1, 1);
 }
 
+function monthLabel(month: string) {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(y, (m || 1) - 1, 1);
+
+  return d.toLocaleDateString("pt-BR", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
 function statusLetter(status: string) {
-  const s = String(status || "").toLowerCase();
+  const s = String(status || "").toLowerCase().trim();
 
-  // EN
-  if (s === "present") return "P";
-  if (s === "late" || s === "tardy") return "A";
-  if (s === "absent") return "F";
-
-  // PT (caso algum lugar grave assim)
-  if (s === "presente") return "P";
-  if (s === "tarde" || s === "atraso") return "A";
-  if (s === "ausente" || s === "falta") return "F";
+  if (s === "present" || s === "presente") return "P";
+  if (s === "late" || s === "tardy" || s === "atraso" || s === "tarde") return "A";
+  if (s === "absent" || s === "ausente" || s === "falta") return "F";
 
   return s ? s.slice(0, 1).toUpperCase() : "-";
+}
+
+function normalizeStatus(status: string) {
+  const s = String(status || "").toLowerCase().trim();
+
+  if (s === "present" || s === "presente") return "present";
+  if (s === "late" || s === "tardy" || s === "atraso" || s === "tarde") return "late";
+  if (s === "absent" || s === "ausente" || s === "falta") return "absent";
+
+  return "unknown";
+}
+
+function statusBadgeClass(status: string) {
+  const normalized = normalizeStatus(status);
+
+  if (normalized === "present") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  if (normalized === "late") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  if (normalized === "absent") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+
+  return "border-slate-200 bg-slate-100 text-slate-700";
+}
+
+function statusText(status: string) {
+  const normalized = normalizeStatus(status);
+
+  if (normalized === "present") return "Presença";
+  if (normalized === "late") return "Atraso";
+  if (normalized === "absent") return "Falta";
+
+  return "Registro";
+}
+
+function classLabelFromChild(child: any) {
+  const cls = child?.active_class?.class;
+  if (!cls) return "Sem turma ativa";
+
+  const parts: string[] = [];
+  if (cls.name) parts.push(cls.name);
+  if (cls.grade) parts.push(cls.grade);
+  if (cls.shift) parts.push(cls.shift);
+
+  return parts.join(" • ") || "Sem turma ativa";
+}
+
+function MetricCard({
+  label,
+  value,
+  help,
+}: {
+  label: string;
+  value: string;
+  help: string;
+}) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </div>
+      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </div>
+      <div className="mt-2 text-sm leading-6 text-slate-500">{help}</div>
+    </div>
+  );
 }
 
 export default function MonthlyPage() {
@@ -68,7 +185,7 @@ export default function MonthlyPage() {
   const params = useParams<{ studentId: string }>();
   const searchParams = useSearchParams();
 
-  const studentId = params.studentId;
+  const studentId = String(params.studentId || "").trim();
 
   const initialMonth = useMemo(() => {
     const q = searchParams.get("month");
@@ -80,12 +197,15 @@ export default function MonthlyPage() {
   const [loading, setLoading] = useState(true);
 
   const [student, setStudent] = useState<StudentRow | null>(null);
+  const [studentClassLabel, setStudentClassLabel] = useState<string>("Sem turma ativa");
+  const [relationship, setRelationship] = useState<string | null>(null);
+
   const [dayMap, setDayMap] = useState<Record<string, DayMark[]>>({});
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const monthStart = useMemo(() => {
     const [y, m] = month.split("-").map(Number);
-    return new Date(y, m - 1, 1);
+    return new Date(y, (m || 1) - 1, 1);
   }, [month]);
 
   const monthEnd = useMemo(() => firstDayOfNextMonth(monthStart), [monthStart]);
@@ -108,12 +228,41 @@ export default function MonthlyPage() {
     return cells;
   }, [monthStart]);
 
+  const summary = useMemo(() => {
+    let totalMarks = 0;
+    let present = 0;
+    let late = 0;
+    let absent = 0;
+    let daysWithRecords = 0;
+
+    for (const key of Object.keys(dayMap)) {
+      const marks = dayMap[key] || [];
+      if (marks.length > 0) daysWithRecords += 1;
+
+      for (const mark of marks) {
+        totalMarks += 1;
+        const normalized = normalizeStatus(mark.status);
+
+        if (normalized === "present") present += 1;
+        else if (normalized === "late") late += 1;
+        else if (normalized === "absent") absent += 1;
+      }
+    }
+
+    return {
+      totalMarks,
+      present,
+      late,
+      absent,
+      daysWithRecords,
+    };
+  }, [dayMap]);
+
   async function loadStudentAndMonthly() {
     setLoading(true);
     setErrMsg(null);
 
     try {
-      // 1) valida sessão
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
 
@@ -122,31 +271,28 @@ export default function MonthlyPage() {
         return;
       }
 
-      // 2) aluno do responsável
-      const res = await fetch("/api/parent/children", {
+      const childrenRes = await fetch("/api/parent/children", {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
 
-      const json = await safeJson(res);
+      const childrenJson = (await safeJson(childrenRes)) as ParentChildrenResponse | any;
 
-      if (!res.ok || !json?.ok) {
-        setErrMsg(json?.error || "Falha ao carregar dados do responsável.");
-        if (res.status === 401) router.replace("/login");
+      if (!childrenRes.ok || !childrenJson?.ok) {
+        setErrMsg(childrenJson?.error || "Falha ao carregar dados do responsável.");
+        if (childrenRes.status === 401) router.replace("/login");
         setStudent(null);
         setDayMap({});
-        setLoading(false);
         return;
       }
 
-      const list = (json.children ?? []) as any[];
-      const found = list.find((x) => x.id === studentId) || null;
+      const list = Array.isArray(childrenJson.children) ? childrenJson.children : [];
+      const found = list.find((x: any) => String(x.id) === studentId) || null;
 
       if (!found) {
         setErrMsg("Você não tem permissão para ver este aluno (não está vinculado).");
         setStudent(null);
         setDayMap({});
-        setLoading(false);
         return;
       }
 
@@ -157,48 +303,68 @@ export default function MonthlyPage() {
         school_id: found.school_id ?? null,
       });
 
-      const startYMD = ymd(monthStart);
-      const endYMD = ymd(monthEnd);
+      setRelationship(found.relationship ?? null);
+      setStudentClassLabel(classLabelFromChild(found));
 
-      // ✅ ÚNICA fonte: attendance_records_view (igual professor registrou)
-      const { data: rows, error } = await supabase
-        .from("attendance_records_view")
-        .select("lesson_date, lesson_number, status, student_id")
-        .eq("student_id", studentId)
-        .gte("lesson_date", startYMD)
-        .lt("lesson_date", endYMD)
-        .order("lesson_date", { ascending: true })
-        .order("lesson_number", { ascending: true });
+      const monthlyRes = await fetch(
+        `/api/parent/attendance/monthly?studentId=${encodeURIComponent(studentId)}&month=${encodeURIComponent(
+          month
+        )}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        }
+      );
 
-      if (error) {
-        setErrMsg(`Falha ao carregar do relatório (attendance_records_view): ${error.message}`);
+      const monthlyJson = (await safeJson(monthlyRes)) as MonthlyApiPayload | any;
+
+      if (!monthlyRes.ok || !monthlyJson?.ok) {
+        setErrMsg(monthlyJson?.error || "Falha ao carregar presença mensal.");
         setDayMap({});
-        setLoading(false);
         return;
+      }
+
+      const sessions = Array.isArray(monthlyJson.sessions) ? monthlyJson.sessions : [];
+      const records = Array.isArray(monthlyJson.records) ? monthlyJson.records : [];
+
+      const sessionById = new Map<
+        string,
+        { id: string; lesson_date: string; lesson_number: number | null }
+      >();
+
+      for (const session of sessions) {
+        if (!session?.id) continue;
+        sessionById.set(String(session.id), {
+          id: String(session.id),
+          lesson_date: String(session.lesson_date || "").slice(0, 10),
+          lesson_number:
+            typeof session.lesson_number === "number" ? session.lesson_number : null,
+        });
       }
 
       const map: Record<string, DayMark[]> = {};
 
-      for (const r of rows || []) {
-        const dateStr = String((r as any).lesson_date || "").slice(0, 10);
-        if (!dateStr) continue;
+      for (const record of records) {
+        const session = sessionById.get(String(record.session_id || ""));
+        if (!session?.lesson_date) continue;
 
-        if (!map[dateStr]) map[dateStr] = [];
-        map[dateStr].push({
-          lessonNumber: (r as any).lesson_number ?? null,
-          status: (r as any).status,
+        if (!map[session.lesson_date]) map[session.lesson_date] = [];
+
+        map[session.lesson_date].push({
+          lessonNumber: session.lesson_number,
+          status: String(record.status || ""),
         });
       }
 
-      for (const k of Object.keys(map)) {
-        map[k].sort((a, b) => (a.lessonNumber ?? 0) - (b.lessonNumber ?? 0));
+      for (const key of Object.keys(map)) {
+        map[key].sort((a, b) => (a.lessonNumber ?? 0) - (b.lessonNumber ?? 0));
       }
 
       setDayMap(map);
-      setLoading(false);
     } catch (e: any) {
       setErrMsg(e?.message || "Erro inesperado ao carregar presença mensal.");
       setDayMap({});
+    } finally {
       setLoading(false);
     }
   }
@@ -212,130 +378,305 @@ export default function MonthlyPage() {
     router.push(`/parent/students/${studentId}`);
   }
 
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <div className="mx-auto max-w-7xl p-4 md:p-6">
+          <div className="animate-pulse space-y-4">
+            <div className="h-44 rounded-[32px] bg-slate-200" />
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+              <div className="h-32 rounded-3xl bg-slate-100" />
+              <div className="h-32 rounded-3xl bg-slate-100" />
+              <div className="h-32 rounded-3xl bg-slate-100" />
+              <div className="h-32 rounded-3xl bg-slate-100" />
+            </div>
+            <div className="h-[540px] rounded-[32px] bg-slate-100" />
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <div className="bg-white border rounded-2xl p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Presença mensal</h1>
+    <main className="min-h-screen bg-slate-50">
+      <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
+        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+          <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-8 text-white md:px-8">
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="min-w-0">
+                <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
+                  Acompanhamento escolar
+                </div>
 
-          <div className="mt-2 text-sm text-gray-700">
-            <div>
-              <b>Mês:</b> {month}
-            </div>
-            <div>
-              <b>Aluno:</b> {student?.full_name ?? "—"}{" "}
-              {student?.registration_number ? (
-                <>
-                  • <b>Matrícula:</b> {student.registration_number}
-                </>
-              ) : null}
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
+                  Presença mensal
+                </h1>
+
+                <p className="mt-2 text-sm text-slate-200 md:text-base">
+                  Visualize o histórico completo do mês com clareza e organização.
+                </p>
+
+                <div className="mt-4 space-y-1 text-sm text-slate-200">
+                  <div>
+                    <span className="font-semibold">Aluno:</span> {student?.full_name ?? "—"}
+                    {student?.registration_number ? (
+                      <>
+                        {" "}
+                        • <span className="font-semibold">Matrícula:</span>{" "}
+                        {student.registration_number}
+                      </>
+                    ) : null}
+                  </div>
+
+                  <div>
+                    <span className="font-semibold">Turma:</span> {studentClassLabel}
+                    {relationship ? (
+                      <>
+                        {" "}
+                        • <span className="font-semibold">Parentesco:</span> {relationship}
+                      </>
+                    ) : null}
+                  </div>
+
+                  <div>
+                    <span className="font-semibold">Mês:</span> {monthLabel(month)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={loadStudentAndMonthly}
+                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                >
+                  Recarregar
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => router.push(`/parent/students/${studentId}/daily`)}
+                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                >
+                  Ver diária
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => router.push(`/parent/students/${studentId}/report-card`)}
+                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                >
+                  Ver boletim
+                </button>
+
+                <button
+                  type="button"
+                  onClick={goBack}
+                  className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+                >
+                  Voltar
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="mt-3 flex items-center gap-2">
-            <label className="text-sm">Selecionar mês:</label>
-            <input
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              className="border rounded-lg px-2 py-1 text-sm"
+          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-4 md:p-6">
+            <MetricCard
+              label="Dias com registro"
+              value={String(summary.daysWithRecords)}
+              help="Dias do mês que possuem ao menos um lançamento de frequência."
             />
-            <button
-              onClick={loadStudentAndMonthly}
-              className="border rounded-lg px-3 py-1 text-sm hover:bg-gray-50"
-            >
-              Recarregar
-            </button>
+
+            <MetricCard
+              label="Presenças"
+              value={String(summary.present)}
+              help="Total de registros lançados como presença."
+            />
+
+            <MetricCard
+              label="Atrasos"
+              value={String(summary.late)}
+              help="Total de registros lançados como atraso."
+            />
+
+            <MetricCard
+              label="Faltas"
+              value={String(summary.absent)}
+              help="Total de registros lançados como falta."
+            />
+          </div>
+        </section>
+
+        <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+                Período e legenda
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Navegue entre os meses e acompanhe o significado de cada marcação.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3 md:flex-row md:items-center">
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Mês
+                </label>
+                <input
+                  type="month"
+                  value={month}
+                  onChange={(e) => setMonth(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 sm:w-[220px]"
+                />
+              </div>
+
+              <button
+                onClick={loadStudentAndMonthly}
+                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Atualizar
+              </button>
+            </div>
           </div>
 
-          <div className="mt-2 text-sm text-gray-700">
-            <b>P</b> = presentes | <b>A</b> = atrasos | <b>F</b> = faltas
+          <div className="mt-5 flex flex-wrap gap-2">
+            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+              P = Presença
+            </span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
+              A = Atraso
+            </span>
+            <span className="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-700">
+              F = Falta
+            </span>
+            <span className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+              Sem registros = dia sem lançamento
+            </span>
           </div>
 
           {errMsg ? (
-            <div className="mt-3 text-sm text-red-600 border border-red-200 bg-red-50 rounded-xl p-3">
+            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {errMsg}
             </div>
           ) : null}
-        </div>
+        </section>
 
-        <div className="flex flex-col items-end gap-2">
-          <button onClick={goBack} className="border rounded-lg px-3 py-1 text-sm hover:bg-gray-50">
-            Voltar
-          </button>
-        </div>
-      </div>
+        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4 md:px-6">
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+              Calendário do mês
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Toque em “abrir” em qualquer dia com registros para ver o detalhe diário.
+            </p>
+          </div>
 
-      <div className="mt-4 overflow-x-auto">
-        <table className="min-w-[720px] w-full border-collapse">
-          <thead>
-            <tr className="text-left text-sm">
+          <div className="p-4 md:p-6">
+            <div className="grid grid-cols-7 gap-2">
               {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((w) => (
-                <th key={w} className="border p-2 bg-gray-50">
+                <div
+                  key={w}
+                  className="rounded-2xl border border-slate-200 bg-slate-50 px-2 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-500"
+                >
                   {w}
-                </th>
+                </div>
               ))}
-            </tr>
-          </thead>
 
-          <tbody>
-            {Array.from({ length: calendarDays.length / 7 }).map((_, weekIdx) => {
-              const row = calendarDays.slice(weekIdx * 7, weekIdx * 7 + 7);
+              {calendarDays.map((cell, idx) => {
+                if (!cell.date) {
+                  return (
+                    <div
+                      key={`empty-${idx}`}
+                      className="min-h-[130px] rounded-3xl border border-dashed border-slate-200 bg-slate-50/50"
+                    />
+                  );
+                }
 
-              return (
-                <tr key={weekIdx} className="align-top">
-                  {row.map((cell, idx) => {
-                    if (!cell.date) return <td key={idx} className="border p-2 h-24" />;
+                const dateStr = ymd(cell.date);
+                const marks = dayMap[dateStr] || [];
+                const dailyHref = `/parent/students/${studentId}/daily?date=${dateStr}`;
 
-                    const dateStr = ymd(cell.date);
-                    const marks = dayMap[dateStr] || [];
+                const hasPresent = marks.some((m) => normalizeStatus(m.status) === "present");
+                const hasLate = marks.some((m) => normalizeStatus(m.status) === "late");
+                const hasAbsent = marks.some((m) => normalizeStatus(m.status) === "absent");
 
-                    const summary =
-                      marks.length === 0
-                        ? "Sem registros"
-                        : marks.length === 1
-                        ? statusLetter(marks[0].status)
-                        : `${statusLetter(marks[0].status)}(${marks.length})`;
+                const dominantClass = hasAbsent
+                  ? "border-red-200 bg-red-50/50"
+                  : hasLate
+                  ? "border-amber-200 bg-amber-50/50"
+                  : hasPresent
+                  ? "border-emerald-200 bg-emerald-50/50"
+                  : "border-slate-200 bg-white";
 
-                    const dailyHref = `/parent/students/${studentId}/daily?date=${dateStr}`;
+                return (
+                  <div
+                    key={dateStr}
+                    className={`min-h-[130px] rounded-3xl border p-3 shadow-sm transition ${dominantClass}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-sm font-semibold text-slate-900">{cell.dayNumber}</div>
 
-                    return (
-                      <td key={idx} className="border p-2 h-24">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-sm font-semibold">{cell.dayNumber}</div>
-                          <Link href={dailyHref} className="text-xs text-blue-600 underline">
-                            abrir
-                          </Link>
+                      <Link
+                        href={dailyHref}
+                        className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 shadow-sm hover:bg-slate-100"
+                      >
+                        abrir
+                      </Link>
+                    </div>
+
+                    <div className="mt-3">
+                      {marks.length === 0 ? (
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                          Sem registros
                         </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {marks.map((mark, markIdx) => (
+                            <span
+                              key={`${dateStr}-${markIdx}-${mark.lessonNumber ?? "x"}`}
+                              className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusBadgeClass(
+                                mark.status
+                              )}`}
+                            >
+                              {mark.lessonNumber ? `${mark.lessonNumber}ª ` : ""}
+                              {statusLetter(mark.status)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
 
-                        <div className="mt-1 text-sm">{summary}</div>
+                    {marks.length > 0 ? (
+                      <div className="mt-3 space-y-1">
+                        {marks.slice(0, 3).map((mark, markIdx) => (
+                          <div
+                            key={`detail-${dateStr}-${markIdx}`}
+                            className="text-[11px] text-slate-600"
+                          >
+                            {mark.lessonNumber ? `${mark.lessonNumber}ª aula` : "Aula"} •{" "}
+                            {statusText(mark.status)}
+                          </div>
+                        ))}
 
-                        {marks.length > 1 ? (
-                          <div className="mt-1 text-xs text-gray-600">
-                            {marks
-                              .map((m) =>
-                                m.lessonNumber
-                                  ? `${m.lessonNumber}:${statusLetter(m.status)}`
-                                  : statusLetter(m.status)
-                              )
-                              .join(" • ")}
+                        {marks.length > 3 ? (
+                          <div className="text-[11px] text-slate-500">
+                            +{marks.length - 3} registro(s)
                           </div>
                         ) : null}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
 
-        <div className="mt-3 text-sm text-gray-600">
-          Dica: clique em <b>abrir</b> para ir para a presença diária.
-        </div>
+            <div className="mt-5 text-sm text-slate-500">
+              Dica: clique em <b>abrir</b> em qualquer dia para consultar a presença diária detalhada.
+            </div>
+          </div>
+        </section>
       </div>
-
-      {loading ? <div className="mt-4 text-sm text-gray-600">Carregando...</div> : null}
-    </div>
+    </main>
   );
 }

@@ -17,6 +17,8 @@ type MePayload = {
   redirectTo: string;
 };
 
+type RoleKey = "diretor" | "coordenador" | "secretaria" | "professor" | "admin" | "unknown";
+
 type ModuleStatus = "ativo" | "implantacao" | "proximo";
 
 type QuickAction = {
@@ -25,10 +27,16 @@ type QuickAction = {
   description: string;
   status: ModuleStatus;
   category: "Gestão Acadêmica" | "Relacionamento" | "Gestão Escolar";
+  roles: RoleKey[];
 };
+
+const SUBJECTS_HREF = "/school/subjects";
+const BRANDING_HREF = "/school/branding";
+const STAFF_HREF = "/school/staff";
 
 function safeJson(text: string) {
   if (!text) return null;
+
   try {
     return JSON.parse(text);
   } catch {
@@ -36,13 +44,33 @@ function safeJson(text: string) {
   }
 }
 
-function getRoleLabel(role?: string) {
+function normalizeRole(role?: string): RoleKey {
   const r = String(role || "").trim().toLowerCase();
 
-  if (r === "diretor" || r === "director") return "Diretor";
-  if (r === "coordenador" || r === "coordinator") return "Coordenador";
+  if (r === "diretor" || r === "director") return "diretor";
+  if (r === "coordenador" || r === "coordinator") return "coordenador";
+  if (r === "secretaria" || r === "secretary") return "secretaria";
+  if (r === "professor" || r === "teacher") return "professor";
+  if (r === "admin") return "admin";
+
+  return "unknown";
+}
+
+function canAccess(role: RoleKey, item: QuickAction) {
+  if (role === "admin") return true;
+  return item.roles.includes(role);
+}
+
+function getRoleLabel(role?: string) {
+  const r = normalizeRole(role);
+
+  if (r === "diretor") return "Diretor";
+  if (r === "coordenador") return "Coordenador";
+  if (r === "secretaria") return "Secretaria";
   if (r === "admin") return "Administrador";
-  return role || "Usuário escolar";
+  if (r === "professor") return "Professor";
+
+  return "Usuário escolar";
 }
 
 function getInitials(name?: string | null) {
@@ -141,11 +169,19 @@ function ModuleCard({
   item: QuickAction;
   onOpen: (href: string) => void;
 }) {
+  const isReady = item.status === "ativo";
+
   return (
     <button
       type="button"
-      onClick={() => onOpen(item.href)}
-      className="group w-full rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+      onClick={() => {
+        if (isReady) onOpen(item.href);
+      }}
+      disabled={!isReady}
+      className={[
+        "group w-full rounded-[28px] border border-slate-200 bg-white p-5 text-left shadow-sm transition",
+        isReady ? "hover:-translate-y-0.5 hover:shadow-md" : "cursor-not-allowed opacity-80",
+      ].join(" ")}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-xl">
@@ -169,8 +205,8 @@ function ModuleCard({
         <p className="mt-2 text-sm leading-6 text-slate-500">{item.description}</p>
       </div>
 
-      <div className="mt-5 text-sm font-semibold text-slate-700 group-hover:text-slate-900">
-        Abrir módulo →
+      <div className="mt-5 text-sm font-semibold text-slate-700">
+        {isReady ? "Abrir módulo →" : "Em breve"}
       </div>
     </button>
   );
@@ -183,18 +219,29 @@ export default function SchoolDashboardPage() {
   const [me, setMe] = useState<MePayload | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const currentRole = normalizeRole(me?.school?.role);
   const roleLabel = useMemo(() => getRoleLabel(me?.school?.role), [me?.school?.role]);
+
   const brandName = me?.branding?.brandName || "Minha Escola";
   const logoUrl = me?.branding?.brandLogoUrl || null;
   const schoolId = me?.school?.schoolId || "—";
 
-  const actions: QuickAction[] = [
+  const allActions: QuickAction[] = [
+    {
+      label: "Equipe Escolar",
+      href: STAFF_HREF,
+      description: "Gerencie diretores, coordenadores, secretarias e professores.",
+      status: "ativo",
+      category: "Gestão Escolar",
+      roles: ["diretor", "coordenador", "admin"],
+    },
     {
       label: "Turmas",
       href: "/school/classes",
       description: "Crie, visualize e organize as turmas da escola por série e turno.",
       status: "ativo",
       category: "Gestão Acadêmica",
+      roles: ["diretor", "coordenador", "admin"],
     },
     {
       label: "Alunos",
@@ -202,6 +249,7 @@ export default function SchoolDashboardPage() {
       description: "Cadastre alunos, acompanhe matrícula e visualize vínculos por turma.",
       status: "ativo",
       category: "Gestão Acadêmica",
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
       label: "Matrículas",
@@ -209,6 +257,7 @@ export default function SchoolDashboardPage() {
       description: "Controle o vínculo aluno ↔️ turma com segurança e consistência histórica.",
       status: "ativo",
       category: "Gestão Acadêmica",
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
       label: "Pais / Responsáveis",
@@ -216,6 +265,7 @@ export default function SchoolDashboardPage() {
       description: "Cadastre responsáveis, prepare acessos e organize o relacionamento escolar.",
       status: "ativo",
       category: "Relacionamento",
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
       label: "Professores",
@@ -223,6 +273,7 @@ export default function SchoolDashboardPage() {
       description: "Cadastre professores e mantenha o corpo docente centralizado pela direção.",
       status: "ativo",
       category: "Gestão Acadêmica",
+      roles: ["diretor", "coordenador", "admin"],
     },
     {
       label: "Vínculo Professor ↔️ Turmas",
@@ -230,20 +281,23 @@ export default function SchoolDashboardPage() {
       description: "Defina quais professores atendem cada turma e mantenha o painel docente correto.",
       status: "ativo",
       category: "Gestão Acadêmica",
+      roles: ["diretor", "coordenador", "admin"],
     },
     {
-      label: "Branding da Escola",
-      href: "/school/settings/branding",
-      description: "Personalize logo e identidade visual da escola nos painéis e PDFs.",
+      label: "Disciplinas",
+      href: SUBJECTS_HREF,
+      description: "Cadastre as disciplinas da escola e vincule quais matérias pertencem a cada turma.",
       status: "ativo",
-      category: "Gestão Escolar",
+      category: "Gestão Acadêmica",
+      roles: ["diretor", "coordenador", "admin"],
     },
     {
-      label: "Financeiro",
-      href: "/school/finance",
-      description: "Área preparada para mensalidades, recebimentos, cobranças e visão financeira.",
-      status: "implantacao",
-      category: "Gestão Escolar",
+      label: "Presença",
+      href: "/school/attendance",
+      description: "Acompanhe registros de frequência e rotina escolar dos alunos.",
+      status: "ativo",
+      category: "Gestão Acadêmica",
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
       label: "Diário de Classe",
@@ -251,22 +305,90 @@ export default function SchoolDashboardPage() {
       description: "Acompanhe o diário pedagógico lançado pelos professores por turma e período.",
       status: "ativo",
       category: "Gestão Acadêmica",
+      roles: ["diretor", "coordenador", "admin"],
     },
     {
       label: "Boletins Bimestrais",
       href: "/school/report-cards",
-      description: "Área reservada para notas, médias, pareceres e boletins por bimestre.",
-      status: "proximo",
+      description: "Área reservada para visão da direção sobre notas, médias e emissão de boletins.",
+      status: "ativo",
       category: "Gestão Acadêmica",
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
-      label: "Comunicação com Pais",
+      label: "Financeiro",
+      href: "/school/finance",
+      description: "Área preparada para mensalidades, recebimentos, cobranças e visão financeira.",
+      status: "implantacao",
+      category: "Gestão Escolar",
+      roles: ["diretor", "secretaria", "admin"],
+    },
+    {
+      label: "Comunicados",
       href: "/school/messages",
       description: "Central de comunicados da direção com pais e responsáveis.",
       status: "proximo",
       category: "Relacionamento",
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
+    },
+    {
+      label: "Branding da Escola",
+      href: BRANDING_HREF,
+      description: "Personalize logo e identidade visual da escola nos painéis e PDFs.",
+      status: "ativo",
+      category: "Gestão Escolar",
+      roles: ["diretor", "admin"],
     },
   ];
+
+  const actions = useMemo(() => {
+    return allActions.filter((item) => canAccess(currentRole, item));
+  }, [allActions, currentRole]);
+
+  const highlightActions = useMemo(() => {
+    const preferredByRole: Record<RoleKey, string[]> = {
+      diretor: [
+        "Equipe Escolar",
+        "Turmas",
+        "Alunos",
+        "Professores",
+        "Responsáveis",
+        "Disciplinas",
+      ],
+      coordenador: [
+        "Equipe Escolar",
+        "Turmas",
+        "Alunos",
+        "Professores",
+        "Boletins Bimestrais",
+        "Diário de Classe",
+      ],
+      secretaria: [
+        "Alunos",
+        "Matrículas",
+        "Pais / Responsáveis",
+        "Presença",
+        "Boletins Bimestrais",
+        "Financeiro",
+      ],
+      professor: [],
+      admin: [
+        "Equipe Escolar",
+        "Turmas",
+        "Alunos",
+        "Professores",
+        "Responsáveis",
+        "Disciplinas",
+      ],
+      unknown: [],
+    };
+
+    const preferred = preferredByRole[currentRole] || [];
+
+    return preferred
+      .map((label) => actions.find((item) => item.label === label))
+      .filter(Boolean) as QuickAction[];
+  }, [actions, currentRole]);
 
   const availableCount = actions.filter((a) => a.status === "ativo").length;
   const inProgressCount = actions.filter((a) => a.status === "implantacao").length;
@@ -304,16 +426,15 @@ export default function SchoolDashboardPage() {
           return;
         }
 
-        const role = String(payload.school?.role || "").trim().toLowerCase();
+        const role = normalizeRole(payload.school?.role);
 
         if (
           role !== "diretor" &&
-          role !== "director" &&
           role !== "coordenador" &&
-          role !== "coordinator" &&
+          role !== "secretaria" &&
           role !== "admin"
         ) {
-          router.replace("/login");
+          router.replace(payload.redirectTo || "/login");
           return;
         }
 
@@ -356,12 +477,13 @@ export default function SchoolDashboardPage() {
 
   if (error) {
     return (
-      <main className="min-h-[70vh] flex items-center justify-center">
+      <main className="flex min-h-[70vh] items-center justify-center">
         <div className="w-full max-w-xl rounded-[28px] border border-red-200 bg-white p-8 shadow-sm">
           <h1 className="text-xl font-semibold text-slate-900">Não foi possível entrar</h1>
           <p className="mt-3 text-sm leading-6 text-slate-600">{error}</p>
 
           <button
+            type="button"
             onClick={() => router.replace("/login")}
             className="mt-6 inline-flex rounded-2xl bg-slate-900 px-5 py-3 text-sm font-medium text-white transition hover:opacity-90"
           >
@@ -407,28 +529,46 @@ export default function SchoolDashboardPage() {
                 </p>
 
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
-                  Controle os módulos acadêmicos, pedagógicos e operacionais da escola
-                  em uma experiência contínua, profissional e preparada para crescimento.
+                  Controle os módulos acadêmicos, pedagógicos e operacionais permitidos
+                  para o seu perfil em uma experiência profissional e segura.
                 </p>
               </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => go("/school/settings/branding")}
-                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
-              >
-                Personalizar escola
-              </button>
+              {currentRole === "diretor" ||
+              currentRole === "coordenador" ||
+              currentRole === "admin" ? (
+                <button
+                  type="button"
+                  onClick={() => go(STAFF_HREF)}
+                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                >
+                  Equipe escolar
+                </button>
+              ) : null}
 
-              <button
-                type="button"
-                onClick={() => go("/school/class-diary")}
-                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
-              >
-                Diário de classe
-              </button>
+              {currentRole === "diretor" ||
+              currentRole === "coordenador" ||
+              currentRole === "admin" ? (
+                <button
+                  type="button"
+                  onClick={() => go(SUBJECTS_HREF)}
+                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                >
+                  Disciplinas
+                </button>
+              ) : null}
+
+              {currentRole === "diretor" || currentRole === "admin" ? (
+                <button
+                  type="button"
+                  onClick={() => go(BRANDING_HREF)}
+                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                >
+                  Personalizar escola
+                </button>
+              ) : null}
 
               <button
                 type="button"
@@ -445,7 +585,7 @@ export default function SchoolDashboardPage() {
           <MetricCard
             label="Módulos ativos"
             value={String(availableCount)}
-            help="Áreas prontas para uso operacional imediato."
+            help="Áreas liberadas para o seu perfil atual."
           />
 
           <MetricCard
@@ -478,35 +618,26 @@ export default function SchoolDashboardPage() {
             Atalhos principais
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Os módulos mais usados pela gestão no dia a dia.
+            Os módulos mais usados para o seu perfil no dia a dia.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <HighlightCard
-            title="Turmas"
-            description="Organize séries, anos e turnos e mantenha a base acadêmica estruturada."
-            onClick={() => go("/school/classes")}
-          />
-
-          <HighlightCard
-            title="Alunos"
-            description="Cadastre alunos, defina turmas ativas e acompanhe a base escolar."
-            onClick={() => go("/school/students")}
-          />
-
-          <HighlightCard
-            title="Professores"
-            description="Gerencie o corpo docente e os vínculos com turmas e operação pedagógica."
-            onClick={() => go("/school/teachers")}
-          />
-
-          <HighlightCard
-            title="Responsáveis"
-            description="Mantenha acessos e vínculos familiares prontos para a comunicação escolar."
-            onClick={() => go("/school/parents")}
-          />
-        </div>
+        {highlightActions.length === 0 ? (
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
+            Nenhum atalho disponível para este perfil.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">
+            {highlightActions.map((item) => (
+              <HighlightCard
+                key={item.href}
+                title={item.label}
+                description={item.description}
+                onClick={() => go(item.href)}
+              />
+            ))}
+          </div>
+        )}
       </section>
 
       <section>
@@ -516,7 +647,7 @@ export default function SchoolDashboardPage() {
               Módulos da gestão escolar
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Acesso rápido ao que já está operacional e visão clara do roadmap.
+              Acesso rápido ao que está liberado para o seu perfil.
             </p>
           </div>
 
@@ -525,11 +656,17 @@ export default function SchoolDashboardPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
-          {actions.map((item) => (
-            <ModuleCard key={item.href} item={item} onOpen={go} />
-          ))}
-        </div>
+        {actions.length === 0 ? (
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
+            Nenhum módulo disponível para este perfil.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+            {actions.map((item) => (
+              <ModuleCard key={item.href} item={item} onOpen={go} />
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
@@ -537,14 +674,13 @@ export default function SchoolDashboardPage() {
           <div>
             <h3 className="text-lg font-semibold text-slate-900">Resumo estratégico</h3>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
-              Este painel concentra os pilares da operação escolar: gestão acadêmica,
-              relacionamento com responsáveis, branding da escola e expansão para
-              financeiro, boletins e comunicação centralizada.
+              Este painel adapta os atalhos e módulos conforme o cargo do usuário.
+              Assim, cada colaborador visualiza apenas o que faz sentido para sua função.
             </p>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-            Produto pronto para demonstração comercial
+            Perfil atual: {roleLabel}
           </div>
         </div>
 
@@ -554,7 +690,16 @@ export default function SchoolDashboardPage() {
               Acadêmico
             </div>
             <div className="mt-2 text-sm leading-6 text-slate-700">
-              Turmas, alunos, matrículas, professores e vínculos já fazem parte da operação da direção.
+              Alunos, matrículas, turmas, boletins e presença conforme permissões do perfil.
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200 p-5">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Operacional
+            </div>
+            <div className="mt-2 text-sm leading-6 text-slate-700">
+              Secretaria pode operar alunos, responsáveis, matrículas, financeiro e comunicados.
             </div>
           </div>
 
@@ -563,25 +708,16 @@ export default function SchoolDashboardPage() {
               Pedagógico
             </div>
             <div className="mt-2 text-sm leading-6 text-slate-700">
-              Diário de classe, presença e relatórios em PDF já fortalecem a rotina escolar.
+              Coordenação acompanha equipe, turmas, professores, disciplinas, boletins e diário.
             </div>
           </div>
 
           <div className="rounded-3xl border border-slate-200 p-5">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Relacionamento
+              Direção
             </div>
             <div className="mt-2 text-sm leading-6 text-slate-700">
-              A base de responsáveis já está pronta para login, vínculo e futura comunicação oficial.
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-slate-200 p-5">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Próxima expansão
-            </div>
-            <div className="mt-2 text-sm leading-6 text-slate-700">
-              Financeiro completo, boletim bimestral, mensagens e cobrança recorrente por assinatura.
+              Diretor mantém visão ampla da escola, equipe, branding, financeiro e operação.
             </div>
           </div>
         </div>

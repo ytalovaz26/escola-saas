@@ -16,26 +16,18 @@ type DiaryEntry = {
   homework: string | null;
 };
 
-type SectionBlock = {
-  title: string;
-  value: string;
-};
-
-type RenderItem =
-  | { kind: "date"; text: string }
-  | { kind: "section"; title: string; value: string };
-
-type RenderPage = {
-  items: RenderItem[];
-};
-
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
+}
+
+function isValidDateYMD(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
 function brDateFromISO(iso: string) {
   const [y, m, d] = String(iso || "").split("-");
   if (!y || !m || !d) return iso;
+
   return `${d}/${m}/${y}`;
 }
 
@@ -44,10 +36,46 @@ function formatMonthLabel(ref: string) {
   if (!year || !month) return ref || "—";
 
   const date = new Date(Number(year), Number(month) - 1, 1);
+
   return date.toLocaleDateString("pt-BR", {
     month: "long",
     year: "numeric",
   });
+}
+
+function periodLabel(startDate: string, endDate: string) {
+  if (startDate && endDate) {
+    if (startDate === endDate) return brDateFromISO(startDate);
+    return `${brDateFromISO(startDate)} até ${brDateFromISO(endDate)}`;
+  }
+
+  if (startDate) return `A partir de ${brDateFromISO(startDate)}`;
+  if (endDate) return `Até ${brDateFromISO(endDate)}`;
+
+  return "—";
+}
+
+function monthStart(referenceMonth: string) {
+  const [y, m] = String(referenceMonth || "").split("-").map(Number);
+  if (!y || !m) return "";
+
+  return `${y}-${String(m).padStart(2, "0")}-01`;
+}
+
+function monthEnd(referenceMonth: string) {
+  const [y, m] = String(referenceMonth || "").split("-").map(Number);
+  if (!y || !m) return "";
+
+  const end = new Date(y, m, 0);
+
+  return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(
+    end.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function monthFromDateYMD(value: string) {
+  if (!isValidDateYMD(value)) return "";
+  return value.slice(0, 7);
 }
 
 function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: string } | null {
@@ -60,6 +88,7 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
     const parts = rest.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
+
     if (bucket && path) return { bucket, path };
   }
 
@@ -70,6 +99,7 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
     const parts = rest.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
+
     if (bucket && path) return { bucket, path };
   }
 
@@ -77,6 +107,7 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
     const parts = u.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
+
     if (bucket && path) return { bucket, path };
   }
 
@@ -87,6 +118,7 @@ function bufferFromDataUrl(dataUrl: string): Buffer | null {
   try {
     const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
     if (!match) return null;
+
     return Buffer.from(match[2], "base64");
   } catch {
     return null;
@@ -105,8 +137,10 @@ async function getLogoBuffer(logoUrl: string | null): Promise<Buffer | null> {
     }
 
     const ref = parseSupabaseStorageRef(clean);
+
     if (ref) {
       const { data, error } = await supabaseAdmin.storage.from(ref.bucket).download(ref.path);
+
       if (!error && data) {
         const ab = await data.arrayBuffer();
         return Buffer.from(ab);
@@ -130,28 +164,11 @@ async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
     doc.on("data", (chunk) => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
+
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
+
     doc.end();
-  });
-}
-
-function drawSingleLineCentered(
-  doc: PDFKit.PDFDocument,
-  text: string,
-  y: number,
-  fontSize = 9,
-  color = "#6b7280",
-  font: "Helvetica" | "Helvetica-Bold" = "Helvetica"
-) {
-  doc.font(font).fontSize(fontSize).fillColor(color);
-
-  const safeText = text || "";
-  const textWidth = doc.widthOfString(safeText);
-  const x = Math.max(40, (doc.page.width - textWidth) / 2);
-
-  doc.text(safeText, x, y, {
-    lineBreak: false,
   });
 }
 
@@ -163,6 +180,7 @@ function drawHeader(params: {
   subjectName: string;
   termLabel: string;
   referenceMonthLabel: string;
+  periodText: string;
   logoBuffer: Buffer | null;
 }) {
   const {
@@ -173,47 +191,111 @@ function drawHeader(params: {
     subjectName,
     termLabel,
     referenceMonthLabel,
+    periodText,
     logoBuffer,
   } = params;
 
   const margin = 40;
 
   if (logoBuffer) {
-    doc.image(logoBuffer, margin, 36, { fit: [70, 70] });
+    doc.image(logoBuffer, margin, 32, { fit: [72, 52] });
   }
 
-  const titleX = margin + 84;
+  doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827");
+  doc.text(schoolName, margin, 38, {
+    width: doc.page.width - margin * 2,
+    align: "center",
+  });
 
-  doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(schoolName, titleX, 40);
-  doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827").text("Diário de Classe", titleX, 64);
+  doc.font("Helvetica-Bold").fontSize(14).fillColor("#111827");
+  doc.text("Diário de Classe", margin, 68, {
+    width: doc.page.width - margin * 2,
+    align: "center",
+  });
 
-  doc.font("Helvetica").fontSize(10).fillColor("#374151");
-  doc.text(`Turma: ${className}`, margin, 120);
-  doc.text(`Professor(a): ${teacherName}`, margin, 136);
-  doc.text(`Disciplina: ${subjectName}`, margin, 152);
-  doc.text(`Período: ${termLabel || "—"}`, margin, 168);
-  doc.text(`Mês de referência: ${referenceMonthLabel}`, margin, 184);
+  const boxY = 102;
+  const boxH = 98;
 
   doc
-    .moveTo(margin, 206)
-    .lineTo(doc.page.width - margin, 206)
-    .strokeColor("#e5e7eb")
+    .roundedRect(margin, boxY, doc.page.width - margin * 2, boxH, 8)
+    .strokeColor("#d1d5db")
     .lineWidth(1)
     .stroke();
+
+  doc.font("Helvetica").fontSize(9).fillColor("#374151");
+
+  const leftX = margin + 14;
+  const rightX = margin + 285;
+
+  doc.text(`Turma: ${className}`, leftX, boxY + 14);
+  doc.text(`Professor(a): ${teacherName}`, leftX, boxY + 32);
+  doc.text(`Mês base: ${referenceMonthLabel}`, leftX, boxY + 50);
+
+  doc.text(`Disciplina: ${subjectName}`, rightX, boxY + 14);
+  doc.text(`Período letivo: ${termLabel || "—"}`, rightX, boxY + 32);
+  doc.text(`Relatório: ${periodText}`, rightX, boxY + 50, {
+    width: doc.page.width - rightX - margin - 14,
+  });
+
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827");
+  doc.text("Relatório resumido de conteúdo ministrado", margin, boxY + 76, {
+    width: doc.page.width - margin * 2,
+    align: "center",
+  });
+}
+
+function drawTableHeader(doc: PDFKit.PDFDocument, y: number) {
+  const margin = 40;
+  const dateW = 86;
+  const contentW = doc.page.width - margin * 2 - dateW;
+
+  doc
+    .rect(margin, y, dateW, 24)
+    .fillAndStroke("#f1f5f9", "#d1d5db");
+
+  doc
+    .rect(margin + dateW, y, contentW, 24)
+    .fillAndStroke("#f1f5f9", "#d1d5db");
+
+  doc.font("Helvetica-Bold").fontSize(9).fillColor("#111827");
+  doc.text("Data", margin + 8, y + 7, {
+    width: dateW - 16,
+    lineBreak: false,
+  });
+
+  doc.text("Conteúdo ministrado", margin + dateW + 8, y + 7, {
+    width: contentW - 16,
+    lineBreak: false,
+  });
+
+  return y + 24;
 }
 
 function drawFooter(params: {
   doc: PDFKit.PDFDocument;
   className: string;
-  referenceMonthLabel: string;
+  periodText: string;
 }) {
-  const { doc, className, referenceMonthLabel } = params;
+  const { doc, className, periodText } = params;
 
+  const margin = 40;
+  const footerY = doc.page.height - 48;
   const emitDate = new Date().toLocaleDateString("pt-BR");
-  const footerText = `Turma: ${className}  •  Mês: ${referenceMonthLabel}  •  Emitido em: ${emitDate}`;
 
-  // bem acima do fim da página, evitando qualquer chance de o PDFKit paginar
-  drawSingleLineCentered(doc, footerText, doc.page.height - 72, 9, "#6b7280", "Helvetica");
+  doc
+    .moveTo(margin, footerY - 10)
+    .lineTo(doc.page.width - margin, footerY - 10)
+    .strokeColor("#e5e7eb")
+    .lineWidth(1)
+    .stroke();
+
+  doc.font("Helvetica").fontSize(8).fillColor("#6b7280");
+
+  doc.text(`Turma: ${className} • Período: ${periodText} • Emitido em: ${emitDate}`, margin, footerY, {
+    width: doc.page.width - margin * 2,
+    align: "center",
+    lineBreak: false,
+  });
 }
 
 function drawSignature(params: {
@@ -222,11 +304,9 @@ function drawSignature(params: {
 }) {
   const { doc, teacherName } = params;
 
-  const lineY = doc.page.height - 125;
-  const textY1 = lineY + 8;
-  const textY2 = lineY + 22;
-  const lineStartX = doc.page.width - 240;
+  const lineStartX = doc.page.width - 250;
   const lineEndX = doc.page.width - 60;
+  const lineY = doc.page.height - 112;
   const centerX = (lineStartX + lineEndX) / 2;
 
   doc
@@ -236,143 +316,135 @@ function drawSignature(params: {
     .lineWidth(1)
     .stroke();
 
-  doc.font("Helvetica").fontSize(10).fillColor("#374151");
+  doc.font("Helvetica").fontSize(9).fillColor("#374151");
 
   const teacherSafe = teacherName || "Professor(a)";
   const teacherWidth = doc.widthOfString(teacherSafe);
   const labelWidth = doc.widthOfString("Professor(a)");
 
-  doc.text(teacherSafe, centerX - teacherWidth / 2, textY1, {
+  doc.text(teacherSafe, centerX - teacherWidth / 2, lineY + 8, {
     lineBreak: false,
   });
 
-  doc.text("Professor(a)", centerX - labelWidth / 2, textY2, {
+  doc.text("Professor(a)", centerX - labelWidth / 2, lineY + 22, {
     lineBreak: false,
   });
 }
 
-function measureDateHeight() {
-  return 24;
-}
-
-function measureSectionHeight(doc: PDFKit.PDFDocument, width: number, value: string) {
-  const safeValue = value?.trim() ? value.trim() : "—";
-
-  const textHeight = doc.heightOfString(safeValue, {
-    width: width - 24,
-    align: "left",
-  });
-
-  const boxHeight = Math.max(40, textHeight + 20);
-
-  return 16 + boxHeight + 18;
-}
-
-function drawSection(params: {
-  doc: PDFKit.PDFDocument;
-  x: number;
-  y: number;
-  width: number;
-  title: string;
-  value: string;
-}) {
-  const { doc, x, y, width, title, value } = params;
-  const safeValue = value?.trim() ? value.trim() : "—";
-
-  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(title, x, y);
-
-  const boxY = y + 16;
-
-  const textHeight = doc.heightOfString(safeValue, {
-    width: width - 24,
-    align: "left",
-  });
-
-  const boxHeight = Math.max(40, textHeight + 20);
-
-  doc
-    .roundedRect(x, boxY, width, boxHeight, 8)
-    .strokeColor("#d1d5db")
-    .lineWidth(1)
-    .stroke();
-
-  doc.font("Helvetica").fontSize(10).fillColor("#374151").text(safeValue, x + 12, boxY + 10, {
-    width: width - 24,
-    align: "left",
-  });
-
-  return boxY + boxHeight;
-}
-
-function paginateDiary(params: {
+function drawSummaryReport(params: {
   doc: PDFKit.PDFDocument;
   entries: DiaryEntry[];
-  contentWidth: number;
-  firstPageStartY: number;
-  otherPagesStartY: number;
-  usableBottomY: number;
+  schoolName: string;
+  className: string;
+  teacherName: string;
+  subjectName: string;
+  termLabel: string;
+  referenceMonthLabel: string;
+  periodText: string;
+  logoBuffer: Buffer | null;
 }) {
-  const { doc, entries, contentWidth, firstPageStartY, otherPagesStartY, usableBottomY } = params;
+  const {
+    doc,
+    entries,
+    schoolName,
+    className,
+    teacherName,
+    subjectName,
+    termLabel,
+    referenceMonthLabel,
+    periodText,
+    logoBuffer,
+  } = params;
 
-  const pages: RenderPage[] = [];
-  let currentPage: RenderPage = { items: [] };
-  let currentY = firstPageStartY;
+  const margin = 40;
+  const dateW = 86;
+  const contentW = doc.page.width - margin * 2 - dateW;
 
-  function pushPage() {
-    if (currentPage.items.length > 0) {
-      pages.push(currentPage);
-    }
-    currentPage = { items: [] };
-    currentY = otherPagesStartY;
-  }
+  const tableTopFirstPage = 222;
+  const tableTopOtherPages = 68;
+  const bottomLimit = doc.page.height - 150;
+
+  drawHeader({
+    doc,
+    schoolName,
+    className,
+    teacherName,
+    subjectName,
+    termLabel,
+    referenceMonthLabel,
+    periodText,
+    logoBuffer,
+  });
+
+  let y = drawTableHeader(doc, tableTopFirstPage);
 
   for (const entry of entries) {
-    const dateText = `Data: ${brDateFromISO(entry.lesson_date)}`;
-    const dateHeight = measureDateHeight();
+    const content = String(entry.content_taught || "").trim() || "—";
 
-    if (currentY + dateHeight > usableBottomY) {
-      pushPage();
-    }
+    doc.font("Helvetica").fontSize(9);
 
-    currentPage.items.push({
-      kind: "date",
-      text: dateText,
+    const contentHeight = doc.heightOfString(content, {
+      width: contentW - 16,
+      align: "left",
     });
 
-    currentY += dateHeight;
+    const rowH = Math.max(24, contentHeight + 14);
 
-    const blocks: SectionBlock[] = [
-      { title: "Conteúdo ministrado", value: entry.content_taught || "" },
-      { title: "Metodologia", value: entry.methodology || "" },
-      { title: "Atividades desenvolvidas", value: entry.activities || "" },
-      { title: "Observações", value: entry.notes || "" },
-      { title: "Tarefa de casa", value: entry.homework || "" },
-    ];
-
-    for (const block of blocks) {
-      const sectionHeight = measureSectionHeight(doc, contentWidth, block.value || "");
-
-      if (currentY + sectionHeight > usableBottomY) {
-        pushPage();
-      }
-
-      currentPage.items.push({
-        kind: "section",
-        title: block.title,
-        value: block.value || "",
+    if (y + rowH > bottomLimit) {
+      drawFooter({
+        doc,
+        className,
+        periodText,
       });
 
-      currentY += sectionHeight;
+      doc.addPage();
+
+      doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827");
+      doc.text("Diário de Classe — continuação", margin, 38, {
+        width: doc.page.width - margin * 2,
+        align: "center",
+      });
+
+      y = drawTableHeader(doc, tableTopOtherPages);
     }
 
-    currentY += 6;
+    doc
+      .rect(margin, y, dateW, rowH)
+      .strokeColor("#d1d5db")
+      .lineWidth(1)
+      .stroke();
+
+    doc
+      .rect(margin + dateW, y, contentW, rowH)
+      .strokeColor("#d1d5db")
+      .lineWidth(1)
+      .stroke();
+
+    doc.font("Helvetica").fontSize(9).fillColor("#111827");
+
+    doc.text(brDateFromISO(entry.lesson_date), margin + 8, y + 8, {
+      width: dateW - 16,
+      align: "center",
+    });
+
+    doc.text(content, margin + dateW + 8, y + 8, {
+      width: contentW - 16,
+      align: "left",
+    });
+
+    y += rowH;
   }
 
-  if (currentPage.items.length > 0) {
-    pages.push(currentPage);
-  }
+  drawSignature({
+    doc,
+    teacherName,
+  });
 
-  return pages;
+  drawFooter({
+    doc,
+    className,
+    periodText,
+  });
 }
 
 export async function GET(req: Request) {
@@ -389,17 +461,52 @@ export async function GET(req: Request) {
   const schoolId = (guard as any).schoolId as string;
 
   const url = new URL(req.url);
+
   const classId = (url.searchParams.get("classId") || "").trim();
   const referenceMonth = (url.searchParams.get("referenceMonth") || "").trim();
   const subjectName = (url.searchParams.get("subjectName") || "").trim();
   const termLabel = (url.searchParams.get("termLabel") || "").trim();
+
   const lessonDate = (url.searchParams.get("lessonDate") || "").trim();
+  const startDateParam = (url.searchParams.get("startDate") || "").trim();
+  const endDateParam = (url.searchParams.get("endDate") || "").trim();
+
+  let startDate = startDateParam;
+  let endDate = endDateParam;
+
+  if (lessonDate && !startDate && !endDate) {
+    startDate = lessonDate;
+    endDate = lessonDate;
+  }
+
+  if (!startDate && referenceMonth) {
+    startDate = monthStart(referenceMonth);
+  }
+
+  if (!endDate && referenceMonth) {
+    endDate = monthEnd(referenceMonth);
+  }
 
   if (!schoolId) return jsonError("Escola não identificada.", 401);
   if (!classId) return jsonError("classId é obrigatório.", 400);
   if (!referenceMonth) return jsonError("referenceMonth é obrigatório.", 400);
   if (!subjectName) return jsonError("subjectName é obrigatório.", 400);
-  if (!lessonDate) return jsonError("lessonDate é obrigatório.", 400);
+
+  if (!startDate || !endDate) {
+    return jsonError("Informe startDate e endDate para gerar o relatório.", 400);
+  }
+
+  if (!isValidDateYMD(startDate)) {
+    return jsonError("startDate inválida. Use o formato YYYY-MM-DD.", 400);
+  }
+
+  if (!isValidDateYMD(endDate)) {
+    return jsonError("endDate inválida. Use o formato YYYY-MM-DD.", 400);
+  }
+
+  if (startDate > endDate) {
+    return jsonError("A data inicial não pode ser maior que a data final.", 400);
+  }
 
   const { data: school, error: schoolErr } = await supabaseAdmin
     .from("schools")
@@ -417,23 +524,39 @@ export async function GET(req: Request) {
   const logoUrl = school?.brand_logo_url || school?.logo_url || null;
   const logoBuffer = await getLogoBuffer(logoUrl);
 
-  const { data: classData } = await supabaseAdmin
+  const { data: classData, error: classErr } = await supabaseAdmin
     .from("classes")
     .select("name")
     .eq("id", classId)
+    .eq("school_id", schoolId)
     .single();
+
+  if (classErr) {
+    return jsonError("Falha ao buscar turma.", 500, {
+      details: classErr.message,
+    });
+  }
 
   const className = classData?.name || classId;
 
-  const { data: diary, error: diaryErr } = await supabaseAdmin
+  const startMonth = monthFromDateYMD(startDate);
+  const endMonth = monthFromDateYMD(endDate);
+
+  let diaryQuery = supabaseAdmin
     .from("class_diaries")
     .select("*")
     .eq("school_id", schoolId)
     .eq("class_id", classId)
     .eq("subject_name", subjectName)
-    .eq("reference_month", referenceMonth)
-    .limit(1)
-    .maybeSingle();
+    .order("reference_month", { ascending: true });
+
+  if (startMonth && endMonth) {
+    diaryQuery = diaryQuery.gte("reference_month", startMonth).lte("reference_month", endMonth);
+  } else {
+    diaryQuery = diaryQuery.eq("reference_month", referenceMonth);
+  }
+
+  const { data: diaries, error: diaryErr } = await diaryQuery;
 
   if (diaryErr) {
     return jsonError("Falha ao buscar diário.", 500, {
@@ -441,20 +564,25 @@ export async function GET(req: Request) {
     });
   }
 
-  if (!diary?.id) {
+  if (!diaries || diaries.length === 0) {
     return jsonError("Diário não encontrado para os filtros informados.", 404);
   }
 
+  const diaryIds = diaries.map((d: any) => d.id).filter(Boolean);
+
+  const firstDiary = diaries[0] as any;
+
   const teacherName = await getTeacherDisplayName({
-    teacherUserId: diary.teacher_user_id,
+    teacherUserId: firstDiary.teacher_user_id,
     schoolId,
   });
 
   const { data: entries, error: entriesErr } = await supabaseAdmin
     .from("class_diary_entries")
     .select("id, lesson_date, content_taught, methodology, activities, notes, homework")
-    .eq("diary_id", diary.id)
-    .eq("lesson_date", lessonDate)
+    .in("diary_id", diaryIds)
+    .gte("lesson_date", startDate)
+    .lte("lesson_date", endDate)
     .order("lesson_date", { ascending: true });
 
   if (entriesErr) {
@@ -466,7 +594,7 @@ export async function GET(req: Request) {
   const diaryEntries = (entries || []) as DiaryEntry[];
 
   if (diaryEntries.length === 0) {
-    return jsonError("Nenhum lançamento encontrado para a data selecionada.", 404);
+    return jsonError("Nenhum lançamento encontrado para o período selecionado.", 404);
   }
 
   const doc = new PDFDocument({
@@ -476,87 +604,30 @@ export async function GET(req: Request) {
     autoFirstPage: true,
   });
 
-  const margin = 40;
-  const contentWidth = doc.page.width - margin * 2;
   const referenceMonthLabel = formatMonthLabel(referenceMonth);
+  const selectedPeriodLabel = periodLabel(startDate, endDate);
 
-  // Reserva fixa para assinatura + rodapé
-  const firstPageStartY = 225;
-  const otherPagesStartY = 50;
-  const usableBottomY = doc.page.height - 185;
-
-  const pages = paginateDiary({
+  drawSummaryReport({
     doc,
     entries: diaryEntries,
-    contentWidth,
-    firstPageStartY,
-    otherPagesStartY,
-    usableBottomY,
-  });
-
-  pages.forEach((page, pageIndex) => {
-    if (pageIndex > 0) {
-      doc.addPage();
-    }
-
-    if (pageIndex === 0) {
-      drawHeader({
-        doc,
-        schoolName,
-        className,
-        teacherName,
-        subjectName,
-        termLabel: termLabel || diary.term_label || "—",
-        referenceMonthLabel,
-        logoBuffer,
-      });
-    }
-
-    let y = pageIndex === 0 ? firstPageStartY : otherPagesStartY;
-
-    for (const item of page.items) {
-      if (item.kind === "date") {
-        doc
-          .font("Helvetica-Bold")
-          .fontSize(11)
-          .fillColor("#111827")
-          .text(item.text, margin, y);
-
-        y += 24;
-      } else {
-        const endY = drawSection({
-          doc,
-          x: margin,
-          y,
-          width: contentWidth,
-          title: item.title,
-          value: item.value,
-        });
-
-        y = endY + 18;
-      }
-    }
-
-    if (pageIndex === pages.length - 1) {
-      drawSignature({
-        doc,
-        teacherName,
-      });
-    }
-
-    drawFooter({
-      doc,
-      className,
-      referenceMonthLabel,
-    });
+    schoolName,
+    className,
+    teacherName,
+    subjectName,
+    termLabel: termLabel || firstDiary.term_label || "—",
+    referenceMonthLabel,
+    periodText: selectedPeriodLabel,
+    logoBuffer,
   });
 
   const buffer = await pdfToBuffer(doc);
 
+  const safeFileName = `diario-classe-${classId}-${startDate}-ate-${endDate}.pdf`;
+
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="diario-escola-${classId}-${lessonDate}.pdf"`,
+      "Content-Disposition": `inline; filename="${safeFileName}"`,
       "Cache-Control": "no-store",
     },
   });

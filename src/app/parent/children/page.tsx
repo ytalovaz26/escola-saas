@@ -1,7 +1,6 @@
-// src/app/parent/children/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -33,12 +32,177 @@ async function safeJson(res: Response) {
   }
 }
 
+function initials(name?: string | null) {
+  const safe = String(name || "").trim();
+  if (!safe) return "AL";
+
+  const parts = safe.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+}
+
+function classLabel(child: ChildRow) {
+  const cls = child.active_class?.class;
+  if (!cls) return "Sem turma ativa";
+
+  const parts: string[] = [];
+  if (cls.name) parts.push(cls.name);
+  if (cls.grade) parts.push(cls.grade);
+  if (cls.shift) parts.push(cls.shift);
+
+  return parts.join(" • ") || "Turma ativa";
+}
+
+function MetricCard({
+  label,
+  value,
+  help,
+}: {
+  label: string;
+  value: string;
+  help: string;
+}) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </div>
+      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </div>
+      <div className="mt-2 text-sm leading-6 text-slate-500">{help}</div>
+    </div>
+  );
+}
+
+function ActionButton({
+  label,
+  onClick,
+  primary = false,
+}: {
+  label: string;
+  onClick: () => void;
+  primary?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "rounded-2xl px-4 py-2.5 text-sm font-medium transition",
+        primary
+          ? "bg-slate-900 text-white hover:opacity-90"
+          : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+}
+
+function PremiumCard({
+  child,
+  onOpen,
+  onDaily,
+  onMonthly,
+  onReport,
+}: {
+  child: ChildRow;
+  onOpen: () => void;
+  onDaily: () => void;
+  onMonthly: () => void;
+  onReport: () => void;
+}) {
+  const hasClass = !!child.active_class?.class;
+
+  return (
+    <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-200 bg-slate-50/70 px-5 py-4">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="flex min-w-0 items-start gap-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white">
+              {initials(child.full_name)}
+            </div>
+
+            <div className="min-w-0">
+              <h2 className="truncate text-lg font-semibold text-slate-900">
+                {child.full_name}
+              </h2>
+
+              <div className="mt-1 text-sm text-slate-600">
+                {child.registration_number
+                  ? `Matrícula: ${child.registration_number}`
+                  : "Sem matrícula"}
+                {child.relationship ? ` • ${child.relationship}` : ""}
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <span className="inline-flex rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
+                  Aluno vinculado
+                </span>
+
+                <span
+                  className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${
+                    hasClass
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-amber-50 text-amber-700"
+                  }`}
+                >
+                  {hasClass ? "Turma ativa" : "Sem turma ativa"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-[11px] font-mono text-slate-400 break-all md:max-w-[200px]">
+            {child.id}
+          </div>
+        </div>
+      </div>
+
+      <div className="p-5">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="rounded-3xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Turma atual
+            </div>
+            <div className="mt-2 text-base font-semibold text-slate-900">
+              {classLabel(child)}
+            </div>
+            <div className="mt-2 text-sm leading-6 text-slate-500">
+              Acesse rapidamente presença, histórico mensal e boletim escolar deste aluno.
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <ActionButton label="Abrir aluno" onClick={onOpen} />
+            <ActionButton label="Presença diária" onClick={onDaily} />
+            <ActionButton label="Presença mensal" onClick={onMonthly} />
+            <ActionButton label="Ver boletim" onClick={onReport} primary />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ParentChildrenPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [children, setChildren] = useState<ChildRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  const totalChildren = useMemo(() => children.length, [children]);
+  const activeClassCount = useMemo(
+    () => children.filter((child) => !!child.active_class?.class).length,
+    [children]
+  );
+  const noClassCount = useMemo(
+    () => children.filter((child) => !child.active_class?.class).length,
+    [children]
+  );
 
   useEffect(() => {
     (async () => {
@@ -75,17 +239,36 @@ export default function ParentChildrenPage() {
     })();
   }, [router]);
 
-  if (loading) return <main className="p-6">Carregando...</main>;
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-slate-50 p-4 md:p-6">
+        <div className="mx-auto max-w-7xl space-y-6">
+          <div className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
+            <div className="animate-pulse space-y-4">
+              <div className="h-8 w-60 rounded-xl bg-slate-200" />
+              <div className="h-4 w-80 rounded-xl bg-slate-100" />
+              <div className="h-32 rounded-3xl bg-slate-100" />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="h-32 rounded-3xl bg-slate-100" />
+            <div className="h-32 rounded-3xl bg-slate-100" />
+            <div className="h-32 rounded-3xl bg-slate-100" />
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   if (error) {
     return (
-      <main className="min-h-screen flex items-center justify-center p-6">
-        <div className="max-w-lg w-full bg-white rounded-2xl shadow p-6">
-          <h1 className="text-xl font-semibold">Erro</h1>
-          <p className="text-sm text-gray-600 mt-2">{error}</p>
+      <main className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="w-full max-w-lg rounded-3xl border border-red-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">Erro</h1>
+          <p className="mt-2 text-sm text-slate-600">{error}</p>
           <button
             onClick={() => router.push("/parent")}
-            className="mt-4 w-full rounded-xl bg-gray-900 text-white p-3"
+            className="mt-4 w-full rounded-2xl bg-slate-900 p-3 text-white"
           >
             Voltar
           </button>
@@ -95,71 +278,84 @@ export default function ParentChildrenPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-5xl mx-auto">
-        <header className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">Meus filhos</h1>
-            <p className="text-sm text-gray-600 mt-1">Alunos vinculados ao seu cadastro.</p>
+    <main className="min-h-screen bg-slate-50 p-4 md:p-6">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+          <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-8 text-white md:px-8">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
+                  Área do responsável
+                </div>
+
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight">Meus filhos</h1>
+
+                <p className="mt-2 max-w-3xl text-sm text-slate-200">
+                  Acompanhe presença, boletim e rotina escolar de cada aluno vinculado à sua conta.
+                </p>
+              </div>
+
+              <button
+                onClick={() => router.push("/parent")}
+                className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:opacity-90"
+              >
+                Voltar ao portal
+              </button>
+            </div>
           </div>
 
-          <button
-            onClick={() => router.push("/parent")}
-            className="rounded-xl border px-4 py-2"
-          >
-            Voltar
-          </button>
-        </header>
+          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-3 md:p-6">
+            <MetricCard
+              label="Alunos vinculados"
+              value={String(totalChildren)}
+              help="Quantidade de filhos disponíveis para acompanhamento no portal."
+            />
 
-        <section className="mt-6 bg-white rounded-2xl shadow p-5">
-          {children.length === 0 ? (
-            <p className="text-sm text-gray-600">
-              Nenhum aluno vinculado a este responsável.
-              <br />
-              Peça para a escola vincular você a um aluno.
+            <MetricCard
+              label="Com turma ativa"
+              value={String(activeClassCount)}
+              help="Alunos com vínculo escolar ativo neste momento."
+            />
+
+            <MetricCard
+              label="Sem turma ativa"
+              value={String(noClassCount)}
+              help="Alunos que ainda não possuem turma ativa vinculada."
+            />
+          </div>
+        </section>
+
+        <section>
+          <div className="mb-4">
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+              Painéis dos alunos
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Entre em cada aluno para consultar frequência, boletim e informações escolares.
             </p>
+          </div>
+
+          {children.length === 0 ? (
+            <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
+                Nenhum aluno vinculado a este responsável.
+                <br />
+                Peça para a escola vincular você a um aluno.
+              </div>
+            </div>
           ) : (
-            <ul className="mt-4 space-y-2">
-              {children.map((c) => {
-                const cls = c.active_class?.class;
-                return (
-                  <li key={c.id} className="border rounded-2xl p-4">
-                    <div className="font-medium">{c.full_name}</div>
-                    <div className="text-xs text-gray-600 mt-1">
-                      {c.registration_number ? `Matrícula: ${c.registration_number}` : "Sem matrícula"}
-                      {c.relationship ? ` • Parentesco: ${c.relationship}` : ""}
-                    </div>
-
-                    <div className="mt-3 text-sm">
-                      <div className="text-xs text-gray-500">Turma ativa</div>
-                      {cls ? (
-                        <div className="mt-1">
-                          <div className="font-medium">{cls.name}</div>
-                          <div className="text-xs text-gray-600">
-                            {cls.grade ?? "—"} • {cls.shift ?? "—"}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-gray-600 mt-1">Sem turma ativa</div>
-                      )}
-                    </div>
-
-                    <div className="mt-4">
-                      <button
-                        className="rounded-xl border px-3 py-2 text-sm"
-                        onClick={() => router.push(`/parent/students/${c.id}`)}
-                      >
-                        Ver presença
-                      </button>
-                    </div>
-
-                    <div className="text-[11px] text-gray-500 font-mono mt-3 break-all">
-                      {c.id}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
+            <div className="space-y-4">
+              {children.map((child) => (
+                <PremiumCard
+                  key={child.id}
+                  child={child}
+                  onOpen={() => router.push(`/parent/students/${child.id}`)}
+                  onDaily={() => router.push(`/parent/students/${child.id}/daily`)}
+                  onMonthly={() => router.push(`/parent/students/${child.id}/monthly`)}
+                  onReport={() => router.push(`/parent/students/${child.id}/report-card`)}
+                />
+              ))}
+            </div>
           )}
         </section>
       </div>

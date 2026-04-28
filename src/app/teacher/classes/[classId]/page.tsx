@@ -205,10 +205,18 @@ export default function TeacherClassStudentsPage() {
             >
               Diário pedagógico
             </button>
+
+            <button
+              type="button"
+              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm"
+              onClick={() => router.push(`/teacher/classes/${classId}/grades`)}
+            >
+              Notas
+            </button>
           </div>
         </section>
 
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Total de alunos
@@ -237,7 +245,7 @@ export default function TeacherClassStudentsPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
             <h2 className="text-lg font-semibold text-slate-900">Lista de alunos</h2>
             <p className="mt-1 text-sm text-slate-500">
@@ -288,7 +296,7 @@ export default function TeacherClassStudentsPage() {
                 </table>
               </div>
 
-              <div className="md:hidden p-4 space-y-3">
+              <div className="space-y-3 p-4 md:hidden">
                 {students.map((student) => (
                   <div
                     key={student.student_id}

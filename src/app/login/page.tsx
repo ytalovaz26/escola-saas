@@ -13,7 +13,7 @@ type MeResponse =
       parent?: { parentId: string; schoolId: string };
       redirectTo: string;
     }
-  | { ok: false; error?: string };
+  | { ok: false; error?: string; status?: number };
 
 const DIRECTOR_GOOGLE_DRAFT_KEY = "director_signup_google_draft";
 
@@ -22,13 +22,42 @@ type DirectorGoogleDraft = {
   schoolName: string;
 };
 
+async function readJsonSafely(res: Response) {
+  const text = await res.text();
+
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      error:
+        text.startsWith("<!DOCTYPE") || text.startsWith("<html")
+          ? `A rota retornou HTML em vez de JSON. Status: ${res.status}. Verifique o terminal do Next.js para o erro real.`
+          : text,
+    };
+  }
+}
+
 async function callMe(accessToken: string): Promise<MeResponse> {
   const res = await fetch("/api/me", {
     method: "GET",
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
   });
-  return res.json();
+
+  const json = await readJsonSafely(res);
+
+  if (!res.ok || !json?.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      error: json?.error || `Falha ao carregar /api/me. Status: ${res.status}`,
+    };
+  }
+
+  return json as MeResponse;
 }
 
 function parseHashParams(hash: string) {
@@ -44,6 +73,34 @@ function saveDirectorGoogleDraft(draft: DirectorGoogleDraft) {
 function clearDirectorGoogleDraft() {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(DIRECTOR_GOOGLE_DRAFT_KEY);
+}
+
+function friendlyAuthError(message?: string) {
+  const raw = String(message || "").trim();
+
+  if (!raw) {
+    return "Não foi possível entrar. Verifique e-mail e senha.";
+  }
+
+  const lower = raw.toLowerCase();
+
+  if (lower.includes("invalid login credentials")) {
+    return "E-mail ou senha inválidos. Verifique os dados e tente novamente.";
+  }
+
+  if (lower.includes("email not confirmed")) {
+    return "Este e-mail ainda não foi confirmado. Verifique o convite recebido no e-mail ou peça para a escola definir uma senha temporária.";
+  }
+
+  if (lower.includes("signup disabled")) {
+    return "Cadastro direto está desativado. Peça para a escola criar seu acesso.";
+  }
+
+  if (lower.includes("sign in failed")) {
+    return "Falha ao entrar. Se este usuário foi criado por convite, defina uma senha temporária na tela Equipe Escolar ou aceite o convite por e-mail.";
+  }
+
+  return raw;
 }
 
 function BrandLogo({
@@ -174,15 +231,27 @@ export default function LoginPage() {
 
   async function redirectByMe() {
     const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
-    if (sessErr) throw new Error(sessErr.message);
+
+    if (sessErr) {
+      throw new Error(sessErr.message);
+    }
 
     const token = sessionData.session?.access_token;
-    if (!token) return;
+
+    if (!token) {
+      throw new Error("Sessão não encontrada após login.");
+    }
 
     const me = await callMe(token);
-    if (!me || (me as any).ok !== true) return;
 
-    router.replace((me as any).redirectTo || "/");
+    if (!me || me.ok !== true) {
+      throw new Error(
+        "Login realizado, mas não foi possível identificar o perfil do usuário. " +
+          ((me as any)?.error || "")
+      );
+    }
+
+    router.replace(me.redirectTo || "/");
   }
 
   async function handleRecoveryRedirect() {
@@ -264,13 +333,22 @@ export default function LoginPage() {
     try {
       clearDirectorGoogleDraft();
 
-      const { error: signInErr } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+      const cleanEmail = email.trim().toLowerCase();
+
+      const { data, error: signInErr } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
         password,
       });
 
       if (signInErr) {
-        setError(signInErr.message || "Erro ao entrar.");
+        setError(friendlyAuthError(signInErr.message));
+        return;
+      }
+
+      if (!data.session?.access_token) {
+        setError(
+          "Login não retornou sessão. Se este acesso foi criado por convite, defina uma senha temporária na tela Equipe Escolar."
+        );
         return;
       }
 
@@ -330,7 +408,7 @@ export default function LoginPage() {
         }),
       });
 
-      const json = await res.json().catch(() => null);
+      const json = await readJsonSafely(res);
 
       if (!res.ok || !json?.ok) {
         setError(json?.error || "Não foi possível criar o diretor.");
@@ -419,6 +497,7 @@ export default function LoginPage() {
         if (handled) return;
 
         const { data } = await supabase.auth.getSession();
+
         if (data.session?.access_token) {
           await redirectByMe();
           return;
@@ -429,6 +508,7 @@ export default function LoginPage() {
         setCheckingSession(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (checkingSession) {

@@ -13,7 +13,7 @@ type StudentRow = {
 
 type SessionRow = {
   id: string;
-  lesson_date: string; // DATE ou timestamp
+  lesson_date: string;
   lesson_number: number | null;
 };
 
@@ -32,7 +32,6 @@ function ymd(d: Date) {
 }
 
 function parseYMDToLocalDate(ymdStr: string) {
-  // cria Date local sem timezone shift
   const [y, m, d] = ymdStr.split("-").map(Number);
   return new Date(y, m - 1, d);
 }
@@ -43,12 +42,76 @@ function addDays(date: Date, days: number) {
   return d;
 }
 
+function formatDateBr(dateYmd: string) {
+  const [y, m, d] = dateYmd.split("-").map(Number);
+  if (!y || !m || !d) return dateYmd;
+
+  return new Date(y, m - 1, d).toLocaleDateString("pt-BR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function normalizeStatus(status: string) {
+  const s = String(status || "").toLowerCase().trim();
+
+  if (s === "present" || s === "presente") return "present";
+  if (s === "late" || s === "atraso" || s === "tarde" || s === "tardy") return "late";
+  if (s === "absent" || s === "falta" || s === "ausente") return "absent";
+
+  return "unknown";
+}
+
 function statusLabel(status: string) {
-  const s = String(status || "").toLowerCase();
-  if (s === "present") return "Presente";
-  if (s === "late" || s === "atraso") return "Atraso";
-  if (s === "absent" || s === "falta") return "Falta";
+  const normalized = normalizeStatus(status);
+
+  if (normalized === "present") return "Presente";
+  if (normalized === "late") return "Atraso";
+  if (normalized === "absent") return "Falta";
+
   return status || "-";
+}
+
+function statusBadgeClass(status: string) {
+  const normalized = normalizeStatus(status);
+
+  if (normalized === "present") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+
+  if (normalized === "late") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  if (normalized === "absent") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+
+  return "border-slate-200 bg-slate-100 text-slate-700";
+}
+
+function SummaryCard({
+  label,
+  value,
+  help,
+}: {
+  label: string;
+  value: string;
+  help: string;
+}) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </div>
+      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </div>
+      <div className="mt-2 text-sm leading-6 text-slate-500">{help}</div>
+    </div>
+  );
 }
 
 export default function DailyAttendancePage() {
@@ -56,7 +119,7 @@ export default function DailyAttendancePage() {
   const params = useParams<{ studentId: string }>();
   const searchParams = useSearchParams();
 
-  const studentId = params.studentId;
+  const studentId = String(params.studentId || "").trim();
 
   const initialDate = useMemo(() => {
     const q = searchParams.get("date");
@@ -70,12 +133,32 @@ export default function DailyAttendancePage() {
   const [records, setRecords] = useState<Array<{ session: SessionRow; record: RecordRow }>>([]);
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
+  const totals = useMemo(() => {
+    let present = 0;
+    let late = 0;
+    let absent = 0;
+
+    for (const item of records) {
+      const normalized = normalizeStatus(item.record.status);
+
+      if (normalized === "present") present += 1;
+      else if (normalized === "late") late += 1;
+      else if (normalized === "absent") absent += 1;
+    }
+
+    return {
+      present,
+      late,
+      absent,
+      total: records.length,
+    };
+  }, [records]);
+
   async function loadDaily() {
     setLoading(true);
     setErrMsg(null);
 
     try {
-      // 1) aluno (usa registration_number, que é o seu campo real)
       const { data: st, error: stErr } = await supabase
         .from("students")
         .select("id, full_name, registration_number")
@@ -86,20 +169,17 @@ export default function DailyAttendancePage() {
         setErrMsg("Aluno não encontrado ou sem permissão.");
         setStudent(null);
         setRecords([]);
-        setLoading(false);
         return;
       }
 
       setStudent(st);
 
-      // 2) RANGE DO DIA (resolve DATE vs TIMESTAMP)
       const dayStart = parseYMDToLocalDate(dateYMD);
       const nextDay = addDays(dayStart, 1);
 
-      const start = ymd(dayStart);      // YYYY-MM-DD
-      const end = ymd(nextDay);         // YYYY-MM-DD do dia seguinte
+      const start = ymd(dayStart);
+      const end = ymd(nextDay);
 
-      // pega todas as sessões daquele dia (mesmo que lesson_date seja DATE ou timestamp)
       const { data: sessions, error: sErr } = await supabase
         .from("attendance_sessions")
         .select("id, lesson_date, lesson_number")
@@ -110,7 +190,6 @@ export default function DailyAttendancePage() {
       if (sErr) {
         setErrMsg(`Erro ao buscar sessões do dia: ${sErr.message}`);
         setRecords([]);
-        setLoading(false);
         return;
       }
 
@@ -118,13 +197,11 @@ export default function DailyAttendancePage() {
 
       if (sess.length === 0) {
         setRecords([]);
-        setLoading(false);
         return;
       }
 
       const sessionIds = sess.map((x) => x.id);
 
-      // 3) records do aluno para essas sessões
       const { data: recs, error: rErr } = await supabase
         .from("attendance_records")
         .select("session_id, status, note")
@@ -134,7 +211,6 @@ export default function DailyAttendancePage() {
       if (rErr) {
         setErrMsg(`Erro ao buscar registros do dia: ${rErr.message}`);
         setRecords([]);
-        setLoading(false);
         return;
       }
 
@@ -150,10 +226,10 @@ export default function DailyAttendancePage() {
         .filter(Boolean) as Array<{ session: SessionRow; record: RecordRow }>;
 
       setRecords(merged);
-      setLoading(false);
     } catch (e: any) {
       setErrMsg(e?.message || "Erro inesperado.");
       setRecords([]);
+    } finally {
       setLoading(false);
     }
   }
@@ -164,81 +240,257 @@ export default function DailyAttendancePage() {
   }, [studentId, dateYMD]);
 
   return (
-    <div className="bg-white border rounded-2xl p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Presença diária</h1>
+    <main className="min-h-screen bg-slate-100">
+      <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
+        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+          <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-8 text-white md:px-8">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
+                  Acompanhamento escolar
+                </div>
 
-          <div className="mt-2 text-sm text-gray-700">
-            <div>
-              <b>Data:</b> {dateYMD}
-            </div>
-            <div>
-              <b>Aluno:</b> {student?.full_name ?? "—"}{" "}
-              {student?.registration_number ? (
-                <>
-                  • <b>Matrícula:</b> {student.registration_number}
-                </>
-              ) : null}
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
+                  Presença diária
+                </h1>
+
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
+                  Consulte a frequência do aluno em um dia específico, com visão clara
+                  por aula e resumo rápido do dia letivo.
+                </p>
+
+                <div className="mt-4 space-y-1 text-sm text-slate-200">
+                  <div>
+                    <span className="font-semibold">Aluno:</span> {student?.full_name ?? "—"}
+                    {student?.registration_number ? (
+                      <>
+                        {" "}
+                        • <span className="font-semibold">Matrícula:</span>{" "}
+                        {student.registration_number}
+                      </>
+                    ) : null}
+                  </div>
+
+                  <div>
+                    <span className="font-semibold">Data selecionada:</span> {formatDateBr(dateYMD)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={loadDaily}
+                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                >
+                  Recarregar
+                </button>
+
+                <button
+                  onClick={() => router.push(`/parent/students/${studentId}/monthly`)}
+                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                >
+                  Ver mensal
+                </button>
+
+                <button
+                  onClick={() => router.push(`/parent/students/${studentId}/report-card`)}
+                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                >
+                  Ver boletim
+                </button>
+
+                <button
+                  onClick={() => router.push(`/parent/students/${studentId}`)}
+                  className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+                >
+                  Voltar
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="mt-3 flex items-center gap-2">
-            <label className="text-sm">Selecionar data:</label>
-            <input
-              type="date"
-              value={dateYMD}
-              onChange={(e) => setDateYMD(e.target.value)}
-              className="border rounded-lg px-2 py-1 text-sm"
+          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-4 md:p-6">
+            <SummaryCard
+              label="Aulas no dia"
+              value={String(totals.total)}
+              help="Total de aulas com frequência registrada nesta data."
             />
-            <button onClick={loadDaily} className="border rounded-lg px-3 py-1 text-sm hover:bg-gray-50">
-              Recarregar
-            </button>
+
+            <SummaryCard
+              label="Presenças"
+              value={String(totals.present)}
+              help="Aulas em que o aluno esteve presente."
+            />
+
+            <SummaryCard
+              label="Atrasos"
+              value={String(totals.late)}
+              help="Registros em que houve atraso."
+            />
+
+            <SummaryCard
+              label="Faltas"
+              value={String(totals.absent)}
+              help="Aulas em que o aluno esteve ausente."
+            />
+          </div>
+        </section>
+
+        <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+                Filtro da consulta
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Escolha uma data para verificar os lançamentos de frequência.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Data
+                </label>
+                <input
+                  type="date"
+                  value={dateYMD}
+                  onChange={(e) => setDateYMD(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 sm:w-[220px]"
+                />
+              </div>
+
+              <button
+                onClick={loadDaily}
+                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Atualizar
+              </button>
+            </div>
           </div>
 
           {errMsg ? (
-            <div className="mt-3 text-sm text-red-600 border border-red-200 bg-red-50 rounded-xl p-3">
+            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {errMsg}
             </div>
           ) : null}
-        </div>
+        </section>
 
-        <div className="flex flex-col items-end gap-2">
-          <button onClick={() => router.push(`/parent/students/${studentId}/monthly`)} className="border rounded-lg px-3 py-1 text-sm hover:bg-gray-50">
-            Ver mensal
-          </button>
-          <button onClick={() => router.push(`/parent/students/${studentId}`)} className="border rounded-lg px-3 py-1 text-sm hover:bg-gray-50">
-            Voltar
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-4">
-        {loading ? (
-          <div className="text-sm text-gray-600">Carregando...</div>
-        ) : records.length === 0 ? (
-          <div className="text-sm text-gray-700">Nenhum registro de presença nesta data.</div>
-        ) : (
-          <div className="space-y-2">
-            {records.map(({ session, record }) => (
-              <div key={session.id} className="border rounded-xl p-3">
-                <div className="text-sm">
-                  <b>Aula:</b> {session.lesson_number ?? "—"} • <b>Status:</b> {statusLabel(record.status)}
-                </div>
-                {record.note ? <div className="text-xs text-gray-600 mt-1">{record.note}</div> : null}
-              </div>
-            ))}
+        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4 md:px-6">
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+              Registros do dia
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Visualização detalhada da frequência por aula.
+            </p>
           </div>
-        )}
-      </div>
 
-      <div className="mt-4 text-xs text-gray-500">
-        Dica: se quiser voltar pro aluno,{" "}
-        <Link href={`/parent/students/${studentId}`} className="underline">
-          clique aqui
-        </Link>
-        .
+          <div className="p-4 md:p-6">
+            {loading ? (
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+                Carregando...
+              </div>
+            ) : records.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
+                Nenhum registro de presença nesta data.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {records.map(({ session, record }) => (
+                  <div
+                    key={session.id}
+                    className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          Aula
+                        </div>
+                        <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                          {session.lesson_number != null ? `${session.lesson_number}ª aula` : "—"}
+                        </div>
+                      </div>
+
+                      <span
+                        className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${statusBadgeClass(
+                          record.status
+                        )}`}
+                      >
+                        {statusLabel(record.status)}
+                      </span>
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-1 gap-4">
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          Situação registrada
+                        </div>
+                        <div className="mt-2 text-sm font-medium text-slate-900">
+                          {statusLabel(record.status)}
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          Observação
+                        </div>
+                        <div className="mt-2 text-sm leading-6 text-slate-700">
+                          {record.note ? record.note : "Nenhuma observação registrada para esta aula."}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">
+                Navegação rápida
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Acesse outras áreas do acompanhamento escolar.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href={`/parent/students/${studentId}`}
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Painel do aluno
+              </Link>
+
+              <Link
+                href={`/parent/students/${studentId}/monthly`}
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Presença mensal
+              </Link>
+
+              <Link
+                href={`/parent/students/${studentId}/report-card`}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+              >
+                Boletim escolar
+              </Link>
+            </div>
+          </div>
+        </section>
+
+        <div className="text-xs text-slate-500">
+          Dica: para voltar ao painel do aluno,{" "}
+          <Link href={`/parent/students/${studentId}`} className="underline">
+            clique aqui
+          </Link>
+          .
+        </div>
       </div>
-    </div>
+    </main>
   );
 }

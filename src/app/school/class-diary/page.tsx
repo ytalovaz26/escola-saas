@@ -28,9 +28,12 @@ type DiaryGroup = {
   entries: DiaryEntry[];
 };
 
+type PeriodPreset = "month" | "bimester" | "semester" | "year" | "custom";
+
 async function safeJson(res: Response) {
   const text = await res.text();
   if (!text) return null;
+
   try {
     return JSON.parse(text);
   } catch {
@@ -38,18 +41,103 @@ async function safeJson(res: Response) {
   }
 }
 
-function formatDateBR(iso: string) {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return iso;
-  return `${d}/${m}/${y}`;
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function toYMD(date: Date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
 function currentMonthISO() {
   const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  return `${yyyy}-${mm}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+}
+
+function monthStart(referenceMonth: string) {
+  const [y, m] = referenceMonth.split("-").map(Number);
+  if (!y || !m) return toYMD(new Date());
+
+  return `${y}-${pad2(m)}-01`;
+}
+
+function monthEnd(referenceMonth: string) {
+  const [y, m] = referenceMonth.split("-").map(Number);
+  if (!y || !m) return toYMD(new Date());
+
+  return toYMD(new Date(y, m, 0));
+}
+
+function yearStart(referenceMonth: string) {
+  const [y] = referenceMonth.split("-").map(Number);
+  if (!y) return `${new Date().getFullYear()}-01-01`;
+
+  return `${y}-01-01`;
+}
+
+function yearEnd(referenceMonth: string) {
+  const [y] = referenceMonth.split("-").map(Number);
+  if (!y) return `${new Date().getFullYear()}-12-31`;
+
+  return `${y}-12-31`;
+}
+
+function bimesterRange(referenceMonth: string) {
+  const [y, m] = referenceMonth.split("-").map(Number);
+  if (!y || !m) {
+    const now = new Date();
+    return {
+      start: `${now.getFullYear()}-01-01`,
+      end: `${now.getFullYear()}-02-28`,
+    };
+  }
+
+  const bimesterStartMonth = Math.floor((m - 1) / 2) * 2 + 1;
+  const start = `${y}-${pad2(bimesterStartMonth)}-01`;
+  const end = toYMD(new Date(y, bimesterStartMonth + 1, 0));
+
+  return { start, end };
+}
+
+function semesterRange(referenceMonth: string) {
+  const [y, m] = referenceMonth.split("-").map(Number);
+  if (!y || !m) {
+    const now = new Date();
+    return {
+      start: `${now.getFullYear()}-01-01`,
+      end: `${now.getFullYear()}-06-30`,
+    };
+  }
+
+  if (m <= 6) {
+    return {
+      start: `${y}-01-01`,
+      end: `${y}-06-30`,
+    };
+  }
+
+  return {
+    start: `${y}-07-01`,
+    end: `${y}-12-31`,
+  };
+}
+
+function formatDateBR(iso: string) {
+  if (!iso) return "—";
+
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return iso;
+
+  return `${d}/${m}/${y}`;
+}
+
+function periodLabel(startDate: string, endDate: string) {
+  if (!startDate && !endDate) return "—";
+  if (startDate && !endDate) return `A partir de ${formatDateBR(startDate)}`;
+  if (!startDate && endDate) return `Até ${formatDateBR(endDate)}`;
+  if (startDate === endDate) return formatDateBR(startDate);
+
+  return `${formatDateBR(startDate)} até ${formatDateBR(endDate)}`;
 }
 
 function TextBox({
@@ -66,7 +154,7 @@ function TextBox({
       className={`rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 ${className}`}
     >
       <div className="font-semibold text-slate-900">{label}</div>
-      <div className="mt-2 whitespace-pre-wrap break-words overflow-hidden leading-6 text-slate-700">
+      <div className="mt-2 overflow-hidden whitespace-pre-wrap break-words leading-6 text-slate-700">
         {value && value.trim() ? value : "—"}
       </div>
     </div>
@@ -78,23 +166,58 @@ export default function SchoolClassDiaryPage() {
 
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+
   const [referenceMonth, setReferenceMonth] = useState(currentMonthISO());
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("month");
+  const [startDate, setStartDate] = useState(monthStart(currentMonthISO()));
+  const [endDate, setEndDate] = useState(monthEnd(currentMonthISO()));
 
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [groups, setGroups] = useState<DiaryGroup[]>([]);
 
+  const [groups, setGroups] = useState<DiaryGroup[]>([]);
   const [selectedDiaryId, setSelectedDiaryId] = useState<string>("");
-  const [selectedLessonDate, setSelectedLessonDate] = useState<string>("");
 
   async function ensureToken() {
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
+
     if (!token) {
       router.replace("/login");
       return null;
     }
+
     return token;
+  }
+
+  function applyPreset(nextPreset: PeriodPreset, monthValue = referenceMonth) {
+    setPeriodPreset(nextPreset);
+
+    if (nextPreset === "month") {
+      setStartDate(monthStart(monthValue));
+      setEndDate(monthEnd(monthValue));
+      return;
+    }
+
+    if (nextPreset === "bimester") {
+      const range = bimesterRange(monthValue);
+      setStartDate(range.start);
+      setEndDate(range.end);
+      return;
+    }
+
+    if (nextPreset === "semester") {
+      const range = semesterRange(monthValue);
+      setStartDate(range.start);
+      setEndDate(range.end);
+      return;
+    }
+
+    if (nextPreset === "year") {
+      setStartDate(yearStart(monthValue));
+      setEndDate(yearEnd(monthValue));
+      return;
+    }
   }
 
   async function load() {
@@ -106,13 +229,16 @@ export default function SchoolClassDiaryPage() {
     if (!token) return;
 
     try {
-      const res = await fetch(
-        `/api/school/class-diary?referenceMonth=${encodeURIComponent(referenceMonth)}`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        }
-      );
+      const query = new URLSearchParams({
+        referenceMonth,
+        startDate,
+        endDate,
+      });
+
+      const res = await fetch(`/api/school/class-diary?${query.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
 
       const json = await safeJson(res);
 
@@ -120,7 +246,6 @@ export default function SchoolClassDiaryPage() {
         setError(json?.error || "Falha ao carregar diários.");
         setGroups([]);
         setSelectedDiaryId("");
-        setSelectedLessonDate("");
         return;
       }
 
@@ -128,24 +253,15 @@ export default function SchoolClassDiaryPage() {
       setGroups(loadedGroups);
 
       if (loadedGroups.length > 0) {
-        const firstGroup = loadedGroups[0];
-        setSelectedDiaryId(firstGroup.diary.id);
-
-        const firstDate =
-          Array.isArray(firstGroup.entries) && firstGroup.entries.length > 0
-            ? firstGroup.entries[0].lesson_date
-            : "";
-
-        setSelectedLessonDate(firstDate);
+        const stillExists = loadedGroups.some((g) => g.diary.id === selectedDiaryId);
+        setSelectedDiaryId(stillExists ? selectedDiaryId : loadedGroups[0].diary.id);
       } else {
         setSelectedDiaryId("");
-        setSelectedLessonDate("");
       }
     } catch (e: any) {
       setError(e?.message || "Erro inesperado ao carregar diários.");
       setGroups([]);
       setSelectedDiaryId("");
-      setSelectedLessonDate("");
     } finally {
       setLoading(false);
     }
@@ -154,28 +270,15 @@ export default function SchoolClassDiaryPage() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [referenceMonth]);
+  }, [referenceMonth, startDate, endDate]);
 
   const selectedGroup = useMemo(() => {
     return groups.find((g) => g.diary.id === selectedDiaryId) || null;
   }, [groups, selectedDiaryId]);
 
-  const availableDates = useMemo(() => {
-    if (!selectedGroup) return [];
-    return selectedGroup.entries.map((e) => e.lesson_date);
-  }, [selectedGroup]);
-
-  useEffect(() => {
-    if (!selectedGroup) {
-      setSelectedLessonDate("");
-      return;
-    }
-
-    const stillExists = availableDates.includes(selectedLessonDate);
-    if (!stillExists) {
-      setSelectedLessonDate(availableDates[0] || "");
-    }
-  }, [selectedGroup, availableDates, selectedLessonDate]);
+  const totalEntries = useMemo(() => {
+    return groups.reduce((sum, group) => sum + group.entries.length, 0);
+  }, [groups]);
 
   async function generatePdf() {
     setError(null);
@@ -186,8 +289,13 @@ export default function SchoolClassDiaryPage() {
       return;
     }
 
-    if (!selectedLessonDate) {
-      setError("Selecione a data da aula.");
+    if (!startDate || !endDate) {
+      setError("Informe a data inicial e a data final do relatório.");
+      return;
+    }
+
+    if (startDate > endDate) {
+      setError("A data inicial não pode ser maior que a data final.");
       return;
     }
 
@@ -202,7 +310,9 @@ export default function SchoolClassDiaryPage() {
         referenceMonth: selectedGroup.diary.reference_month || referenceMonth,
         subjectName: selectedGroup.diary.subject_name || "",
         termLabel: selectedGroup.diary.term_label || "",
-        lessonDate: selectedLessonDate,
+        startDate,
+        endDate,
+        reportMode: "summary",
       });
 
       const res = await fetch(`/api/school/class-diary/report?${query.toString()}`, {
@@ -229,7 +339,10 @@ export default function SchoolClassDiaryPage() {
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       window.open(url, "_blank", "noopener,noreferrer");
-      setMessage("PDF do diário gerado com sucesso.");
+
+      setTimeout(() => URL.revokeObjectURL(url), 15000);
+
+      setMessage("PDF do diário por período gerado com sucesso.");
     } catch (e: any) {
       setError(e?.message || "Erro inesperado ao gerar PDF.");
     } finally {
@@ -253,7 +366,7 @@ export default function SchoolClassDiaryPage() {
 
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                 Acompanhe os lançamentos pedagógicos feitos pelos professores e gere
-                os PDFs pela visão da direção.
+                relatórios por dia, mês, bimestre, semestre, ano ou período personalizado.
               </p>
             </div>
 
@@ -276,23 +389,78 @@ export default function SchoolClassDiaryPage() {
             </div>
           </div>
 
-          <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-4">
+          <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
             <div>
-              <label className="mb-1 block text-xs text-slate-500">Mês de referência</label>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Mês base
+              </label>
               <input
                 type="month"
                 value={referenceMonth}
-                onChange={(e) => setReferenceMonth(e.target.value)}
-                className="w-full rounded-2xl border border-slate-300 px-3 py-2"
+                onChange={(e) => {
+                  const nextMonth = e.target.value;
+                  setReferenceMonth(nextMonth);
+                  applyPreset(periodPreset, nextMonth);
+                }}
+                className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-xs text-slate-500">Turma / diário</label>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Tipo de período
+              </label>
+              <select
+                value={periodPreset}
+                onChange={(e) => applyPreset(e.target.value as PeriodPreset)}
+                className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="month">Mensal</option>
+                <option value="bimester">Bimestre</option>
+                <option value="semester">Semestre</option>
+                <option value="year">Anual</option>
+                <option value="custom">Personalizado</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Data inicial
+              </label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setPeriodPreset("custom");
+                  setStartDate(e.target.value);
+                }}
+                className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Data final
+              </label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setPeriodPreset("custom");
+                  setEndDate(e.target.value);
+                }}
+                className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div className="xl:col-span-2">
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Turma / diário
+              </label>
               <select
                 value={selectedDiaryId}
                 onChange={(e) => setSelectedDiaryId(e.target.value)}
-                className="w-full rounded-2xl border border-slate-300 px-3 py-2"
+                className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
                 disabled={groups.length === 0}
               >
                 {groups.length === 0 ? (
@@ -310,36 +478,34 @@ export default function SchoolClassDiaryPage() {
                 )}
               </select>
             </div>
+          </div>
 
-            <div>
-              <label className="mb-1 block text-xs text-slate-500">Data da aula</label>
-              <select
-                value={selectedLessonDate}
-                onChange={(e) => setSelectedLessonDate(e.target.value)}
-                className="w-full rounded-2xl border border-slate-300 px-3 py-2"
-                disabled={!selectedGroup || availableDates.length === 0}
-              >
-                {!selectedGroup || availableDates.length === 0 ? (
-                  <option value="">Nenhuma data disponível</option>
-                ) : (
-                  availableDates.map((date) => (
-                    <option key={date} value={date}>
-                      {formatDateBR(date)}
-                    </option>
-                  ))
-                )}
-              </select>
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Período selecionado
+              </div>
+              <div className="mt-2 text-sm font-semibold text-slate-900">
+                {periodLabel(startDate, endDate)}
+              </div>
             </div>
 
-            <div className="flex items-end">
-              <button
-                type="button"
-                onClick={generatePdf}
-                disabled={!selectedGroup || !selectedLessonDate || generating}
-                className="w-full rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-              >
-                {generating ? "Gerando PDF..." : "Gerar PDF do diário"}
-              </button>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Diários encontrados
+              </div>
+              <div className="mt-2 text-sm font-semibold text-slate-900">
+                {groups.length}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Lançamentos no período
+              </div>
+              <div className="mt-2 text-sm font-semibold text-slate-900">
+                {totalEntries}
+              </div>
             </div>
           </div>
 
@@ -368,6 +534,22 @@ export default function SchoolClassDiaryPage() {
             </div>
           ) : null}
 
+          <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <p className="text-sm leading-6 text-slate-500">
+              O relatório resumido exibe apenas a data e o conteúdo ministrado,
+              no modelo tradicional de diário escolar.
+            </p>
+
+            <button
+              type="button"
+              onClick={generatePdf}
+              disabled={!selectedGroup || !startDate || !endDate || generating}
+              className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            >
+              {generating ? "Gerando PDF..." : "Gerar relatório do período"}
+            </button>
+          </div>
+
           {message ? (
             <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
               {message}
@@ -387,38 +569,46 @@ export default function SchoolClassDiaryPage() {
           </section>
         ) : groups.length === 0 ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
-            Nenhum diário encontrado neste mês.
+            Nenhum diário encontrado para o período selecionado.
           </section>
         ) : selectedGroup ? (
           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             <div className="border-b border-slate-200 px-5 py-4">
-              <h2 className="text-lg font-semibold text-slate-900">Lançamentos</h2>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Lançamentos do período
+              </h2>
               <p className="mt-1 text-sm text-slate-500">
                 Visualização do diário selecionado.
               </p>
             </div>
 
-            <div className="divide-y divide-slate-200">
-              {selectedGroup.entries.map((entry) => (
-                <div key={entry.id} className="p-5">
-                  <div className="text-sm font-semibold text-slate-900">
-                    Aula do dia {formatDateBR(entry.lesson_date)}
-                  </div>
+            {selectedGroup.entries.length === 0 ? (
+              <div className="p-6 text-sm text-slate-500">
+                Nenhum lançamento encontrado para este diário no período selecionado.
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-200">
+                {selectedGroup.entries.map((entry) => (
+                  <div key={entry.id} className="p-5">
+                    <div className="text-sm font-semibold text-slate-900">
+                      Aula do dia {formatDateBR(entry.lesson_date)}
+                    </div>
 
-                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                    <TextBox label="Conteúdo" value={entry.content_taught} />
-                    <TextBox label="Metodologia" value={entry.methodology} />
-                    <TextBox label="Atividades" value={entry.activities} />
-                    <TextBox label="Observações" value={entry.notes} />
-                    <TextBox
-                      label="Tarefa de casa"
-                      value={entry.homework}
-                      className="md:col-span-2"
-                    />
+                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <TextBox label="Conteúdo" value={entry.content_taught} />
+                      <TextBox label="Metodologia" value={entry.methodology} />
+                      <TextBox label="Atividades" value={entry.activities} />
+                      <TextBox label="Observações" value={entry.notes} />
+                      <TextBox
+                        label="Tarefa de casa"
+                        value={entry.homework}
+                        className="md:col-span-2"
+                      />
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </section>
         ) : null}
       </div>

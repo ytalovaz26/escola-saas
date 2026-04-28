@@ -8,7 +8,12 @@ type MeResponse = {
   user: { id: string; email: string | null };
   isPlatformAdmin: boolean;
   school?: { schoolId: string; role: string };
-  parent?: { parentId: string; schoolId: string | null };
+  parent?: {
+    parentId: string;
+    schoolId: string | null;
+    firstLoginCompleted?: boolean;
+    profileUpdatedAt?: string | null;
+  };
   branding?: {
     brandName: string | null;
     brandLogoUrl: string | null;
@@ -30,13 +35,32 @@ function getBearerToken(req: Request) {
   return authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
 }
 
+function isSchoolManagementRole(role: string) {
+  const r = normRole(role);
+
+  return (
+    r === "diretor" ||
+    r === "director" ||
+    r === "coordenador" ||
+    r === "coordinator" ||
+    r === "secretaria" ||
+    r === "secretary" ||
+    r === "admin"
+  );
+}
+
+function isTeacherRole(role: string) {
+  const r = normRole(role);
+  return r === "professor" || r === "teacher";
+}
+
 export async function GET(req: Request) {
   try {
     const token = getBearerToken(req);
     if (!token) return jsonError("Missing Authorization Bearer token.", 401);
 
-    // 1) Validar token e descobrir user
     const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
+
     if (userErr || !userData?.user) {
       return jsonError("Invalid token/session.", 401);
     }
@@ -44,7 +68,6 @@ export async function GET(req: Request) {
     const userId = String(userData.user.id);
     const email = userData.user.email ?? null;
 
-    // 2) Checar se é platform admin
     const { data: pa, error: paErr } = await supabaseAdmin
       .from("platform_admins")
       .select("user_id")
@@ -57,7 +80,6 @@ export async function GET(req: Request) {
 
     const isPlatformAdmin = !!pa?.user_id;
 
-    // 3) Buscar vínculo em school_users
     let school: MeResponse["school"] = undefined;
 
     if (!isPlatformAdmin) {
@@ -82,13 +104,12 @@ export async function GET(req: Request) {
       }
     }
 
-    // 4) Parent
     let parent: MeResponse["parent"] = undefined;
 
     if (!isPlatformAdmin && !school?.schoolId) {
       const { data: p, error: pErr } = await supabaseAdmin
         .from("parents")
-        .select("id, school_id")
+        .select("id, school_id, first_login_completed, profile_updated_at")
         .eq("user_id", userId)
         .maybeSingle();
 
@@ -100,11 +121,12 @@ export async function GET(req: Request) {
         parent = {
           parentId: String(p.id),
           schoolId: p.school_id ? String(p.school_id) : null,
+          firstLoginCompleted: !!p.first_login_completed,
+          profileUpdatedAt: p.profile_updated_at ?? null,
         };
       }
     }
 
-    // 5) redirect
     let redirectTo = "/login";
 
     if (isPlatformAdmin) {
@@ -112,23 +134,17 @@ export async function GET(req: Request) {
     } else if (school?.role) {
       const r = normRole(school.role);
 
-      if (
-        r === "diretor" ||
-        r === "director" ||
-        r === "coordenador" ||
-        r === "coordinator"
-      ) {
+      if (isSchoolManagementRole(r)) {
         redirectTo = "/school";
-      } else if (r === "professor" || r === "teacher") {
+      } else if (isTeacherRole(r)) {
         redirectTo = "/teacher";
       } else {
-        redirectTo = "/";
+        redirectTo = "/login";
       }
     } else if (parent?.parentId) {
-      redirectTo = "/parent";
+      redirectTo = parent.firstLoginCompleted ? "/parent" : "/parent/complete-profile";
     }
 
-    // 6) Branding
     let schoolIdForBranding: string | null = school?.schoolId ?? null;
 
     if (!schoolIdForBranding && parent?.parentId) {
