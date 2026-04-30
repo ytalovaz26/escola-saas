@@ -17,20 +17,35 @@ type MePayload = {
   };
 };
 
+type ApiErrorPayload = {
+  ok?: false;
+  error?: string;
+};
+
+type BrandingSchool = {
+  id: string;
+  name: string | null;
+  slug: string | null;
+  brandName: string | null;
+  brandLogoUrl: string | null;
+  brandIconUrl: string | null;
+  logoUrl: string | null;
+  primaryColor: string | null;
+  secondaryColor: string | null;
+  publicUrl?: string;
+};
+
 type BrandingPayload = {
   ok: true;
-  school: {
-    id: string;
-    name: string | null;
-    slug: string | null;
-    brandName: string | null;
-    brandLogoUrl: string | null;
-    brandIconUrl: string | null;
-    logoUrl: string | null;
-    primaryColor: string | null;
-    secondaryColor: string | null;
-    publicUrl: string;
-  };
+  school: BrandingSchool;
+};
+
+type UploadPayload = {
+  ok: true;
+  url?: string;
+  brandLogoUrl?: string | null;
+  brandIconUrl?: string | null;
+  school?: BrandingSchool;
 };
 
 function safeRole(role: string | null | undefined) {
@@ -60,14 +75,30 @@ function normalizeSlug(value: string) {
     .slice(0, 80);
 }
 
-async function safeJson(res: Response) {
+function getApiError(json: unknown, fallback = "Erro desconhecido.") {
+  if (json && typeof json === "object" && "error" in json) {
+    const maybeError = (json as ApiErrorPayload).error;
+
+    if (maybeError) {
+      return maybeError;
+    }
+  }
+
+  return fallback;
+}
+
+async function safeJson(res: Response): Promise<unknown> {
   const text = await res.text();
+
   if (!text) return null;
 
   try {
     return JSON.parse(text);
   } catch {
-    return { ok: false, error: text || "Resposta inválida do servidor." };
+    return {
+      ok: false,
+      error: text || "Resposta inválida do servidor.",
+    };
   }
 }
 
@@ -100,6 +131,15 @@ export default function BrandingSettingsPage() {
     return `${window.location.origin}/s/${slug}`;
   }, [slug]);
 
+  function applySchoolToState(school: BrandingSchool) {
+    setBrandName(school.brandName || "");
+    setSlug(school.slug || "");
+    setBrandLogoUrl(school.brandLogoUrl || school.logoUrl || null);
+    setBrandIconUrl(school.brandIconUrl || null);
+    setPrimaryColor(school.primaryColor || "#0f172a");
+    setSecondaryColor(school.secondaryColor || "#2563eb");
+  }
+
   async function getTokenOrRedirect() {
     const { data, error } = await supabase.auth.getSession();
 
@@ -117,20 +157,19 @@ export default function BrandingSettingsPage() {
       cache: "no-store",
     });
 
-    const json = (await safeJson(res)) as BrandingPayload | any;
+    const json = await safeJson(res);
 
-    if (!res.ok || !json?.ok) {
-      throw new Error(json?.error || "Falha ao carregar branding.");
+    if (!res.ok || !json || typeof json !== "object" || !("ok" in json)) {
+      throw new Error(getApiError(json, "Falha ao carregar branding."));
     }
 
-    const school = json.school;
+    if ((json as BrandingPayload | ApiErrorPayload).ok !== true) {
+      throw new Error(getApiError(json, "Falha ao carregar branding."));
+    }
 
-    setBrandName(school.brandName || "");
-    setSlug(school.slug || "");
-    setBrandLogoUrl(school.brandLogoUrl || null);
-    setBrandIconUrl(school.brandIconUrl || null);
-    setPrimaryColor(school.primaryColor || "#0f172a");
-    setSecondaryColor(school.secondaryColor || "#2563eb");
+    const payload = json as BrandingPayload;
+
+    applySchoolToState(payload.school);
   }
 
   async function loadPage() {
@@ -146,20 +185,27 @@ export default function BrandingSettingsPage() {
         cache: "no-store",
       });
 
-      const json = (await safeJson(res)) as MePayload | { ok?: false; error?: string } | null;
+      const json = await safeJson(res);
 
-      if (!res.ok || !json || !("ok" in json) || !json.ok) {
+      if (!res.ok || !json || typeof json !== "object" || !("ok" in json)) {
         router.replace("/login");
         return;
       }
 
-      if (json.isPlatformAdmin) {
+      if ((json as MePayload | ApiErrorPayload).ok !== true) {
+        router.replace("/login");
+        return;
+      }
+
+      const me = json as MePayload;
+
+      if (me.isPlatformAdmin) {
         router.replace("/admin-master");
         return;
       }
 
-      const r = json.school?.role || null;
-      const sid = json.school?.schoolId || null;
+      const r = me.school?.role || null;
+      const sid = me.school?.schoolId || null;
 
       setRole(r);
       setSchoolId(sid);
@@ -170,8 +216,11 @@ export default function BrandingSettingsPage() {
       }
 
       await fetchBranding(token);
-    } catch (e: any) {
-      setMsg(e?.message || "Erro ao carregar branding.");
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error ? e.message : "Erro ao carregar branding.";
+
+      setMsg(message);
     } finally {
       setLoading(false);
     }
@@ -224,23 +273,34 @@ export default function BrandingSettingsPage() {
 
       const json = await safeJson(res);
 
-      if (!res.ok || !json?.ok) {
-        setMsg("Erro ao salvar identidade: " + (json?.error || "desconhecido"));
+      if (!res.ok || !json || typeof json !== "object" || !("ok" in json)) {
+        setMsg(
+          "Erro ao salvar identidade: " +
+            getApiError(json, "erro desconhecido")
+        );
         return;
       }
 
-      const school = json.school;
+      if ((json as BrandingPayload | ApiErrorPayload).ok !== true) {
+        setMsg(
+          "Erro ao salvar identidade: " +
+            getApiError(json, "erro desconhecido")
+        );
+        return;
+      }
 
-      setBrandName(school.brandName || "");
-      setSlug(school.slug || finalSlug);
-      setBrandLogoUrl(school.brandLogoUrl || null);
-      setBrandIconUrl(school.brandIconUrl || null);
-      setPrimaryColor(school.primaryColor || primaryColor);
-      setSecondaryColor(school.secondaryColor || secondaryColor);
+      const payload = json as BrandingPayload;
+
+      applySchoolToState(payload.school);
 
       setMsg("Identidade visual salva com sucesso ✅");
-    } catch (e: any) {
-      setMsg(e?.message || "Erro inesperado ao salvar identidade.");
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error
+          ? e.message
+          : "Erro inesperado ao salvar identidade.";
+
+      setMsg(message);
     } finally {
       setSavingIdentity(false);
     }
@@ -274,25 +334,42 @@ export default function BrandingSettingsPage() {
 
       const json = await safeJson(res);
 
-      if (!res.ok || !json?.ok) {
+      if (!res.ok || !json || typeof json !== "object" || !("ok" in json)) {
         setMsg(
           `Erro ao enviar ${kind === "logo" ? "logo" : "ícone"}: ` +
-            (json?.error || "desconhecido")
+            getApiError(json, "erro desconhecido")
         );
         return;
       }
 
-      if (kind === "logo") {
-        setBrandLogoUrl(json?.url || json?.brandLogoUrl || null);
-      } else {
-        setBrandIconUrl(json?.url || json?.brandIconUrl || null);
+      if ((json as UploadPayload | ApiErrorPayload).ok !== true) {
+        setMsg(
+          `Erro ao enviar ${kind === "logo" ? "logo" : "ícone"}: ` +
+            getApiError(json, "erro desconhecido")
+        );
+        return;
       }
 
-      await fetchBranding(token);
+      const payload = json as UploadPayload;
+
+      if (kind === "logo") {
+        setBrandLogoUrl(payload.url || payload.brandLogoUrl || null);
+      } else {
+        setBrandIconUrl(payload.url || payload.brandIconUrl || null);
+      }
+
+      if (payload.school) {
+        applySchoolToState(payload.school);
+      } else {
+        await fetchBranding(token);
+      }
 
       setMsg(`${kind === "logo" ? "Logo" : "Ícone"} atualizado com sucesso ✅`);
-    } catch (e: any) {
-      setMsg(e?.message || "Erro inesperado no upload.");
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error ? e.message : "Erro inesperado no upload.";
+
+      setMsg(message);
     } finally {
       setUploading(null);
     }
@@ -338,8 +415,8 @@ export default function BrandingSettingsPage() {
                 </h1>
 
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
-                  Configure nome, logo, ícone do app e link personalizado da escola sem afetar
-                  o ícone global do SaaS.
+                  Configure nome, logo, ícone do app e link personalizado da
+                  escola sem afetar o ícone global do SaaS.
                 </p>
 
                 <p className="mt-3 text-xs text-slate-300">
@@ -371,9 +448,13 @@ export default function BrandingSettingsPage() {
 
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold text-slate-900">Dados públicos da escola</h2>
+            <h2 className="text-xl font-semibold text-slate-900">
+              Dados públicos da escola
+            </h2>
+
             <p className="mt-1 text-sm leading-6 text-slate-500">
-              Esses dados formam o link personalizado e a experiência de instalação no celular.
+              Esses dados formam o link personalizado e a experiência de
+              instalação no celular.
             </p>
 
             <div className="mt-5 space-y-4">
@@ -381,6 +462,7 @@ export default function BrandingSettingsPage() {
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Nome de exibição
                 </label>
+
                 <input
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
                   placeholder="Ex: Centro Educacional Crescer"
@@ -403,7 +485,10 @@ export default function BrandingSettingsPage() {
 
                 <div className="flex flex-col gap-2 md:flex-row">
                   <div className="flex min-w-0 flex-1 items-center rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3">
-                    <span className="shrink-0 text-sm text-slate-400">/s/</span>
+                    <span className="shrink-0 text-sm text-slate-400">
+                      /s/
+                    </span>
+
                     <input
                       className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none"
                       placeholder="centro-educacional-crescer"
@@ -422,7 +507,8 @@ export default function BrandingSettingsPage() {
                 </div>
 
                 <p className="mt-2 break-all text-xs text-slate-500">
-                  {publicSchoolUrl || "Salve um link para gerar a URL pública da escola."}
+                  {publicSchoolUrl ||
+                    "Salve um link para gerar a URL pública da escola."}
                 </p>
               </div>
 
@@ -431,6 +517,7 @@ export default function BrandingSettingsPage() {
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                     Cor principal
                   </label>
+
                   <input
                     type="color"
                     value={primaryColor}
@@ -443,6 +530,7 @@ export default function BrandingSettingsPage() {
                   <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                     Cor secundária
                   </label>
+
                   <input
                     type="color"
                     value={secondaryColor}
@@ -463,7 +551,10 @@ export default function BrandingSettingsPage() {
           </div>
 
           <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold text-slate-900">Pré-visualização</h2>
+            <h2 className="text-xl font-semibold text-slate-900">
+              Pré-visualização
+            </h2>
+
             <p className="mt-1 text-sm leading-6 text-slate-500">
               Essa é a aparência que a escola terá no portal e no app instalado.
             </p>
@@ -487,7 +578,10 @@ export default function BrandingSettingsPage() {
                   <div className="truncate text-base font-semibold text-slate-900">
                     {brandName || "Sua escola"}
                   </div>
-                  <div className="mt-1 text-xs text-slate-500">Portal da escola</div>
+
+                  <div className="mt-1 text-xs text-slate-500">
+                    Portal da escola
+                  </div>
                 </div>
               </div>
 
@@ -509,9 +603,10 @@ export default function BrandingSettingsPage() {
                   <div className="text-sm font-medium text-slate-900">
                     Ícone do app instalado
                   </div>
+
                   <div className="mt-1 max-w-sm text-xs leading-5 text-slate-500">
-                    Pais, professores e equipe devem instalar o app usando o link personalizado
-                    da escola para aparecer com esse ícone.
+                    Pais, professores e equipe devem instalar o app usando o
+                    link personalizado da escola para aparecer com esse ícone.
                   </div>
                 </div>
               </div>
@@ -522,6 +617,7 @@ export default function BrandingSettingsPage() {
                 <div className="text-sm font-semibold text-emerald-800">
                   Link da escola pronto
                 </div>
+
                 <div className="mt-2 break-all text-xs text-emerald-700">
                   {publicSchoolUrl}
                 </div>
@@ -532,9 +628,13 @@ export default function BrandingSettingsPage() {
 
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold text-slate-900">Logo da escola</h2>
+            <h2 className="text-xl font-semibold text-slate-900">
+              Logo da escola
+            </h2>
+
             <p className="mt-1 text-sm leading-6 text-slate-500">
-              Use para painéis, PDFs, portal dos pais e cabeçalhos. Preferível PNG transparente.
+              Use para painéis, PDFs, portal dos pais e cabeçalhos. Preferível
+              PNG transparente.
             </p>
 
             <input
@@ -544,7 +644,11 @@ export default function BrandingSettingsPage() {
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) upload("logo", f);
+
+                if (f) {
+                  upload("logo", f);
+                }
+
                 e.currentTarget.value = "";
               }}
               disabled={uploading !== null}
@@ -573,15 +677,19 @@ export default function BrandingSettingsPage() {
             </div>
 
             <div className="mt-4 text-xs leading-5 text-slate-500">
-              Recomendado: largura entre 600 e 1200px para boa qualidade no desktop,
-              mobile e PDFs.
+              Recomendado: largura entre 600 e 1200px para boa qualidade no
+              desktop, mobile e PDFs.
             </div>
           </div>
 
           <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-semibold text-slate-900">Ícone do app da escola</h2>
+            <h2 className="text-xl font-semibold text-slate-900">
+              Ícone do app da escola
+            </h2>
+
             <p className="mt-1 text-sm leading-6 text-slate-500">
-              Esse ícone será usado no link personalizado da escola. Ideal: PNG 512×512 quadrado.
+              Esse ícone será usado no link personalizado da escola. Ideal: PNG
+              512×512 quadrado.
             </p>
 
             <input
@@ -591,7 +699,11 @@ export default function BrandingSettingsPage() {
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) upload("icon", f);
+
+                if (f) {
+                  upload("icon", f);
+                }
+
                 e.currentTarget.value = "";
               }}
               disabled={uploading !== null}
@@ -604,7 +716,9 @@ export default function BrandingSettingsPage() {
                 disabled={uploading !== null}
                 className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
               >
-                {uploading === "icon" ? "Enviando ícone..." : "Selecionar ícone"}
+                {uploading === "icon"
+                  ? "Enviando ícone..."
+                  : "Selecionar ícone"}
               </button>
 
               {brandIconUrl ? (
@@ -620,8 +734,9 @@ export default function BrandingSettingsPage() {
             </div>
 
             <div className="mt-4 text-xs leading-5 text-slate-500">
-              Importante: o ícone global do SaaS não deve ser alterado pela escola.
-              Cada escola terá seu próprio ícone ao instalar pelo link personalizado.
+              Importante: o ícone global do SaaS não deve ser alterado pela
+              escola. Cada escola terá seu próprio ícone ao instalar pelo link
+              personalizado.
             </div>
           </div>
         </section>
@@ -633,23 +748,33 @@ export default function BrandingSettingsPage() {
 
           <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <div className="text-sm font-semibold text-slate-900">1. Salvar identidade</div>
+              <div className="text-sm font-semibold text-slate-900">
+                1. Salvar identidade
+              </div>
+
               <p className="mt-2 text-sm leading-6 text-slate-500">
                 Configure nome, link, logo e ícone da escola.
               </p>
             </div>
 
             <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <div className="text-sm font-semibold text-slate-900">2. Copiar link</div>
+              <div className="text-sm font-semibold text-slate-900">
+                2. Copiar link
+              </div>
+
               <p className="mt-2 text-sm leading-6 text-slate-500">
                 Envie o link personalizado para pais, professores e equipe.
               </p>
             </div>
 
             <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-              <div className="text-sm font-semibold text-slate-900">3. Instalar no celular</div>
+              <div className="text-sm font-semibold text-slate-900">
+                3. Instalar no celular
+              </div>
+
               <p className="mt-2 text-sm leading-6 text-slate-500">
-                Ao adicionar à tela inicial, o app aparece com nome e ícone da escola.
+                Ao adicionar à tela inicial, o app aparece com nome e ícone da
+                escola.
               </p>
             </div>
           </div>
