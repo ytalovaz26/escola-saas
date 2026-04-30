@@ -16,7 +16,6 @@ type SchoolPayload = {
   primaryColor: string;
   secondaryColor: string;
   appName: string;
-  logoUrl: string | null;
   iconUrl: string;
   manifestUrl: string;
 };
@@ -74,104 +73,11 @@ async function callMe(accessToken: string): Promise<MeResponse | null> {
   return safeJson(res);
 }
 
-function forceSchoolHead(params: {
-  title: string;
-  manifestHref: string;
-  iconHref: string;
-  themeColor: string;
-}) {
-  if (typeof document === "undefined") return;
-
-  document.title = params.title;
-
-  const oldManifests = Array.from(
-    document.head.querySelectorAll<HTMLLinkElement>('link[rel="manifest"]')
-  );
-
-  for (const old of oldManifests) {
-    old.remove();
-  }
-
-  const oldIcons = Array.from(
-    document.head.querySelectorAll<HTMLLinkElement>(
-      'link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]'
-    )
-  );
-
-  for (const old of oldIcons) {
-    old.remove();
-  }
-
-  const manifest = document.createElement("link");
-  manifest.rel = "manifest";
-  manifest.href = params.manifestHref;
-  manifest.id = "school-dynamic-manifest";
-  document.head.appendChild(manifest);
-
-  const icon = document.createElement("link");
-  icon.rel = "icon";
-  icon.href = params.iconHref;
-  icon.type = "image/png";
-  icon.sizes = "512x512";
-  icon.id = "school-dynamic-icon";
-  document.head.appendChild(icon);
-
-  const shortcutIcon = document.createElement("link");
-  shortcutIcon.rel = "shortcut icon";
-  shortcutIcon.href = params.iconHref;
-  shortcutIcon.type = "image/png";
-  shortcutIcon.sizes = "512x512";
-  shortcutIcon.id = "school-dynamic-shortcut-icon";
-  document.head.appendChild(shortcutIcon);
-
-  const appleIcon = document.createElement("link");
-  appleIcon.rel = "apple-touch-icon";
-  appleIcon.href = params.iconHref;
-  appleIcon.sizes = "512x512";
-  appleIcon.id = "school-dynamic-apple-icon";
-  document.head.appendChild(appleIcon);
-
-  const oldTheme = document.head.querySelector<HTMLMetaElement>(
-    'meta[name="theme-color"]'
-  );
-
-  if (oldTheme) {
-    oldTheme.content = params.themeColor;
-  } else {
-    const theme = document.createElement("meta");
-    theme.name = "theme-color";
-    theme.content = params.themeColor;
-    document.head.appendChild(theme);
-  }
-
-  const oldAppleTitle = document.head.querySelector<HTMLMetaElement>(
-    'meta[name="apple-mobile-web-app-title"]'
-  );
-
-  if (oldAppleTitle) {
-    oldAppleTitle.content = params.title;
-  } else {
-    const appleTitle = document.createElement("meta");
-    appleTitle.name = "apple-mobile-web-app-title";
-    appleTitle.content = params.title;
-    document.head.appendChild(appleTitle);
-  }
-
-  const oldCapable = document.head.querySelector<HTMLMetaElement>(
-    'meta[name="apple-mobile-web-app-capable"]'
-  );
-
-  if (oldCapable) {
-    oldCapable.content = "yes";
-  } else {
-    const capable = document.createElement("meta");
-    capable.name = "apple-mobile-web-app-capable";
-    capable.content = "yes";
-    document.head.appendChild(capable);
-  }
-}
-
-export default function LoginClient({ slug, initialEmail = "", school }: LoginClientProps) {
+export default function LoginClient({
+  slug,
+  initialEmail = "",
+  school,
+}: LoginClientProps) {
   const router = useRouter();
 
   const [checkingSession, setCheckingSession] = useState(true);
@@ -185,17 +91,6 @@ export default function LoginClient({ slug, initialEmail = "", school }: LoginCl
   const logoUrl = school.logoUrl;
   const primaryColor = school.primaryColor;
   const secondaryColor = school.secondaryColor;
-  const iconUrl = school.iconUrl;
-  const manifestUrl = school.manifestUrl;
-
-  useEffect(() => {
-    forceSchoolHead({
-      title: appName,
-      manifestHref: manifestUrl,
-      iconHref: iconUrl,
-      themeColor: primaryColor,
-    });
-  }, [appName, manifestUrl, iconUrl, primaryColor]);
 
   useEffect(() => {
     let cancelled = false;
@@ -214,13 +109,13 @@ export default function LoginClient({ slug, initialEmail = "", school }: LoginCl
 
         if (cancelled) return;
 
-        if (!me || (me as any).ok !== true) return;
+        if (!me || me.ok !== true) return;
 
-        const redirectTo = (me as any).redirectTo || "/";
+        const redirectTo = me.redirectTo || "/";
 
         router.replace(redirectTo);
       } catch {
-        // Não trava tela pública.
+        // Não trava a tela pública.
       } finally {
         if (!cancelled) {
           setCheckingSession(false);
@@ -238,11 +133,11 @@ export default function LoginClient({ slug, initialEmail = "", school }: LoginCl
   async function redirectByMe(accessToken: string) {
     const me = await callMe(accessToken);
 
-    if (!me || (me as any).ok !== true) {
+    if (!me || me.ok !== true) {
       return false;
     }
 
-    const redirectTo = (me as any).redirectTo || "/";
+    const redirectTo = me.redirectTo || "/";
 
     router.replace(redirectTo);
 
@@ -278,8 +173,11 @@ export default function LoginClient({ slug, initialEmail = "", school }: LoginCl
       if (!redirected) {
         router.replace("/login");
       }
-    } catch (e: any) {
-      setError(e?.message || "Erro inesperado ao entrar.");
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error ? e.message : "Erro inesperado ao entrar.";
+
+      setError(message);
     } finally {
       setSubmitting(false);
     }
@@ -422,8 +320,8 @@ export default function LoginClient({ slug, initialEmail = "", school }: LoginCl
                 </div>
 
                 <p className="mt-2 text-xs leading-5 text-slate-500">
-                  Para instalar com o ícone correto, volte para a página pública da escola
-                  e use a opção “Adicionar à Tela de Início”.
+                  Para instalar com o ícone correto, volte para a página pública
+                  da escola e use a opção “Adicionar à Tela de Início”.
                 </p>
 
                 <Link

@@ -1,19 +1,14 @@
 import { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type SchoolPublicPageProps = {
-  params:
-    | Promise<{
-        schoolSlug: string;
-      }>
-    | {
-        schoolSlug: string;
-      };
+type PageProps = {
+  params: Promise<{
+    schoolSlug: string;
+  }>;
 };
 
 type SchoolPublicData = {
@@ -21,12 +16,16 @@ type SchoolPublicData = {
   name: string | null;
   slug: string | null;
   brand_name: string | null;
-  brand_logo_url: string | null;
   brand_icon_url: string | null;
+  brand_logo_url: string | null;
   logo_url: string | null;
   primary_color: string | null;
   secondary_color: string | null;
 };
+
+function normalizeSlug(value: unknown) {
+  return String(value || "").trim().toLowerCase();
+}
 
 function hexColor(value: unknown, fallback: string) {
   const raw = String(value || "").trim();
@@ -38,17 +37,19 @@ function hexColor(value: unknown, fallback: string) {
   return fallback;
 }
 
-function normalizeSlug(value: unknown) {
-  return String(value || "")
-    .trim()
-    .toLowerCase();
-}
+function buildVersion(school: SchoolPublicData) {
+  const source =
+    school.brand_icon_url ||
+    school.brand_logo_url ||
+    school.logo_url ||
+    school.id;
 
-async function getParams(props: SchoolPublicPageProps) {
-  return await Promise.resolve(props.params);
+  return encodeURIComponent(String(source).replace(/[^a-zA-Z0-9._-]/g, ""));
 }
 
 async function getSchool(slug: string): Promise<SchoolPublicData | null> {
+  if (!slug) return null;
+
   const { data, error } = await supabaseAdmin
     .from("schools")
     .select(
@@ -57,8 +58,8 @@ async function getSchool(slug: string): Promise<SchoolPublicData | null> {
         name,
         slug,
         brand_name,
-        brand_logo_url,
         brand_icon_url,
+        brand_logo_url,
         logo_url,
         primary_color,
         secondary_color
@@ -67,26 +68,54 @@ async function getSchool(slug: string): Promise<SchoolPublicData | null> {
     .eq("slug", slug)
     .maybeSingle();
 
-  if (error || !data?.id) return null;
+  if (error) {
+    console.error("[SCHOOL_PUBLIC_PAGE_GET_SCHOOL_ERROR]", {
+      slug,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+    });
+
+    return null;
+  }
+
+  if (!data?.id) {
+    return null;
+  }
 
   return data as SchoolPublicData;
 }
 
-function buildVersion(school: SchoolPublicData) {
-  const source =
-    school.brand_icon_url ||
-    school.brand_logo_url ||
-    school.logo_url ||
-    school.id ||
-    Date.now();
-
-  return encodeURIComponent(String(source).replace(/[^a-zA-Z0-9._-]/g, ""));
+function getAppName(school: SchoolPublicData | null) {
+  return school?.brand_name || school?.name || "Minha Escola";
 }
 
-export async function generateMetadata(
-  props: SchoolPublicPageProps
-): Promise<Metadata> {
-  const { schoolSlug } = await getParams(props);
+function getLogoUrl(school: SchoolPublicData | null) {
+  return (
+    school?.brand_logo_url ||
+    school?.logo_url ||
+    school?.brand_icon_url ||
+    null
+  );
+}
+
+function getInitials(name: string) {
+  const safe = String(name || "").trim();
+
+  if (!safe) return "ES";
+
+  const parts = safe.split(/\s+/).filter(Boolean);
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase();
+}
+
+export async function generateMetadata(props: PageProps): Promise<Metadata> {
+  const { schoolSlug } = await props.params;
   const slug = normalizeSlug(schoolSlug);
 
   const school = await getSchool(slug);
@@ -94,10 +123,11 @@ export async function generateMetadata(
   if (!school) {
     return {
       title: "Escola não encontrada",
+      description: "O link informado não corresponde a uma escola ativa.",
     };
   }
 
-  const appName = school.brand_name || school.name || "Minha Escola";
+  const appName = getAppName(school);
   const themeColor = hexColor(school.primary_color, "#0f172a");
   const version = buildVersion(school);
 
@@ -116,39 +146,112 @@ export async function generateMetadata(
       statusBarStyle: "default",
     },
     icons: {
-      icon: iconUrl,
-      shortcut: iconUrl,
-      apple: iconUrl,
+      icon: [
+        {
+          url: iconUrl,
+          sizes: "192x192",
+          type: "image/png",
+        },
+        {
+          url: iconUrl,
+          sizes: "512x512",
+          type: "image/png",
+        },
+      ],
+      shortcut: [
+        {
+          url: iconUrl,
+          sizes: "512x512",
+          type: "image/png",
+        },
+      ],
+      apple: [
+        {
+          url: iconUrl,
+          sizes: "180x180",
+          type: "image/png",
+        },
+        {
+          url: iconUrl,
+          sizes: "512x512",
+          type: "image/png",
+        },
+      ],
     },
     openGraph: {
       title: appName,
       description: `Portal escolar ${appName}`,
-      images: [iconUrl],
+      images: [
+        {
+          url: iconUrl,
+          width: 512,
+          height: 512,
+          alt: appName,
+        },
+      ],
     },
   };
 }
 
-export default async function SchoolPublicPage(props: SchoolPublicPageProps) {
-  const { schoolSlug } = await getParams(props);
+function SchoolNotFoundCard({ slug }: { slug: string }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+      <div className="w-full max-w-md rounded-[32px] border border-red-200 bg-white p-8 shadow-sm">
+        <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-red-50 text-2xl font-bold text-red-700">
+          !
+        </div>
+
+        <h1 className="mt-5 text-2xl font-semibold text-slate-900">
+          Escola não encontrada
+        </h1>
+
+        <p className="mt-2 text-sm leading-6 text-slate-500">
+          O link informado não corresponde a uma escola ativa.
+        </p>
+
+        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Slug recebido
+          </div>
+
+          <div className="mt-2 break-all font-mono text-xs text-slate-700">
+            {slug || "slug vazio"}
+          </div>
+        </div>
+
+        <Link
+          href="/login"
+          className="mt-6 inline-flex rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white"
+        >
+          Ir para login geral
+        </Link>
+      </div>
+    </main>
+  );
+}
+
+export default async function SchoolPublicPage(props: PageProps) {
+  const { schoolSlug } = await props.params;
   const slug = normalizeSlug(schoolSlug);
 
   const school = await getSchool(slug);
 
   if (!school) {
-    notFound();
+    return <SchoolNotFoundCard slug={slug} />;
   }
 
-  const appName = school.brand_name || school.name || "Minha Escola";
-  const logoUrl = school.brand_logo_url || school.logo_url || school.brand_icon_url || null;
+  const appName = getAppName(school);
+  const logoUrl = getLogoUrl(school);
+
   const primaryColor = hexColor(school.primary_color, "#0f172a");
   const secondaryColor = hexColor(school.secondary_color, "#2563eb");
 
   const version = buildVersion(school);
-  const iconUrl = `/s/${slug}/icon?v=${version}`;
 
+  const iconUrl = `/s/${slug}/icon?v=${version}`;
+  const manifestHref = `/s/${slug}/manifest?v=${version}`;
   const publicHref = `/s/${slug}`;
   const loginHref = `/s/${slug}/login`;
-  const manifestHref = `/s/${slug}/manifest?v=${version}`;
 
   return (
     <main
@@ -177,7 +280,7 @@ export default async function SchoolPublicPage(props: SchoolPublicPageProps) {
                   />
                 ) : (
                   <div className="flex h-20 w-20 items-center justify-center rounded-3xl border border-white/20 bg-white/10 text-xl font-bold">
-                    {appName.slice(0, 2).toUpperCase()}
+                    {getInitials(appName)}
                   </div>
                 )}
 
@@ -191,8 +294,8 @@ export default async function SchoolPublicPage(props: SchoolPublicPageProps) {
                   </h1>
 
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-white/85 md:text-base">
-                    Acesse o portal escolar, acompanhe alunos, comunicados, presença,
-                    mensalidades e informações importantes da escola.
+                    Acesse o portal escolar, acompanhe alunos, comunicados,
+                    presença, mensalidades e informações importantes da escola.
                   </p>
                 </div>
               </div>
@@ -241,19 +344,21 @@ export default async function SchoolPublicPage(props: SchoolPublicPageProps) {
 
                 <div className="mt-3 space-y-3 text-sm leading-6 text-slate-500">
                   <p>
-                    <strong className="text-slate-700">No iPhone:</strong> abra este link
-                    no Safari, toque no botão de compartilhar e escolha{" "}
+                    <strong className="text-slate-700">No iPhone:</strong> abra
+                    este link no Safari, toque no botão de compartilhar e escolha{" "}
                     <strong>Adicionar à Tela de Início</strong>.
                   </p>
 
                   <p>
-                    <strong className="text-slate-700">No Android:</strong> abra este link
-                    no Chrome e escolha <strong>Instalar app</strong> ou{" "}
+                    <strong className="text-slate-700">No Android:</strong>{" "}
+                    abra este link no Chrome e escolha{" "}
+                    <strong>Instalar app</strong> ou{" "}
                     <strong>Adicionar à tela inicial</strong>.
                   </p>
 
                   <p className="text-xs text-slate-400">
-                    Depois de instalado, o app abrirá direto na tela de login da escola.
+                    Depois de instalado, o app abrirá direto na tela de login da
+                    escola.
                   </p>
                 </div>
               </div>
@@ -289,7 +394,10 @@ export default async function SchoolPublicPage(props: SchoolPublicPageProps) {
                 />
 
                 <div>
-                  <div className="text-sm font-semibold text-slate-900">{appName}</div>
+                  <div className="text-sm font-semibold text-slate-900">
+                    {appName}
+                  </div>
+
                   <div className="mt-1 text-xs text-slate-500">
                     Ícone próprio da escola
                   </div>

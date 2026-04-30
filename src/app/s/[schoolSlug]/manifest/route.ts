@@ -1,28 +1,30 @@
 import { NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
-type RouteContext = {
-  params: Promise<{
-    schoolSlug: string;
-  }>;
-};
-
-type SchoolRow = {
-  id: string;
-  name: string | null;
-  slug: string | null;
-  brand_name: string | null;
-  brand_logo_url: string | null;
-  brand_icon_url: string | null;
-  logo_url: string | null;
-  primary_color: string | null;
-  secondary_color: string | null;
-  created_at?: string | null;
-};
+type PublicSchoolResponse =
+  | {
+      ok: true;
+      school: {
+        id: string;
+        name: string | null;
+        slug: string | null;
+        brandName: string | null;
+        brandLogoUrl: string | null;
+        brandIconUrl: string | null;
+        logoUrl: string | null;
+        primaryColor: string | null;
+        secondaryColor: string | null;
+        updatedAt?: string | null;
+        createdAt?: string | null;
+      };
+    }
+  | {
+      ok: false;
+      error?: string;
+      slug?: string;
+    };
 
 function normalizeSlug(value: unknown) {
   return String(value || "").trim().toLowerCase();
@@ -38,179 +40,155 @@ function hexColor(value: unknown, fallback: string) {
   return fallback;
 }
 
-function buildVersion(school: SchoolRow) {
-  const source =
-    school.created_at ||
-    school.brand_icon_url ||
-    school.brand_logo_url ||
-    school.logo_url ||
-    school.id;
-
-  return encodeURIComponent(String(source).replace(/[^a-zA-Z0-9._-]/g, ""));
-}
-
-function absoluteUrl(req: Request, pathOrUrl: string) {
-  const raw = String(pathOrUrl || "").trim();
-
-  if (!raw) return "";
-
-  if (raw.startsWith("http://") || raw.startsWith("https://")) {
-    return raw;
-  }
-
+function getSlugFromRequest(req: Request) {
   const url = new URL(req.url);
 
-  return `${url.origin}${raw.startsWith("/") ? raw : `/${raw}`}`;
+  // Exemplo: /s/teste-3/manifest
+  const parts = url.pathname.split("/").filter(Boolean);
+  const sIndex = parts.indexOf("s");
+
+  if (sIndex >= 0 && parts[sIndex + 1]) {
+    return normalizeSlug(decodeURIComponent(parts[sIndex + 1]));
+  }
+
+  return "";
 }
 
-export async function GET(req: Request, context: RouteContext) {
+function buildHeaders() {
+  return {
+    "Content-Type": "application/manifest+json; charset=utf-8",
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+  };
+}
+
+async function readPublicSchool(req: Request, slug: string) {
+  const url = new URL(req.url);
+  const origin = url.origin;
+
+  const res = await fetch(
+    `${origin}/api/public/school/${encodeURIComponent(slug)}`,
+    {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
+    }
+  );
+
+  const json = (await res.json().catch(() => null)) as PublicSchoolResponse | null;
+
+  if (!res.ok || !json || json.ok !== true) {
+    return {
+      ok: false as const,
+      status: res.status || 404,
+      error:
+        json && "error" in json && json.error
+          ? json.error
+          : "Escola não encontrada.",
+      debug: json,
+    };
+  }
+
+  return {
+    ok: true as const,
+    school: json.school,
+  };
+}
+
+export async function GET(req: Request) {
   try {
-    const { schoolSlug } = await context.params;
-    const slug = normalizeSlug(schoolSlug);
+    const slug = getSlugFromRequest(req);
 
     if (!slug) {
       return NextResponse.json(
         {
+          ok: false,
           error: "Slug inválido.",
+          slug,
         },
         {
           status: 400,
-          headers: {
-            "Content-Type": "application/manifest+json; charset=utf-8",
-            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-            Pragma: "no-cache",
-            Expires: "0",
-          },
+          headers: buildHeaders(),
         }
       );
     }
 
-    const { data: school, error } = await supabaseAdmin
-      .from("schools")
-      .select(
-        `
-          id,
-          name,
-          slug,
-          brand_name,
-          brand_logo_url,
-          brand_icon_url,
-          logo_url,
-          primary_color,
-          secondary_color,
-          created_at
-        `
-      )
-      .eq("slug", slug)
-      .maybeSingle();
+    const result = await readPublicSchool(req, slug);
 
-    if (error) {
+    if (!result.ok) {
       return NextResponse.json(
         {
-          error: "Falha ao buscar escola.",
-          details: error.message,
+          ok: false,
+          error: result.error || "Escola não encontrada.",
           slug,
+          debug: result.debug || null,
         },
         {
-          status: 500,
-          headers: {
-            "Content-Type": "application/manifest+json; charset=utf-8",
-            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-            Pragma: "no-cache",
-            Expires: "0",
-          },
+          status: result.status || 404,
+          headers: buildHeaders(),
         }
       );
     }
 
-    if (!school?.id) {
-      return NextResponse.json(
+    const school = result.school;
+
+    const appName = school.brandName || school.name || "Minha Escola";
+    const shortName = appName.slice(0, 12);
+    const themeColor = hexColor(school.primaryColor, "#0f172a");
+
+    const iconBase = `/s/${slug}/icon`;
+
+    const manifest = {
+      id: `/s/${slug}`,
+      name: appName,
+      short_name: shortName,
+      description: `Portal escolar ${appName}`,
+      start_url: `/s/${slug}/login`,
+      scope: `/s/${slug}/`,
+      display: "standalone",
+      orientation: "portrait",
+      background_color: "#ffffff",
+      theme_color: themeColor,
+      icons: [
         {
-          error: "Escola não encontrada.",
-          slug,
+          src: `${iconBase}?size=192&purpose=any`,
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "any",
         },
         {
-          status: 404,
-          headers: {
-            "Content-Type": "application/manifest+json; charset=utf-8",
-            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-            Pragma: "no-cache",
-            Expires: "0",
-          },
-        }
-      );
-    }
-
-    const typedSchool = school as SchoolRow;
-
-    const appName = typedSchool.brand_name || typedSchool.name || "Minha Escola";
-    const version = buildVersion(typedSchool);
-
-    const iconPath = `/s/${slug}/icon?v=${version}`;
-    const iconAbsolute = absoluteUrl(req, iconPath);
-
-    const startUrl = `/s/${slug}/login`;
-    const scope = `/s/${slug}/`;
-    const appId = `/s/${slug}`;
-
-    const themeColor = hexColor(typedSchool.primary_color, "#0f172a");
-
-    return NextResponse.json(
-      {
-        id: appId,
-        name: appName,
-        short_name: appName.slice(0, 24),
-        description: `Portal escolar ${appName}`,
-        start_url: startUrl,
-        scope,
-        display: "standalone",
-        orientation: "portrait",
-        background_color: "#ffffff",
-        theme_color: themeColor,
-        icons: [
-          {
-            src: iconAbsolute,
-            sizes: "192x192",
-            type: "image/png",
-            purpose: "any",
-          },
-          {
-            src: iconAbsolute,
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "any",
-          },
-          {
-            src: iconAbsolute,
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "maskable",
-          },
-        ],
-      },
-      {
-        headers: {
-          "Content-Type": "application/manifest+json; charset=utf-8",
-          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-          Pragma: "no-cache",
-          Expires: "0",
+          src: `${iconBase}?size=512&purpose=any`,
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "any",
         },
-      }
-    );
+        {
+          src: `${iconBase}?size=512&purpose=maskable`,
+          sizes: "512x512",
+          type: "image/png",
+          purpose: "maskable",
+        },
+      ],
+    };
+
+    return NextResponse.json(manifest, {
+      status: 200,
+      headers: buildHeaders(),
+    });
   } catch (e: any) {
+    console.error("[school-manifest] unexpected error", e);
+
     return NextResponse.json(
       {
-        error: "Erro interno no manifest da escola.",
-        details: e?.message || String(e),
+        ok: false,
+        error: e?.message || "Erro inesperado ao gerar manifest.",
       },
       {
         status: 500,
-        headers: {
-          "Content-Type": "application/manifest+json; charset=utf-8",
-          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-          Pragma: "no-cache",
-          Expires: "0",
-        },
+        headers: buildHeaders(),
       }
     );
   }
