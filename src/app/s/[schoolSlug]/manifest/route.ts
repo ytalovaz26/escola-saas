@@ -1,33 +1,38 @@
 import { NextResponse } from "next/server";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type PublicSchoolResponse =
-  | {
-      ok: true;
-      school: {
-        id: string;
-        name: string | null;
-        slug: string | null;
-        brandName: string | null;
-        brandLogoUrl: string | null;
-        brandIconUrl: string | null;
-        logoUrl: string | null;
-        primaryColor: string | null;
-        secondaryColor: string | null;
-        updatedAt?: string | null;
-        createdAt?: string | null;
-      };
-    }
-  | {
-      ok: false;
-      error?: string;
-      slug?: string;
-    };
+type RouteContext = {
+  params: Promise<{
+    schoolSlug: string;
+  }>;
+};
+
+type SchoolPublicData = {
+  id: string;
+  name: string | null;
+  slug: string | null;
+  brand_name: string | null;
+  brand_logo_url: string | null;
+  brand_icon_url: string | null;
+  logo_url: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+};
 
 function normalizeSlug(value: unknown) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ç/g, "c")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function hexColor(value: unknown, fallback: string) {
@@ -40,20 +45,6 @@ function hexColor(value: unknown, fallback: string) {
   return fallback;
 }
 
-function getSlugFromRequest(req: Request) {
-  const url = new URL(req.url);
-
-  // Exemplo: /s/teste-3/manifest
-  const parts = url.pathname.split("/").filter(Boolean);
-  const sIndex = parts.indexOf("s");
-
-  if (sIndex >= 0 && parts[sIndex + 1]) {
-    return normalizeSlug(decodeURIComponent(parts[sIndex + 1]));
-  }
-
-  return "";
-}
-
 function buildHeaders() {
   return {
     "Content-Type": "application/manifest+json; charset=utf-8",
@@ -63,44 +54,76 @@ function buildHeaders() {
   };
 }
 
-async function readPublicSchool(req: Request, slug: string) {
+function getSlugFromUrl(req: Request) {
   const url = new URL(req.url);
-  const origin = url.origin;
+  const parts = url.pathname.split("/").filter(Boolean);
 
-  const res = await fetch(
-    `${origin}/api/public/school/${encodeURIComponent(slug)}`,
-    {
-      method: "GET",
-      cache: "no-store",
-      headers: {
-        Accept: "application/json",
-      },
-    }
-  );
+  const sIndex = parts.indexOf("s");
 
-  const json = (await res.json().catch(() => null)) as PublicSchoolResponse | null;
-
-  if (!res.ok || !json || json.ok !== true) {
-    return {
-      ok: false as const,
-      status: res.status || 404,
-      error:
-        json && "error" in json && json.error
-          ? json.error
-          : "Escola não encontrada.",
-      debug: json,
-    };
+  if (sIndex >= 0 && parts[sIndex + 1]) {
+    return normalizeSlug(decodeURIComponent(parts[sIndex + 1]));
   }
 
-  return {
-    ok: true as const,
-    school: json.school,
-  };
+  return "";
 }
 
-export async function GET(req: Request) {
+async function getSlug(req: Request, context: RouteContext) {
   try {
-    const slug = getSlugFromRequest(req);
+    const params = await context.params;
+    const fromParams = normalizeSlug(params?.schoolSlug);
+
+    if (fromParams) {
+      return fromParams;
+    }
+  } catch {
+    // Fallback pela URL abaixo.
+  }
+
+  return getSlugFromUrl(req);
+}
+
+async function getSchool(slug: string): Promise<SchoolPublicData | null> {
+  const normalized = normalizeSlug(slug);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from("schools")
+    .select(
+      `
+        id,
+        name,
+        slug,
+        brand_name,
+        brand_logo_url,
+        brand_icon_url,
+        logo_url,
+        primary_color,
+        secondary_color,
+        updated_at,
+        created_at
+      `
+    )
+    .eq("slug", normalized)
+    .maybeSingle();
+
+  if (error || !data?.id) {
+    console.error("[school-manifest] school not found", {
+      slug: normalized,
+      error: error?.message || null,
+    });
+
+    return null;
+  }
+
+  return data as SchoolPublicData;
+}
+
+export async function GET(req: Request, context: RouteContext) {
+  try {
+    const slug = await getSlug(req, context);
 
     if (!slug) {
       return NextResponse.json(
@@ -116,28 +139,26 @@ export async function GET(req: Request) {
       );
     }
 
-    const result = await readPublicSchool(req, slug);
+    const school = await getSchool(slug);
 
-    if (!result.ok) {
+    if (!school) {
       return NextResponse.json(
         {
           ok: false,
-          error: result.error || "Escola não encontrada.",
+          error: "Escola não encontrada.",
           slug,
-          debug: result.debug || null,
         },
         {
-          status: result.status || 404,
+          status: 404,
           headers: buildHeaders(),
         }
       );
     }
 
-    const school = result.school;
-
-    const appName = school.brandName || school.name || "Minha Escola";
+    const appName = school.brand_name || school.name || "Minha Escola";
     const shortName = appName.slice(0, 12);
-    const themeColor = hexColor(school.primaryColor, "#0f172a");
+    const themeColor = hexColor(school.primary_color, "#0f172a");
+    const backgroundColor = "#ffffff";
 
     const iconBase = `/s/${slug}/icon`;
 
@@ -150,23 +171,23 @@ export async function GET(req: Request) {
       scope: `/s/${slug}/`,
       display: "standalone",
       orientation: "portrait",
-      background_color: "#ffffff",
+      background_color: backgroundColor,
       theme_color: themeColor,
       icons: [
         {
-          src: `${iconBase}?size=192&purpose=any`,
+          src: `${iconBase}?size=192`,
           sizes: "192x192",
           type: "image/png",
           purpose: "any",
         },
         {
-          src: `${iconBase}?size=512&purpose=any`,
+          src: `${iconBase}?size=512`,
           sizes: "512x512",
           type: "image/png",
           purpose: "any",
         },
         {
-          src: `${iconBase}?size=512&purpose=maskable`,
+          src: `${iconBase}?size=512&maskable=1`,
           sizes: "512x512",
           type: "image/png",
           purpose: "maskable",
