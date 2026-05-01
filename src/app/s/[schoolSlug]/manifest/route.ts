@@ -14,14 +14,28 @@ type SchoolPublicData = {
   id: string;
   name: string | null;
   slug: string | null;
-  brand_name: string | null;
-  brand_logo_url: string | null;
-  brand_icon_url: string | null;
-  logo_url: string | null;
-  primary_color: string | null;
-  secondary_color: string | null;
+  brand_name?: string | null;
+  brandName?: string | null;
+  brand_logo_url?: string | null;
+  brandLogoUrl?: string | null;
+  brand_icon_url?: string | null;
+  brandIconUrl?: string | null;
+  logo_url?: string | null;
+  logoUrl?: string | null;
+  primary_color?: string | null;
+  primaryColor?: string | null;
+  secondary_color?: string | null;
+  secondaryColor?: string | null;
   updated_at?: string | null;
+  updatedAt?: string | null;
   created_at?: string | null;
+  createdAt?: string | null;
+};
+
+type ApiPublicSchoolResponse = {
+  ok?: boolean;
+  school?: SchoolPublicData | null;
+  error?: string;
 };
 
 function normalizeSlug(value: unknown) {
@@ -33,6 +47,10 @@ function normalizeSlug(value: unknown) {
     .replace(/ç/g, "c")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+function normalizeText(value: unknown) {
+  return String(value || "").trim();
 }
 
 function hexColor(value: unknown, fallback: string) {
@@ -82,7 +100,68 @@ async function getSlug(req: Request, context: RouteContext) {
   return getSlugFromUrl(req);
 }
 
-async function getSchool(slug: string): Promise<SchoolPublicData | null> {
+function mapSchoolFromApi(value: any): SchoolPublicData | null {
+  const school = value?.school || value;
+
+  if (!school?.id) {
+    return null;
+  }
+
+  return {
+    id: String(school.id),
+    name: school.name ?? null,
+    slug: school.slug ?? null,
+    brand_name: school.brand_name ?? school.brandName ?? null,
+    brand_logo_url: school.brand_logo_url ?? school.brandLogoUrl ?? null,
+    brand_icon_url: school.brand_icon_url ?? school.brandIconUrl ?? null,
+    logo_url: school.logo_url ?? school.logoUrl ?? null,
+    primary_color: school.primary_color ?? school.primaryColor ?? null,
+    secondary_color: school.secondary_color ?? school.secondaryColor ?? null,
+    updated_at: school.updated_at ?? school.updatedAt ?? null,
+    created_at: school.created_at ?? school.createdAt ?? null,
+  };
+}
+
+async function getSchoolFromPublicApi(
+  req: Request,
+  slug: string
+): Promise<SchoolPublicData | null> {
+  try {
+    const origin = new URL(req.url).origin;
+    const url = `${origin}/api/public/school/${encodeURIComponent(slug)}`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    const json = (await res.json().catch(() => null)) as ApiPublicSchoolResponse | null;
+
+    if (!res.ok || !json?.ok || !json.school) {
+      console.error("[school-manifest] public api lookup failed", {
+        slug,
+        status: res.status,
+        error: json?.error || null,
+      });
+
+      return null;
+    }
+
+    return mapSchoolFromApi(json.school);
+  } catch (error: any) {
+    console.error("[school-manifest] public api unexpected error", {
+      slug,
+      error: error?.message || String(error),
+    });
+
+    return null;
+  }
+}
+
+async function getSchoolFromSchools(slug: string): Promise<SchoolPublicData | null> {
   const normalized = normalizeSlug(slug);
 
   if (!normalized) {
@@ -110,15 +189,51 @@ async function getSchool(slug: string): Promise<SchoolPublicData | null> {
     .maybeSingle();
 
   if (error || !data?.id) {
-    console.error("[school-manifest] school not found", {
+    console.error("[school-manifest] direct schools lookup failed", {
       slug: normalized,
       error: error?.message || null,
+      found: !!data?.id,
     });
 
     return null;
   }
 
   return data as SchoolPublicData;
+}
+
+async function getSchool(req: Request, slug: string): Promise<SchoolPublicData | null> {
+  const normalized = normalizeSlug(slug);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const fromPublicApi = await getSchoolFromPublicApi(req, normalized);
+
+  if (fromPublicApi?.id) {
+    return fromPublicApi;
+  }
+
+  const fromSchools = await getSchoolFromSchools(normalized);
+
+  if (fromSchools?.id) {
+    return fromSchools;
+  }
+
+  return null;
+}
+
+function getBrandName(school: SchoolPublicData) {
+  return (
+    normalizeText(school.brand_name) ||
+    normalizeText(school.brandName) ||
+    normalizeText(school.name) ||
+    "Minha Escola"
+  );
+}
+
+function getPrimaryColor(school: SchoolPublicData) {
+  return hexColor(school.primary_color ?? school.primaryColor, "#0f172a");
 }
 
 export async function GET(req: Request, context: RouteContext) {
@@ -139,9 +254,9 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
-    const school = await getSchool(slug);
+    const school = await getSchool(req, slug);
 
-    if (!school) {
+    if (!school?.id) {
       return NextResponse.json(
         {
           ok: false,
@@ -155,9 +270,9 @@ export async function GET(req: Request, context: RouteContext) {
       );
     }
 
-    const appName = school.brand_name || school.name || "Minha Escola";
+    const appName = getBrandName(school);
     const shortName = appName.slice(0, 12);
-    const themeColor = hexColor(school.primary_color, "#0f172a");
+    const themeColor = getPrimaryColor(school);
     const backgroundColor = "#ffffff";
 
     const iconBase = `/s/${slug}/icon`;
