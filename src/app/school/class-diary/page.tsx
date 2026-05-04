@@ -29,7 +29,6 @@ type DiaryGroup = {
 };
 
 type PeriodPreset = "month" | "bimester" | "semester" | "year" | "custom";
-type PdfMode = "period" | "daily";
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -58,30 +57,33 @@ function currentMonthISO() {
 function monthStart(referenceMonth: string) {
   const [y, m] = referenceMonth.split("-").map(Number);
   if (!y || !m) return toYMD(new Date());
+
   return `${y}-${pad2(m)}-01`;
 }
 
 function monthEnd(referenceMonth: string) {
   const [y, m] = referenceMonth.split("-").map(Number);
   if (!y || !m) return toYMD(new Date());
+
   return toYMD(new Date(y, m, 0));
 }
 
 function yearStart(referenceMonth: string) {
   const [y] = referenceMonth.split("-").map(Number);
   if (!y) return `${new Date().getFullYear()}-01-01`;
+
   return `${y}-01-01`;
 }
 
 function yearEnd(referenceMonth: string) {
   const [y] = referenceMonth.split("-").map(Number);
   if (!y) return `${new Date().getFullYear()}-12-31`;
+
   return `${y}-12-31`;
 }
 
 function bimesterRange(referenceMonth: string) {
   const [y, m] = referenceMonth.split("-").map(Number);
-
   if (!y || !m) {
     const now = new Date();
     return {
@@ -99,7 +101,6 @@ function bimesterRange(referenceMonth: string) {
 
 function semesterRange(referenceMonth: string) {
   const [y, m] = referenceMonth.split("-").map(Number);
-
   if (!y || !m) {
     const now = new Date();
     return {
@@ -139,6 +140,15 @@ function periodLabel(startDate: string, endDate: string) {
   return `${formatDateBR(startDate)} até ${formatDateBR(endDate)}`;
 }
 
+function safeFileName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+}
+
 function TextBox({
   label,
   value,
@@ -164,9 +174,8 @@ export default function SchoolClassDiaryPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [generatingMode, setGeneratingMode] = useState<PdfMode | null>(null);
-  const [generatingEntryId, setGeneratingEntryId] = useState<string | null>(null);
+  const [generatingPeriod, setGeneratingPeriod] = useState(false);
+  const [generatingDaily, setGeneratingDaily] = useState(false);
 
   const [referenceMonth, setReferenceMonth] = useState(currentMonthISO());
   const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("month");
@@ -178,10 +187,10 @@ export default function SchoolClassDiaryPage() {
 
   const [groups, setGroups] = useState<DiaryGroup[]>([]);
   const [selectedDiaryId, setSelectedDiaryId] = useState<string>("");
-  const [selectedEntryId, setSelectedEntryId] = useState<string>("");
+  const [selectedDailyEntryId, setSelectedDailyEntryId] = useState<string>("");
 
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [pdfFileName, setPdfFileName] = useState<string>("diario.pdf");
+  const [lastPdfUrl, setLastPdfUrl] = useState<string | null>(null);
+  const [lastPdfName, setLastPdfName] = useState<string>("diario-de-classe.pdf");
 
   async function ensureToken() {
     const { data } = await supabase.auth.getSession();
@@ -193,12 +202,6 @@ export default function SchoolClassDiaryPage() {
     }
 
     return token;
-  }
-
-  function clearPdfUrl() {
-    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
-    setPdfUrl(null);
-    setPdfFileName("diario.pdf");
   }
 
   function applyPreset(nextPreset: PeriodPreset, monthValue = referenceMonth) {
@@ -231,6 +234,32 @@ export default function SchoolClassDiaryPage() {
     }
   }
 
+  function clearLastPdf() {
+    if (lastPdfUrl) {
+      URL.revokeObjectURL(lastPdfUrl);
+      setLastPdfUrl(null);
+    }
+  }
+
+  async function openPdfFromResponse(res: Response, fileName: string) {
+    clearLastPdf();
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    setLastPdfUrl(url);
+    setLastPdfName(fileName);
+
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+
+    if (!opened) {
+      setMessage("PDF pronto para abrir. Toque no botão azul abaixo para visualizar ou baixar.");
+      return;
+    }
+
+    setMessage("PDF gerado com sucesso.");
+  }
+
   async function load() {
     setLoading(true);
     setError(null);
@@ -257,7 +286,7 @@ export default function SchoolClassDiaryPage() {
         setError(json?.error || "Falha ao carregar diários.");
         setGroups([]);
         setSelectedDiaryId("");
-        setSelectedEntryId("");
+        setSelectedDailyEntryId("");
         return;
       }
 
@@ -269,24 +298,26 @@ export default function SchoolClassDiaryPage() {
         const nextDiaryId = stillExists ? selectedDiaryId : loadedGroups[0].diary.id;
         setSelectedDiaryId(nextDiaryId);
 
-        const nextGroup = loadedGroups.find((g) => g.diary.id === nextDiaryId);
-        const firstEntry = nextGroup?.entries?.[0];
+        const nextGroup =
+          loadedGroups.find((g) => g.diary.id === nextDiaryId) || loadedGroups[0];
 
-        if (firstEntry) {
-          const entryStillExists = nextGroup?.entries.some((e) => e.id === selectedEntryId);
-          setSelectedEntryId(entryStillExists ? selectedEntryId : firstEntry.id);
+        if (nextGroup.entries.length > 0) {
+          const dailyStillExists = nextGroup.entries.some((e) => e.id === selectedDailyEntryId);
+          setSelectedDailyEntryId(
+            dailyStillExists ? selectedDailyEntryId : nextGroup.entries[0].id
+          );
         } else {
-          setSelectedEntryId("");
+          setSelectedDailyEntryId("");
         }
       } else {
         setSelectedDiaryId("");
-        setSelectedEntryId("");
+        setSelectedDailyEntryId("");
       }
     } catch (e: any) {
       setError(e?.message || "Erro inesperado ao carregar diários.");
       setGroups([]);
       setSelectedDiaryId("");
-      setSelectedEntryId("");
+      setSelectedDailyEntryId("");
     } finally {
       setLoading(false);
     }
@@ -297,56 +328,22 @@ export default function SchoolClassDiaryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [referenceMonth, startDate, endDate]);
 
-  useEffect(() => {
-    return () => {
-      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const selectedGroup = useMemo(() => {
     return groups.find((g) => g.diary.id === selectedDiaryId) || null;
   }, [groups, selectedDiaryId]);
 
-  const selectedEntry = useMemo(() => {
-    return selectedGroup?.entries.find((entry) => entry.id === selectedEntryId) || null;
-  }, [selectedGroup, selectedEntryId]);
+  const selectedDailyEntry = useMemo(() => {
+    if (!selectedGroup) return null;
+    return selectedGroup.entries.find((entry) => entry.id === selectedDailyEntryId) || null;
+  }, [selectedGroup, selectedDailyEntryId]);
 
   const totalEntries = useMemo(() => {
     return groups.reduce((sum, group) => sum + group.entries.length, 0);
   }, [groups]);
 
-  async function handlePdfResponse(res: Response, successMessage: string, fileName: string) {
-    if (!res.ok) {
-      const text = await res.text();
-
-      try {
-        const json = text ? JSON.parse(text) : null;
-        setError(
-          (json?.error || "Falha ao gerar PDF do diário.") +
-            (json?.details ? `\n\nDetalhes: ${json.details}` : "")
-        );
-      } catch {
-        setError(text || "Falha ao gerar PDF do diário.");
-      }
-
-      return;
-    }
-
-    const blob = await res.blob();
-    const nextUrl = URL.createObjectURL(blob);
-
-    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
-
-    setPdfUrl(nextUrl);
-    setPdfFileName(fileName);
-    setMessage(successMessage);
-  }
-
-  async function generatePdf() {
+  async function generatePeriodPdf() {
     setError(null);
     setMessage(null);
-    clearPdfUrl();
 
     if (!selectedGroup) {
       setError("Selecione uma turma/diário.");
@@ -366,9 +363,7 @@ export default function SchoolClassDiaryPage() {
     const token = await ensureToken();
     if (!token) return;
 
-    setGenerating(true);
-    setGeneratingMode("period");
-    setGeneratingEntryId(null);
+    setGeneratingPeriod(true);
 
     try {
       const query = new URLSearchParams({
@@ -386,41 +381,54 @@ export default function SchoolClassDiaryPage() {
         cache: "no-store",
       });
 
-      await handlePdfResponse(
-        res,
-        "PDF do diário por período gerado com sucesso. Toque no botão abaixo para abrir ou baixar.",
-        `diario-periodo-${startDate}-a-${endDate}.pdf`
-      );
+      if (!res.ok) {
+        const text = await res.text();
+
+        try {
+          const json = text ? JSON.parse(text) : null;
+          setError(
+            (json?.error || "Falha ao gerar PDF do diário.") +
+              (json?.details ? `\n\nDetalhes: ${json.details}` : "")
+          );
+        } catch {
+          setError(text || "Falha ao gerar PDF do diário.");
+        }
+
+        return;
+      }
+
+      const fileName = `${safeFileName(
+        selectedGroup.diary.class_name || "turma"
+      )}-${safeFileName(selectedGroup.diary.subject_name || "disciplina")}-periodo.pdf`;
+
+      await openPdfFromResponse(res, fileName);
     } catch (e: any) {
       setError(e?.message || "Erro inesperado ao gerar PDF.");
     } finally {
-      setGenerating(false);
-      setGeneratingMode(null);
-      setGeneratingEntryId(null);
+      setGeneratingPeriod(false);
     }
   }
 
-  async function generateDailyPdf(entry: DiaryEntry | null) {
+  async function generateDailyPdf(entry?: DiaryEntry | null) {
     setError(null);
     setMessage(null);
-    clearPdfUrl();
+
+    const dailyEntry = entry || selectedDailyEntry;
 
     if (!selectedGroup) {
       setError("Selecione uma turma/diário.");
       return;
     }
 
-    if (!entry?.lesson_date) {
-      setError("Selecione uma aula do dia para gerar o PDF.");
+    if (!dailyEntry) {
+      setError("Selecione uma aula do dia para gerar o PDF diário.");
       return;
     }
 
     const token = await ensureToken();
     if (!token) return;
 
-    setGenerating(true);
-    setGeneratingMode("daily");
-    setGeneratingEntryId(entry.id);
+    setGeneratingDaily(true);
 
     try {
       const query = new URLSearchParams({
@@ -428,10 +436,7 @@ export default function SchoolClassDiaryPage() {
         referenceMonth: selectedGroup.diary.reference_month || referenceMonth,
         subjectName: selectedGroup.diary.subject_name || "",
         termLabel: selectedGroup.diary.term_label || "",
-        lessonDate: entry.lesson_date,
-        startDate: entry.lesson_date,
-        endDate: entry.lesson_date,
-        reportMode: "daily",
+        lessonDate: dailyEntry.lesson_date,
       });
 
       const res = await fetch(`/api/school/class-diary/report?${query.toString()}`, {
@@ -439,19 +444,31 @@ export default function SchoolClassDiaryPage() {
         cache: "no-store",
       });
 
-      await handlePdfResponse(
-        res,
-        `PDF diário de ${formatDateBR(
-          entry.lesson_date
-        )} gerado com sucesso. Toque no botão abaixo para abrir ou baixar.`,
-        `diario-dia-${entry.lesson_date}.pdf`
-      );
+      if (!res.ok) {
+        const text = await res.text();
+
+        try {
+          const json = text ? JSON.parse(text) : null;
+          setError(
+            (json?.error || "Falha ao gerar PDF diário.") +
+              (json?.details ? `\n\nDetalhes: ${json.details}` : "")
+          );
+        } catch {
+          setError(text || "Falha ao gerar PDF diário.");
+        }
+
+        return;
+      }
+
+      const fileName = `${safeFileName(
+        selectedGroup.diary.class_name || "turma"
+      )}-${safeFileName(selectedGroup.diary.subject_name || "disciplina")}-diario-${dailyEntry.lesson_date}.pdf`;
+
+      await openPdfFromResponse(res, fileName);
     } catch (e: any) {
       setError(e?.message || "Erro inesperado ao gerar PDF diário.");
     } finally {
-      setGenerating(false);
-      setGeneratingMode(null);
-      setGeneratingEntryId(null);
+      setGeneratingDaily(false);
     }
   }
 
@@ -487,8 +504,7 @@ export default function SchoolClassDiaryPage() {
               <button
                 type="button"
                 onClick={load}
-                disabled={loading || generating}
-                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50"
               >
                 Recarregar
               </button>
@@ -570,8 +586,7 @@ export default function SchoolClassDiaryPage() {
                   setSelectedDiaryId(nextDiaryId);
 
                   const nextGroup = groups.find((g) => g.diary.id === nextDiaryId);
-                  setSelectedEntryId(nextGroup?.entries?.[0]?.id || "");
-                  clearPdfUrl();
+                  setSelectedDailyEntryId(nextGroup?.entries?.[0]?.id || "");
                 }}
                 className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
                 disabled={groups.length === 0}
@@ -641,76 +656,67 @@ export default function SchoolClassDiaryPage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="text-xs font-medium text-slate-500">Professor(a)</div>
                 <div className="mt-1 break-words text-sm font-semibold text-slate-900">
-                  {selectedGroup.diary.teacher_name ||
-                    selectedGroup.diary.teacher_user_id ||
-                    "—"}
+                  {selectedGroup.diary.teacher_name || selectedGroup.diary.teacher_user_id || "—"}
                 </div>
               </div>
             </div>
           ) : null}
 
-          {selectedGroup && selectedGroup.entries.length > 0 ? (
-            <div className="mt-5 rounded-3xl border border-blue-100 bg-blue-50 p-4">
-              <div className="text-sm font-semibold text-slate-900">
-                Gerar PDF diário
-              </div>
+          <div className="mt-6 rounded-3xl border border-blue-100 bg-blue-50/60 p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="flex-1">
+                <h2 className="text-sm font-semibold text-slate-900">Gerar PDF diário completo</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Este botão gera o PDF completo da aula selecionada, com conteúdo, metodologia,
+                  atividades, observações e tarefa de casa.
+                </p>
 
-              <p className="mt-1 text-sm leading-6 text-slate-600">
-                No celular, escolha a aula abaixo e toque em gerar. Depois aparecerá o
-                botão para abrir ou baixar o PDF.
-              </p>
-
-              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto] md:items-end">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Aula do dia
-                  </label>
-                  <select
-                    value={selectedEntryId}
-                    onChange={(e) => {
-                      setSelectedEntryId(e.target.value);
-                      clearPdfUrl();
-                    }}
-                    className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm"
-                  >
-                    {selectedGroup.entries.map((entry) => (
+                <label className="mt-4 mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Aula do dia
+                </label>
+                <select
+                  value={selectedDailyEntryId}
+                  onChange={(e) => setSelectedDailyEntryId(e.target.value)}
+                  disabled={!selectedGroup || selectedGroup.entries.length === 0}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm"
+                >
+                  {!selectedGroup || selectedGroup.entries.length === 0 ? (
+                    <option value="">Nenhuma aula disponível</option>
+                  ) : (
+                    selectedGroup.entries.map((entry) => (
                       <option key={entry.id} value={entry.id}>
                         {formatDateBR(entry.lesson_date)} •{" "}
-                        {entry.content_taught?.slice(0, 55) || "Sem conteúdo"}
+                        {entry.content_taught?.slice(0, 80) || "Sem conteúdo"}
                       </option>
-                    ))}
-                  </select>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => generateDailyPdf(selectedEntry)}
-                  disabled={!selectedEntry || generating}
-                  className="rounded-2xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
-                >
-                  {generating && generatingMode === "daily"
-                    ? "Gerando PDF do dia..."
-                    : "Gerar PDF do dia"}
-                </button>
+                    ))
+                  )}
+                </select>
               </div>
+
+              <button
+                type="button"
+                onClick={() => generateDailyPdf()}
+                disabled={!selectedGroup || !selectedDailyEntry || generatingDaily}
+                className="rounded-2xl bg-blue-700 px-5 py-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {generatingDaily ? "Gerando PDF diário..." : "Gerar PDF do dia"}
+              </button>
             </div>
-          ) : null}
+          </div>
 
           <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <p className="text-sm leading-6 text-slate-500">
-              O relatório resumido exibe apenas a data e o conteúdo ministrado,
-              no modelo tradicional de diário escolar.
+              O relatório do período é resumido e exibe apenas a data e o conteúdo ministrado,
+              no modelo tradicional mensal/bimestral.
             </p>
 
             <button
               type="button"
-              onClick={generatePdf}
-              disabled={!selectedGroup || !startDate || !endDate || generating}
+              onClick={generatePeriodPdf}
+              disabled={!selectedGroup || !startDate || !endDate || generatingPeriod}
               className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
             >
-              {generating && generatingMode === "period"
-                ? "Gerando PDF..."
-                : "Gerar relatório do período"}
+              {generatingPeriod ? "Gerando PDF..." : "Gerar relatório do período"}
             </button>
           </div>
 
@@ -720,23 +726,20 @@ export default function SchoolClassDiaryPage() {
             </div>
           ) : null}
 
-          {pdfUrl ? (
-            <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4">
-              <div className="text-sm font-semibold text-blue-950">
-                PDF pronto para abrir
-              </div>
-
-              <p className="mt-1 text-sm leading-6 text-blue-800">
+          {lastPdfUrl ? (
+            <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
+              <div className="font-semibold">PDF pronto para abrir</div>
+              <p className="mt-1 leading-6 text-blue-800">
                 No celular, toque no botão abaixo. Se abrir uma prévia, use a opção de
                 compartilhar/salvar do navegador.
               </p>
 
               <a
-                href={pdfUrl}
+                href={lastPdfUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                download={pdfFileName}
-                className="mt-4 inline-flex w-full items-center justify-center rounded-2xl bg-blue-700 px-5 py-3 text-center text-sm font-semibold text-white hover:opacity-90 md:w-auto"
+                download={lastPdfName}
+                className="mt-3 inline-flex rounded-2xl bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:opacity-90"
               >
                 Abrir PDF gerado
               </a>
@@ -765,8 +768,8 @@ export default function SchoolClassDiaryPage() {
                 Lançamentos do período
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                Visualização do diário selecionado. Cada lançamento também possui botão
-                individual para gerar PDF diário.
+                Visualização do diário selecionado. Cada lançamento também possui botão individual
+                para gerar o PDF diário completo.
               </p>
             </div>
 
@@ -778,28 +781,23 @@ export default function SchoolClassDiaryPage() {
               <div className="divide-y divide-slate-200">
                 {selectedGroup.entries.map((entry) => (
                   <div key={entry.id} className="p-5">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <div>
                         <div className="text-sm font-semibold text-slate-900">
                           Aula do dia {formatDateBR(entry.lesson_date)}
                         </div>
-
                         <div className="mt-1 text-xs text-slate-500">
-                          Diário diário individual disponível para impressão ou arquivo.
+                          Diário completo disponível para impressão ou arquivo.
                         </div>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => generateDailyPdf(entry)}
-                        disabled={generating}
-                        className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                        disabled={generatingDaily}
+                        className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                       >
-                        {generating &&
-                        generatingMode === "daily" &&
-                        generatingEntryId === entry.id
-                          ? "Gerando PDF..."
-                          : "Gerar PDF do dia"}
+                        {generatingDaily ? "Gerando..." : "Gerar PDF do dia"}
                       </button>
                     </div>
 
