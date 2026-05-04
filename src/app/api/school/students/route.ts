@@ -4,49 +4,77 @@ import { requireStaff } from "@/lib/requireStaff";
 import { jsonFail, jsonOk, logRouteError, readJsonBody } from "@/lib/http";
 
 export async function GET(req: Request) {
-  const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
+  const guard = await requireStaff(req, [
+    "director",
+    "coordinator",
+    "diretor",
+    "coordenador",
+  ]);
+
   if (!guard.ok) return guard.res;
 
   try {
     const url = new URL(req.url);
-    const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
+    const q = String(url.searchParams.get("q") || "").trim();
 
     let query = supabaseAdmin
       .from("students")
-      .select("id, school_id, full_name, birth_date, registration_number, class_id, created_at")
+      .select(
+        "id, school_id, full_name, birth_date, registration_number, class_id, created_at"
+      )
       .eq("school_id", guard.schoolId)
-      .order("created_at", { ascending: false })
-      .limit(500);
+      .order("full_name", { ascending: true })
+      .limit(1000);
 
     if (q) {
-      // ilike funciona bem aqui
-      query = query.ilike("full_name", `%${q}%`);
+      const safeQ = q.replace(/[%_]/g, "\\$&");
+
+      query = query.or(
+        `full_name.ilike.%${safeQ}%,registration_number.ilike.%${safeQ}%`
+      );
     }
 
     const { data, error } = await query;
-    if (error) return jsonFail(500, error.message);
+
+    if (error) {
+      return jsonFail(500, error.message);
+    }
 
     return jsonOk({ students: data || [] });
   } catch (err) {
-    logRouteError("GET /api/school/students", err, { schoolId: guard.schoolId });
+    logRouteError("GET /api/school/students", err, {
+      schoolId: guard.schoolId,
+    });
+
     return jsonFail(500, "Internal error");
   }
 }
 
 export async function POST(req: Request) {
-  const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
+  const guard = await requireStaff(req, [
+    "director",
+    "coordinator",
+    "diretor",
+    "coordenador",
+  ]);
+
   if (!guard.ok) return guard.res;
 
   try {
     const { json } = await readJsonBody(req);
 
     const full_name = String(json?.full_name || "").trim();
-    const registration_number = json?.registration_number != null ? String(json.registration_number).trim() : null;
 
-    // birth_date pode vir como 'YYYY-MM-DD' ou null
+    const registration_number =
+      json?.registration_number != null
+        ? String(json.registration_number).trim()
+        : null;
+
     const birth_date = json?.birth_date ? String(json.birth_date).trim() : null;
 
-    if (!full_name) return jsonFail(422, "full_name is required");
+    if (!full_name) {
+      return jsonFail(422, "full_name is required");
+    }
 
     const { data, error } = await supabaseAdmin
       .from("students")
@@ -55,17 +83,23 @@ export async function POST(req: Request) {
         full_name,
         registration_number,
         birth_date,
-        // class_id fica legacy (você tem student_classes como correto)
         class_id: null,
       })
-      .select("id, school_id, full_name, birth_date, registration_number, class_id, created_at")
+      .select(
+        "id, school_id, full_name, birth_date, registration_number, class_id, created_at"
+      )
       .single();
 
-    if (error) return jsonFail(500, error.message);
+    if (error) {
+      return jsonFail(500, error.message);
+    }
 
     return jsonOk({ student: data }, 201);
   } catch (err) {
-    logRouteError("POST /api/school/students", err, { schoolId: guard.schoolId });
+    logRouteError("POST /api/school/students", err, {
+      schoolId: guard.schoolId,
+    });
+
     return jsonFail(500, "Internal error");
   }
 }

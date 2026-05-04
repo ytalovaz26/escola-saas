@@ -54,7 +54,9 @@ async function getAccessToken() {
 
 async function safeJson(res: Response) {
   const text = await res.text();
+
   if (!text) return null;
+
   try {
     return JSON.parse(text);
   } catch {
@@ -64,9 +66,31 @@ async function safeJson(res: Response) {
 
 function formatDateBR(value?: string | null) {
   if (!value) return "—";
+
   const [y, m, d] = String(value).split("-");
+
   if (!y || !m || !d) return value;
+
   return `${d}/${m}/${y}`;
+}
+
+function normalizeText(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function roleCanManage(role: string | null | undefined) {
+  const r = normalizeText(role);
+
+  return (
+    r === "diretor" ||
+    r === "director" ||
+    r === "coordenador" ||
+    r === "coordinator"
+  );
 }
 
 export default function EnrollmentsPage() {
@@ -89,13 +113,21 @@ export default function EnrollmentsPage() {
 
   const classById = useMemo(() => {
     const m = new Map<string, ClassRow>();
-    for (const c of classes) m.set(c.id, c);
+
+    for (const c of classes) {
+      m.set(c.id, c);
+    }
+
     return m;
   }, [classes]);
 
   const enrollmentByStudentId = useMemo(() => {
     const m = new Map<string, EnrollmentRow>();
-    for (const e of enrollments) m.set(e.student_id, e);
+
+    for (const e of enrollments) {
+      m.set(e.student_id, e);
+    }
+
     return m;
   }, [enrollments]);
 
@@ -103,95 +135,45 @@ export default function EnrollmentsPage() {
     return classById.get(selectedClassId || "") || null;
   }, [classById, selectedClassId]);
 
-  const filteredStudentsForAdd = useMemo(() => {
-    const q = studentQuery.trim().toLowerCase();
+  const queryNormalized = useMemo(() => {
+    return normalizeText(studentQuery);
+  }, [studentQuery]);
+
+  const matchedStudents = useMemo(() => {
+    if (!queryNormalized) return [];
+
+    return students
+      .filter((s) => {
+        const name = normalizeText(s.full_name);
+        const reg = normalizeText(s.registration_number);
+
+        return name.includes(queryNormalized) || reg.includes(queryNormalized);
+      })
+      .slice(0, 50);
+  }, [students, queryNormalized]);
+
+  const availableStudentsForAdd = useMemo(() => {
     const activeStudentIds = new Set(enrollments.map((e) => e.student_id));
 
-    let list = students.filter((s) => !activeStudentIds.has(s.id));
+    return matchedStudents.filter((s) => !activeStudentIds.has(s.id)).slice(0, 30);
+  }, [matchedStudents, enrollments]);
 
-    if (q) {
-      list = list.filter((s) => {
-        const name = s.full_name.toLowerCase();
-        const reg = String(s.registration_number || "").toLowerCase();
-        return name.includes(q) || reg.includes(q);
-      });
-    }
+  const alreadyEnrolledMatches = useMemo(() => {
+    const activeStudentIds = new Set(enrollments.map((e) => e.student_id));
 
-    return list.slice(0, 30);
-  }, [students, enrollments, studentQuery]);
+    return matchedStudents.filter((s) => activeStudentIds.has(s.id)).slice(0, 30);
+  }, [matchedStudents, enrollments]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setError(null);
-
-        const token = await getAccessToken();
-        if (!token) {
-          router.replace("/login");
-          return;
-        }
-
-        const meRes = await fetch("/api/me", {
-          method: "GET",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const meJson = await safeJson(meRes);
-
-        if (!meRes.ok || !meJson?.ok) {
-          setError(meJson?.error || "Falha ao validar sessão/perfil.");
-          if (meRes.status === 401 || meRes.status === 403) router.replace("/login");
-          return;
-        }
-
-        const payload = meJson as MePayload;
-
-        if (payload.isPlatformAdmin) {
-          router.replace("/admin-master");
-          return;
-        }
-
-        const role = payload.school?.role;
-        if (role !== "diretor" && role !== "coordenador") {
-          router.replace("/school");
-          return;
-        }
-
-        const sid = payload.school?.schoolId;
-        if (!sid) {
-          setError("Usuário sem escola vinculada.");
-          return;
-        }
-        setSchoolId(sid);
-
-        await Promise.all([loadClasses(token), loadStudents(token)]);
-
-        const fromUrl = searchParams.get("classId");
-        if (fromUrl) {
-          setSelectedClassId(fromUrl);
-        }
-      } catch (e: any) {
-        setError(e?.message || "Erro inesperado.");
-      } finally {
-        setLoading(false);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    (async () => {
-      if (!selectedClassId) return;
-      const token = await getAccessToken();
-      if (!token) return;
-      await loadEnrollments(token, selectedClassId);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedClassId]);
+  const selectedStudent = useMemo(() => {
+    return students.find((s) => s.id === selectedStudentId) || null;
+  }, [students, selectedStudentId]);
 
   async function loadClasses(token: string) {
     const res = await fetch("/api/school/classes", {
       headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
     });
+
     const json = await safeJson(res);
 
     if (!res.ok || !json?.ok) {
@@ -200,16 +182,31 @@ export default function EnrollmentsPage() {
     }
 
     const list = (json.classes ?? []) as ClassRow[];
+
     setClasses(list);
 
-    if (!selectedClassId && list[0]?.id) setSelectedClassId(list[0].id);
-    if (list.length === 0) setSelectedClassId("");
+    const fromUrl = searchParams.get("classId");
+
+    if (fromUrl && list.some((c) => c.id === fromUrl)) {
+      setSelectedClassId(fromUrl);
+      return;
+    }
+
+    if (!selectedClassId && list[0]?.id) {
+      setSelectedClassId(list[0].id);
+    }
+
+    if (list.length === 0) {
+      setSelectedClassId("");
+    }
   }
 
   async function loadStudents(token: string) {
     const res = await fetch("/api/school/students", {
       headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
     });
+
     const json = await safeJson(res);
 
     if (!res.ok || !json?.ok) {
@@ -217,7 +214,11 @@ export default function EnrollmentsPage() {
       return;
     }
 
-    setStudents((json.students ?? []) as StudentRow[]);
+    const list = ((json.students ?? []) as StudentRow[]).sort((a, b) =>
+      String(a.full_name || "").localeCompare(String(b.full_name || ""), "pt-BR")
+    );
+
+    setStudents(list);
   }
 
   async function loadEnrollments(token: string, classId: string) {
@@ -227,8 +228,10 @@ export default function EnrollmentsPage() {
       `/api/school/enrollments?classId=${encodeURIComponent(classId)}&active=1`,
       {
         headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
       }
     );
+
     const json = await safeJson(res);
 
     if (!res.ok || !json?.ok) {
@@ -239,9 +242,94 @@ export default function EnrollmentsPage() {
     setEnrollments((json.enrollments ?? []) as EnrollmentRow[]);
   }
 
+  async function loadPage() {
+    try {
+      setError(null);
+      setLoading(true);
+
+      const token = await getAccessToken();
+
+      if (!token) {
+        router.replace("/login");
+        return;
+      }
+
+      const meRes = await fetch("/api/me", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+
+      const meJson = await safeJson(meRes);
+
+      if (!meRes.ok || !meJson?.ok) {
+        setError(meJson?.error || "Falha ao validar sessão/perfil.");
+
+        if (meRes.status === 401 || meRes.status === 403) {
+          router.replace("/login");
+        }
+
+        return;
+      }
+
+      const payload = meJson as MePayload;
+
+      if (payload.isPlatformAdmin) {
+        router.replace("/admin-master");
+        return;
+      }
+
+      const role = payload.school?.role;
+
+      if (!roleCanManage(role)) {
+        router.replace("/school");
+        return;
+      }
+
+      const sid = payload.school?.schoolId;
+
+      if (!sid) {
+        setError("Usuário sem escola vinculada.");
+        return;
+      }
+
+      setSchoolId(sid);
+
+      await Promise.all([loadClasses(token), loadStudents(token)]);
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      if (!selectedClassId) return;
+
+      const token = await getAccessToken();
+
+      if (!token) return;
+
+      setSelectedStudentId("");
+      setStudentQuery("");
+
+      await loadEnrollments(token, selectedClassId);
+    })();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClassId]);
+
   async function enrollStudent(studentId: string, classId: string) {
     setError(null);
+
     const token = await getAccessToken();
+
     if (!token) {
       router.replace("/login");
       return;
@@ -264,6 +352,7 @@ export default function EnrollmentsPage() {
       });
 
       const json = await safeJson(res);
+
       if (!res.ok || !json?.ok) {
         setError(json?.error || "Erro ao matricular aluno.");
         return;
@@ -271,7 +360,8 @@ export default function EnrollmentsPage() {
 
       setSelectedStudentId("");
       setStudentQuery("");
-      await loadEnrollments(token, classId);
+
+      await Promise.all([loadStudents(token), loadEnrollments(token, classId)]);
     } finally {
       setSaving(false);
     }
@@ -280,11 +370,16 @@ export default function EnrollmentsPage() {
   async function removeEnrollment(enrollmentId: string) {
     if (!selectedClassId) return;
 
-    const ok = confirm("Remover aluno desta turma? (isso encerra o vínculo e mantém histórico)");
+    const ok = confirm(
+      "Remover aluno desta turma? Isso encerra o vínculo e mantém o histórico."
+    );
+
     if (!ok) return;
 
     setError(null);
+
     const token = await getAccessToken();
+
     if (!token) {
       router.replace("/login");
       return;
@@ -299,6 +394,7 @@ export default function EnrollmentsPage() {
       });
 
       const json = await safeJson(res);
+
       if (!res.ok || !json?.ok) {
         setError(json?.error || "Erro ao remover matrícula.");
         return;
@@ -313,6 +409,7 @@ export default function EnrollmentsPage() {
   async function moveStudentToClass(studentId: string, newClassId: string) {
     if (!selectedClassId) return;
     if (!newClassId) return;
+    if (newClassId === selectedClassId) return;
 
     const from = classById.get(selectedClassId)?.name || "Turma atual";
     const to = classById.get(newClassId)?.name || "Nova turma";
@@ -320,12 +417,16 @@ export default function EnrollmentsPage() {
     const ok = confirm(
       `Trocar turma ativa deste aluno?\n\nDe: ${from}\nPara: ${to}\n\nIsso fica no histórico.`
     );
+
     if (!ok) return;
 
     await enrollStudent(studentId, newClassId);
 
     const token = await getAccessToken();
-    if (token) await loadEnrollments(token, selectedClassId);
+
+    if (token) {
+      await loadEnrollments(token, selectedClassId);
+    }
   }
 
   async function logout() {
@@ -361,7 +462,10 @@ export default function EnrollmentsPage() {
       <main className="min-h-[70vh]">
         <div className="mx-auto flex max-w-xl items-center justify-center">
           <div className="w-full rounded-[28px] border border-red-200 bg-white p-8 shadow-sm">
-            <h1 className="text-xl font-semibold text-slate-900">Não foi possível carregar</h1>
+            <h1 className="text-xl font-semibold text-slate-900">
+              Não foi possível carregar
+            </h1>
+
             <p className="mt-3 text-sm leading-6 text-slate-600">{error}</p>
 
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
@@ -401,7 +505,8 @@ export default function EnrollmentsPage() {
                 </h1>
 
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
-                  Controle o vínculo aluno ↔ turma com segurança, histórico e operação centralizada.
+                  Controle o vínculo aluno ↔ turma com segurança, histórico e operação
+                  centralizada.
                 </p>
               </div>
 
@@ -410,6 +515,7 @@ export default function EnrollmentsPage() {
                   <div className="text-[11px] uppercase tracking-wide text-slate-300">
                     Escola vinculada
                   </div>
+
                   <div className="mt-1 break-all text-sm font-medium text-white">
                     {schoolId || "—"}
                   </div>
@@ -419,6 +525,7 @@ export default function EnrollmentsPage() {
                   <div className="text-[11px] uppercase tracking-wide text-slate-300">
                     Turma atual
                   </div>
+
                   <div className="mt-1 text-sm font-medium text-white">
                     {selectedClass?.name || "Selecione uma turma"}
                   </div>
@@ -433,12 +540,16 @@ export default function EnrollmentsPage() {
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Turma selecionada
             </div>
+
             <div className="mt-3 text-lg font-semibold text-slate-900">
               {selectedClass?.name || "—"}
             </div>
+
             <div className="mt-2 text-sm text-slate-500">
               {selectedClass
-                ? `${selectedClass.grade || "Sem série"} • ${selectedClass.shift || "Sem turno"}`
+                ? `${selectedClass.grade || "Sem série"} • ${
+                    selectedClass.shift || "Sem turno"
+                  }`
                 : "Escolha uma turma para começar."}
             </div>
           </div>
@@ -447,9 +558,11 @@ export default function EnrollmentsPage() {
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Matrículas ativas
             </div>
+
             <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
               {selectedClassId ? enrollments.length : 0}
             </div>
+
             <div className="mt-2 text-sm text-slate-500">
               Quantidade de alunos com vínculo ativo nesta turma.
             </div>
@@ -459,8 +572,10 @@ export default function EnrollmentsPage() {
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Ação rápida
             </div>
+
             <div className="mt-3 text-sm text-slate-600">
-              Selecione a turma, pesquise o aluno e faça a matrícula com histórico preservado.
+              Selecione a turma, pesquise o aluno e faça a matrícula com histórico
+              preservado.
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
@@ -485,6 +600,7 @@ export default function EnrollmentsPage() {
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Turma</h2>
+
               <p className="mt-1 text-sm text-slate-500">
                 Escolha a turma para visualizar e gerenciar as matrículas ativas.
               </p>
@@ -496,11 +612,12 @@ export default function EnrollmentsPage() {
               <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
                 Selecionar turma
               </label>
+
               <select
                 className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
                 value={selectedClassId}
                 onChange={(e) => setSelectedClassId(e.target.value)}
-                disabled={classes.length === 0}
+                disabled={classes.length === 0 || saving}
               >
                 {classes.length === 0 ? (
                   <option value="">Crie uma turma primeiro</option>
@@ -520,33 +637,38 @@ export default function EnrollmentsPage() {
               <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
                 Total nesta turma
               </label>
+
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-800">
                 {selectedClassId ? `${enrollments.length} matriculado(s)` : "—"}
               </div>
             </div>
           </div>
 
-          {!selectedClassId && (
+          {!selectedClassId ? (
             <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               Você precisa criar e selecionar uma turma para continuar.
             </div>
-          )}
+          ) : null}
         </section>
 
         <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">Adicionar aluno na turma</h2>
+              <h2 className="text-lg font-semibold text-slate-900">
+                Adicionar aluno na turma
+              </h2>
+
               <p className="mt-1 text-sm text-slate-500">
-                Isso ativa o vínculo em <span className="font-mono">student_classes</span> e preserva histórico.
+                A busca agora mostra alunos disponíveis e também avisa quando o aluno já
+                está matriculado nesta turma.
               </p>
             </div>
 
-            {selectedClass && (
+            {selectedClass ? (
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
                 <span className="font-medium">Turma:</span> {selectedClass.name}
               </div>
-            )}
+            ) : null}
           </div>
 
           <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -566,10 +688,14 @@ export default function EnrollmentsPage() {
                 disabled={!selectedClassId || saving}
               />
 
-              {studentQuery.trim().length > 0 && filteredStudentsForAdd.length > 0 && (
+              {queryNormalized && availableStudentsForAdd.length > 0 ? (
                 <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                  <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
-                    {filteredStudentsForAdd.map((s) => (
+                  <div className="border-b border-slate-100 bg-slate-50 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Alunos disponíveis para adicionar
+                  </div>
+
+                  <div className="max-h-80 divide-y divide-slate-100 overflow-y-auto">
+                    {availableStudentsForAdd.map((s) => (
                       <button
                         key={s.id}
                         className={[
@@ -581,7 +707,10 @@ export default function EnrollmentsPage() {
                       >
                         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                           <div className="min-w-0">
-                            <div className="truncate font-medium text-slate-900">{s.full_name}</div>
+                            <div className="truncate font-medium text-slate-900">
+                              {s.full_name}
+                            </div>
+
                             <div className="mt-1 text-xs text-slate-500">
                               {s.registration_number
                                 ? `Matrícula: ${s.registration_number}`
@@ -597,13 +726,47 @@ export default function EnrollmentsPage() {
                     ))}
                   </div>
                 </div>
-              )}
+              ) : null}
 
-              {studentQuery.trim().length > 0 && filteredStudentsForAdd.length === 0 && (
-                <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                  Nenhum aluno disponível para adicionar.
+              {queryNormalized && alreadyEnrolledMatches.length > 0 ? (
+                <div className="mt-3 overflow-hidden rounded-2xl border border-emerald-200 bg-emerald-50">
+                  <div className="border-b border-emerald-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                    Já matriculado nesta turma
+                  </div>
+
+                  <div className="divide-y divide-emerald-100">
+                    {alreadyEnrolledMatches.map((s) => (
+                      <div key={s.id} className="px-4 py-3">
+                        <div className="font-medium text-emerald-950">{s.full_name}</div>
+
+                        <div className="mt-1 text-xs text-emerald-700">
+                          {s.registration_number
+                            ? `Matrícula: ${s.registration_number}`
+                            : "Matrícula: —"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              )}
+              ) : null}
+
+              {queryNormalized &&
+              matchedStudents.length === 0 &&
+              availableStudentsForAdd.length === 0 &&
+              alreadyEnrolledMatches.length === 0 ? (
+                <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                  Nenhum aluno encontrado com esse nome ou matrícula.
+                </div>
+              ) : null}
+
+              {queryNormalized &&
+              matchedStudents.length > 0 &&
+              availableStudentsForAdd.length === 0 &&
+              alreadyEnrolledMatches.length > 0 ? (
+                <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                  O aluno foi encontrado, mas já está matriculado nesta turma.
+                </div>
+              ) : null}
             </div>
 
             <div>
@@ -625,9 +788,12 @@ export default function EnrollmentsPage() {
                     <span className="font-medium text-slate-800">Turma:</span>{" "}
                     {selectedClass?.name ?? "—"}
                   </div>
+
                   <div>
-                    <span className="font-medium text-slate-800">Aluno selecionado:</span>{" "}
-                    {students.find((s) => s.id === selectedStudentId)?.full_name || "—"}
+                    <span className="font-medium text-slate-800">
+                      Aluno selecionado:
+                    </span>{" "}
+                    {selectedStudent?.full_name || "—"}
                   </div>
                 </div>
               </div>
@@ -640,10 +806,12 @@ export default function EnrollmentsPage() {
             <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">
-                  Alunos matriculados (ativos)
+                  Alunos matriculados ativos
                 </h2>
+
                 <p className="mt-1 text-sm text-slate-500">
-                  Remover encerra vínculo. Trocar turma cria novo vínculo ativo e preserva o histórico.
+                  Remover encerra vínculo. Trocar turma cria novo vínculo ativo e preserva
+                  o histórico.
                 </p>
               </div>
 
@@ -652,7 +820,9 @@ export default function EnrollmentsPage() {
                 disabled={!selectedClassId || saving}
                 onClick={async () => {
                   const token = await getAccessToken();
+
                   if (!token || !selectedClassId) return;
+
                   await loadEnrollments(token, selectedClassId);
                 }}
               >
@@ -682,6 +852,7 @@ export default function EnrollmentsPage() {
                       <th className="px-6 py-4 font-medium">Ações</th>
                     </tr>
                   </thead>
+
                   <tbody className="divide-y divide-slate-200">
                     {enrollments.map((e) => {
                       const st = e.students;
@@ -691,13 +862,21 @@ export default function EnrollmentsPage() {
                       return (
                         <tr key={e.id} className="align-middle">
                           <td className="px-6 py-4">
-                            <div className="font-medium text-slate-900">{displayName}</div>
-                            <div className="mt-1 text-xs text-slate-400">{e.student_id}</div>
+                            <div className="font-medium text-slate-900">
+                              {displayName}
+                            </div>
+
+                            <div className="mt-1 text-xs text-slate-400">
+                              {e.student_id}
+                            </div>
                           </td>
+
                           <td className="px-6 py-4 text-slate-700">{reg}</td>
+
                           <td className="px-6 py-4 text-slate-700">
                             {formatDateBR(e.started_at)}
                           </td>
+
                           <td className="px-6 py-4">
                             <select
                               className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-slate-400"
@@ -717,6 +896,7 @@ export default function EnrollmentsPage() {
                               ))}
                             </select>
                           </td>
+
                           <td className="px-6 py-4">
                             <button
                               className="rounded-2xl border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-60"
@@ -749,6 +929,7 @@ export default function EnrollmentsPage() {
                           <div className="truncate text-base font-semibold text-slate-900">
                             {displayName}
                           </div>
+
                           <div className="mt-1 break-all text-xs text-slate-400">
                             {e.student_id}
                           </div>
@@ -764,13 +945,17 @@ export default function EnrollmentsPage() {
                           <div className="text-[11px] uppercase tracking-wide text-slate-400">
                             Matrícula
                           </div>
-                          <div className="mt-1 text-sm font-medium text-slate-800">{reg}</div>
+
+                          <div className="mt-1 text-sm font-medium text-slate-800">
+                            {reg}
+                          </div>
                         </div>
 
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
                           <div className="text-[11px] uppercase tracking-wide text-slate-400">
                             Início
                           </div>
+
                           <div className="mt-1 text-sm font-medium text-slate-800">
                             {formatDateBR(e.started_at)}
                           </div>
@@ -781,12 +966,16 @@ export default function EnrollmentsPage() {
                         <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
                           Trocar turma
                         </label>
+
                         <select
                           className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
                           value={
-                            enrollmentByStudentId.get(e.student_id)?.class_id || selectedClassId
+                            enrollmentByStudentId.get(e.student_id)?.class_id ||
+                            selectedClassId
                           }
-                          onChange={(ev) => moveStudentToClass(e.student_id, ev.target.value)}
+                          onChange={(ev) =>
+                            moveStudentToClass(e.student_id, ev.target.value)
+                          }
                           disabled={saving || classes.length === 0}
                         >
                           {classes.map((c) => (
