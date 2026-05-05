@@ -1,3 +1,4 @@
+// src/app/api/school/students/[id]/profile/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
@@ -6,11 +7,6 @@ export const runtime = "nodejs";
 
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
-}
-
-function normalizeDate(value: any) {
-  if (!value) return null;
-  return String(value);
 }
 
 function buildAddressText(parent: any) {
@@ -22,24 +18,24 @@ function buildAddressText(parent: any) {
   const neighborhood = String(parent?.neighborhood || "").trim();
   const city = String(parent?.city || "").trim();
   const state = String(parent?.state || "").trim();
-  const zipCode = String(parent?.zip_code || "").trim();
+  const zip = String(parent?.zip_code || "").trim();
 
-  if (street) {
-    parts.push(number ? `${street}, ${number}` : street);
-  }
-
+  if (street) parts.push(number ? `${street}, ${number}` : street);
   if (complement) parts.push(complement);
   if (neighborhood) parts.push(neighborhood);
 
   const cityUf = [city, state].filter(Boolean).join(" / ");
   if (cityUf) parts.push(cityUf);
 
-  if (zipCode) parts.push(`CEP: ${zipCode}`);
+  if (zip) parts.push(`CEP ${zip}`);
 
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
-export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
+export async function GET(
+  req: Request,
+  context: { params: Promise<{ id: string }> }
+) {
   const guard = await requireStaff(req, [
     "director",
     "coordinator",
@@ -50,12 +46,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
   if (!guard.ok) return guard.res;
 
   try {
-    const { id } = await ctx.params;
-    const studentId = String(id || "").trim();
+    const params = await context.params;
+    const studentId = String(params?.id || "").trim();
 
     if (!studentId) {
       return jsonError("studentId é obrigatório.", 400);
     }
+
+    const schoolId = guard.schoolId;
 
     const { data: student, error: studentErr } = await supabaseAdmin
       .from("students")
@@ -67,13 +65,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         birth_date,
         registration_number,
         class_id,
-        student_photo_url,
-        student_profile_updated_at,
         created_at
       `
       )
       .eq("id", studentId)
-      .eq("school_id", guard.schoolId)
+      .eq("school_id", schoolId)
       .maybeSingle();
 
     if (studentErr) {
@@ -81,7 +77,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
     }
 
     if (!student?.id) {
-      return jsonError("Aluno não encontrado nesta escola.", 404);
+      return jsonError("Aluno não encontrado.", 404);
     }
 
     const { data: activeLink, error: activeLinkErr } = await supabaseAdmin
@@ -98,7 +94,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         created_at
       `
       )
-      .eq("school_id", guard.schoolId)
+      .eq("school_id", schoolId)
       .eq("student_id", studentId)
       .eq("is_active", true)
       .order("created_at", { ascending: false })
@@ -116,7 +112,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         .from("classes")
         .select("id, name, grade, shift, created_at")
         .eq("id", activeLink.class_id)
-        .eq("school_id", guard.schoolId)
+        .eq("school_id", schoolId)
         .maybeSingle();
 
       if (classErr) {
@@ -129,12 +125,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           name: classData.name ?? null,
           grade: classData.grade ?? null,
           shift: classData.shift ?? null,
-          createdAt: normalizeDate(classData.created_at),
+          createdAt: classData.created_at ?? null,
           link: {
             id: String(activeLink.id),
-            startedAt: normalizeDate(activeLink.started_at),
-            endedAt: normalizeDate(activeLink.ended_at),
-            createdAt: normalizeDate(activeLink.created_at),
+            startedAt: activeLink.started_at ?? null,
+            endedAt: activeLink.ended_at ?? null,
+            createdAt: activeLink.created_at ?? null,
             isActive: !!activeLink.is_active,
           },
         };
@@ -143,18 +139,18 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
 
     const { data: links, error: linksErr } = await supabaseAdmin
       .from("student_parents")
-      .select("id, parent_id, student_id, school_id, is_active, created_at")
-      .eq("school_id", guard.schoolId)
+      .select("id, school_id, parent_id, student_id, is_active, created_at")
+      .eq("school_id", schoolId)
       .eq("student_id", studentId)
       .eq("is_active", true)
       .order("created_at", { ascending: false });
 
     if (linksErr) {
-      return jsonError("Erro ao buscar responsáveis vinculados: " + linksErr.message, 500);
+      return jsonError("Erro ao buscar vínculos com responsáveis: " + linksErr.message, 500);
     }
 
     const parentIds = Array.from(
-      new Set((links || []).map((l: any) => l.parent_id).filter(Boolean))
+      new Set((links || []).map((link: any) => String(link.parent_id)).filter(Boolean))
     );
 
     let parents: any[] = [];
@@ -184,19 +180,16 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           created_at
         `
         )
-        .eq("school_id", guard.schoolId)
+        .eq("school_id", schoolId)
         .in("id", parentIds);
 
       if (parentsErr) {
-        return jsonError("Erro ao buscar dados dos responsáveis: " + parentsErr.message, 500);
+        return jsonError("Erro ao buscar responsáveis: " + parentsErr.message, 500);
       }
 
       const linkByParentId = new Map<string, any>();
-
       for (const link of links || []) {
-        if (link?.parent_id) {
-          linkByParentId.set(String(link.parent_id), link);
-        }
+        linkByParentId.set(String(link.parent_id), link);
       }
 
       parents = (parentRows || []).map((parent: any) => {
@@ -205,7 +198,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         return {
           id: String(parent.id),
           linkId: link?.id ? String(link.id) : null,
-          linkedAt: normalizeDate(link?.created_at),
+          linkedAt: link?.created_at ?? null,
           schoolId: parent.school_id ? String(parent.school_id) : null,
           userId: parent.user_id ? String(parent.user_id) : null,
           fullName: parent.full_name ?? null,
@@ -221,7 +214,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
           state: parent.state ?? null,
           photoUrl: parent.photo_url ?? null,
           firstLoginCompleted: !!parent.first_login_completed,
-          profileUpdatedAt: normalizeDate(parent.profile_updated_at || parent.created_at),
+          profileUpdatedAt: parent.profile_updated_at ?? parent.created_at ?? null,
           addressText: buildAddressText(parent),
         };
       });
@@ -233,13 +226,14 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
         id: String(student.id),
         schoolId: String(student.school_id),
         fullName: student.full_name ?? null,
-        birthDate: normalizeDate(student.birth_date),
+        birthDate: student.birth_date ?? null,
         registrationNumber: student.registration_number ?? null,
-        legacyClassId: student.class_id ? String(student.class_id) : null,
-        createdAt: normalizeDate(student.created_at),
-        studentPhotoUrl: student.student_photo_url ?? null,
-        photoUrl: student.student_photo_url ?? null,
-        studentProfileUpdatedAt: normalizeDate(student.student_profile_updated_at),
+        legacyClassId: student.class_id ?? null,
+        createdAt: student.created_at ?? null,
+
+        // Mantém compatibilidade visual sem quebrar enquanto a coluna oficial não existe no banco atual.
+        studentPhotoUrl: null,
+        studentProfileUpdatedAt: null,
       },
       activeClass,
       parents,
