@@ -23,12 +23,97 @@ type StudentActiveClassRow = {
   class_id: string;
 };
 
+type StudentProfilePayload = {
+  ok: true;
+  student: {
+    id: string;
+    schoolId: string;
+    fullName: string | null;
+    birthDate: string | null;
+    registrationNumber: string | null;
+    legacyClassId: string | null;
+    createdAt: string | null;
+  };
+  activeClass: {
+    id: string;
+    name: string | null;
+    grade: string | null;
+    shift: string | null;
+    createdAt: string | null;
+    link: {
+      id: string;
+      startedAt: string | null;
+      endedAt: string | null;
+      createdAt: string | null;
+      isActive: boolean;
+    } | null;
+  } | null;
+  parents: Array<{
+    id: string;
+    linkId: string | null;
+    linkedAt: string | null;
+    schoolId: string | null;
+    userId: string | null;
+    fullName: string | null;
+    phone: string | null;
+    cpf: string | null;
+    phoneSecondary: string | null;
+    zipCode: string | null;
+    street: string | null;
+    streetNumber: string | null;
+    addressComplement: string | null;
+    neighborhood: string | null;
+    city: string | null;
+    state: string | null;
+    photoUrl: string | null;
+    firstLoginCompleted: boolean;
+    profileUpdatedAt: string | null;
+    addressText: string | null;
+  }>;
+};
+
 function initials(name: string) {
   const safe = String(name || "").trim();
   if (!safe) return "AL";
 
   const parts = safe.split(/\s+/).filter(Boolean);
   return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "AL";
+}
+
+function initialsFromName(name: string | null | undefined) {
+  const safe = String(name || "").trim();
+  if (!safe) return "RP";
+
+  const parts = safe.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "RP";
+}
+
+function formatDateBR(value?: string | null) {
+  if (!value) return "—";
+
+  const clean = String(value).slice(0, 10);
+  const [y, m, d] = clean.split("-");
+
+  if (!y || !m || !d) return value;
+
+  return `${d}/${m}/${y}`;
+}
+
+function formatDateTimeBR(value?: string | null) {
+  if (!value) return "—";
+
+  try {
+    return new Date(value).toLocaleString("pt-BR");
+  } catch {
+    return formatDateBR(value);
+  }
+}
+
+function field(value?: string | null) {
+  const safe = String(value || "").trim();
+  return safe || "—";
 }
 
 async function safeJson(res: Response) {
@@ -42,6 +127,25 @@ async function safeJson(res: Response) {
   }
 }
 
+function InfoBox({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | null;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </div>
+      <div className="mt-1 break-words text-sm font-semibold text-slate-800">
+        {field(value)}
+      </div>
+    </div>
+  );
+}
+
 export default function StudentsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -52,6 +156,7 @@ export default function StudentsPage() {
   const [links, setLinks] = useState<StudentActiveClassRow[]>([]);
 
   const [filterClassId, setFilterClassId] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [fullName, setFullName] = useState("");
   const [birthDate, setBirthDate] = useState("");
@@ -62,6 +167,10 @@ export default function StudentsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [unassigningId, setUnassigningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [profileLoadingId, setProfileLoadingId] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [selectedProfile, setSelectedProfile] = useState<StudentProfilePayload | null>(null);
 
   const activeMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -76,9 +185,25 @@ export default function StudentsPage() {
   }, [classes]);
 
   const filtered = useMemo(() => {
-    if (!filterClassId) return students;
-    return students.filter((s) => activeMap.get(s.id) === filterClassId);
-  }, [students, filterClassId, activeMap]);
+    const q = searchTerm.trim().toLowerCase();
+
+    let list = students;
+
+    if (filterClassId) {
+      list = list.filter((s) => activeMap.get(s.id) === filterClassId);
+    }
+
+    if (q) {
+      list = list.filter((s) => {
+        const name = String(s.full_name || "").toLowerCase();
+        const reg = String(s.registration_number || "").toLowerCase();
+
+        return name.includes(q) || reg.includes(q);
+      });
+    }
+
+    return list;
+  }, [students, filterClassId, activeMap, searchTerm]);
 
   async function getAccessToken() {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -361,7 +486,8 @@ export default function StudentsPage() {
 
         if (!unassignRes.ok || !unassignJson?.ok) {
           setError(
-            unassignJson?.error || "Não foi possível remover o aluno da turma antes de excluir."
+            unassignJson?.error ||
+              "Não foi possível remover o aluno da turma antes de excluir."
           );
           return;
         }
@@ -397,33 +523,80 @@ export default function StudentsPage() {
     }
   }
 
+  async function openStudentProfile(studentId: string) {
+    setProfileError(null);
+    setSelectedProfile(null);
+
+    try {
+      setProfileLoadingId(studentId);
+
+      const token = await getAccessToken();
+
+      const res = await fetch(`/api/school/students/${studentId}/profile`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setProfileError(json?.error || "Erro ao carregar ficha do aluno.");
+        return;
+      }
+
+      setSelectedProfile(json as StudentProfilePayload);
+    } catch (e: any) {
+      setProfileError(e?.message || "Erro inesperado ao carregar ficha do aluno.");
+
+      if (e?.message === "Not authenticated") {
+        router.replace("/login");
+      }
+    } finally {
+      setProfileLoadingId(null);
+    }
+  }
+
+  function closeStudentProfile() {
+    setSelectedProfile(null);
+    setProfileError(null);
+    setProfileLoadingId(null);
+  }
+
   if (loading) {
     return (
       <main className="p-6">
-        <div className="animate-pulse h-32 bg-white rounded-3xl" />
+        <div className="h-32 animate-pulse rounded-3xl bg-white" />
       </main>
     );
   }
 
   return (
     <main className="space-y-6">
-      <section className="rounded-[28px] bg-gradient-to-r from-slate-900 to-slate-700 text-white p-6">
+      <section className="rounded-[28px] bg-gradient-to-r from-slate-900 to-slate-700 p-6 text-white">
         <h1 className="text-3xl font-semibold">Gestão de Alunos</h1>
-        <p className="text-sm mt-2 text-slate-200">
-          Controle completo dos alunos e suas turmas com histórico automático.
+        <p className="mt-2 text-sm text-slate-200">
+          Controle completo dos alunos, turmas e responsáveis vinculados.
         </p>
       </section>
 
       {error ? (
-        <section className="bg-red-50 border border-red-200 text-red-700 rounded-3xl p-4">
+        <section className="rounded-3xl border border-red-200 bg-red-50 p-4 text-red-700">
           {error}
         </section>
       ) : null}
 
-      <section className="bg-white rounded-3xl p-6 border">
-        <h2 className="font-semibold mb-4">Cadastrar aluno</h2>
+      {profileError ? (
+        <section className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          {profileError}
+        </section>
+      ) : null}
 
-        <div className="grid md:grid-cols-2 gap-4">
+      <section className="rounded-3xl border bg-white p-6">
+        <h2 className="mb-4 font-semibold">Cadastrar aluno</h2>
+
+        <div className="grid gap-4 md:grid-cols-2">
           <input
             placeholder="Nome completo"
             className="input"
@@ -470,28 +643,58 @@ export default function StudentsPage() {
         </button>
       </section>
 
-      <section className="bg-white rounded-3xl p-6 border">
-        <select
-          className="input max-w-sm"
-          value={filterClassId}
-          onChange={(e) => setFilterClassId(e.target.value)}
-        >
-          <option value="">Todas as turmas</option>
-          {classes.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-              {c.grade ? ` • ${c.grade}` : ""}
-              {c.shift ? ` • ${c.shift}` : ""}
-            </option>
-          ))}
-        </select>
+      <section className="rounded-3xl border bg-white p-6">
+        <div className="grid gap-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Buscar aluno
+            </label>
+            <input
+              className="input w-full"
+              placeholder="Digite nome ou matrícula"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Filtrar por turma
+            </label>
+            <select
+              className="input w-full"
+              value={filterClassId}
+              onChange={(e) => setFilterClassId(e.target.value)}
+            >
+              <option value="">Todas as turmas</option>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                  {c.grade ? ` • ${c.grade}` : ""}
+                  {c.shift ? ` • ${c.shift}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={loadAll}
+            disabled={saving}
+            className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+          >
+            Atualizar
+          </button>
+        </div>
+
+        <div className="mt-4 text-sm text-slate-500">
+          Exibindo <span className="font-semibold text-slate-800">{filtered.length}</span> aluno(s).
+        </div>
       </section>
 
-      <section className="bg-white rounded-3xl border overflow-hidden">
+      <section className="overflow-hidden rounded-3xl border bg-white">
         {filtered.length === 0 ? (
-          <div className="p-10 text-center text-slate-500">
-            Nenhum aluno encontrado
-          </div>
+          <div className="p-10 text-center text-slate-500">Nenhum aluno encontrado</div>
         ) : (
           <div className="divide-y">
             {filtered.map((s) => {
@@ -501,10 +704,10 @@ export default function StudentsPage() {
               return (
                 <div
                   key={s.id}
-                  className="p-5 flex flex-col gap-4 lg:flex-row lg:justify-between lg:items-center"
+                  className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"
                 >
                   <div className="flex items-center gap-4">
-                    <div className="bg-slate-900 text-white rounded-xl w-12 h-12 flex items-center justify-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 text-white">
                       {initials(s.full_name)}
                     </div>
 
@@ -513,13 +716,21 @@ export default function StudentsPage() {
                       <div className="text-xs text-slate-500">
                         {s.registration_number || "Sem matrícula"}
                       </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {cls?.name || "Sem turma"}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
-                    <div className="text-sm text-slate-600 min-w-[140px]">
-                      {cls?.name || "Sem turma"}
-                    </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                    <button
+                      type="button"
+                      onClick={() => openStudentProfile(s.id)}
+                      disabled={profileLoadingId === s.id}
+                      className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-60"
+                    >
+                      {profileLoadingId === s.id ? "Carregando..." : "Ficha completa"}
+                    </button>
 
                     <select
                       className="input"
@@ -561,6 +772,145 @@ export default function StudentsPage() {
           </div>
         )}
       </section>
+
+      {selectedProfile ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-4">
+          <div className="my-6 w-full max-w-5xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
+            <div className="bg-gradient-to-r from-slate-900 to-slate-700 px-6 py-6 text-white">
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
+                    Ficha completa do aluno
+                  </div>
+                  <h2 className="mt-3 text-2xl font-semibold">
+                    {field(selectedProfile.student.fullName)}
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-200">
+                    Dados oficiais da escola + dados preenchidos pelos responsáveis.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeStudentProfile}
+                  className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-6 p-5 md:p-6">
+              <section>
+                <h3 className="text-lg font-semibold text-slate-900">Dados oficiais do aluno</h3>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                  <InfoBox label="Nome completo" value={selectedProfile.student.fullName} />
+                  <InfoBox label="Matrícula" value={selectedProfile.student.registrationNumber} />
+                  <InfoBox label="Nascimento" value={formatDateBR(selectedProfile.student.birthDate)} />
+                  <InfoBox label="Cadastro" value={formatDateTimeBR(selectedProfile.student.createdAt)} />
+                </div>
+              </section>
+
+              <section>
+                <h3 className="text-lg font-semibold text-slate-900">Turma atual</h3>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                  <InfoBox label="Turma" value={selectedProfile.activeClass?.name} />
+                  <InfoBox label="Série" value={selectedProfile.activeClass?.grade} />
+                  <InfoBox label="Turno" value={selectedProfile.activeClass?.shift} />
+                  <InfoBox
+                    label="Vínculo desde"
+                    value={formatDateBR(selectedProfile.activeClass?.link?.startedAt)}
+                  />
+                </div>
+              </section>
+
+              <section>
+                <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">
+                      Responsáveis vinculados
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Informações vindas do cadastro completo preenchido no Portal dos Pais.
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700">
+                    {selectedProfile.parents.length} responsável(is)
+                  </div>
+                </div>
+
+                {selectedProfile.parents.length === 0 ? (
+                  <div className="mt-4 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
+                    Nenhum responsável vinculado a este aluno.
+                  </div>
+                ) : (
+                  <div className="mt-4 grid gap-4">
+                    {selectedProfile.parents.map((parent) => (
+                      <div
+                        key={parent.id}
+                        className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm"
+                      >
+                        <div className="flex flex-col gap-4 md:flex-row md:items-start">
+                          {parent.photoUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={parent.photoUrl}
+                              alt="Foto do responsável"
+                              className="h-16 w-16 rounded-2xl border border-slate-200 object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-900 text-sm font-bold text-white">
+                              {initialsFromName(parent.fullName)}
+                            </div>
+                          )}
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                              <div>
+                                <div className="text-base font-semibold text-slate-900">
+                                  {field(parent.fullName)}
+                                </div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {parent.firstLoginCompleted
+                                    ? "Cadastro completo preenchido ✅"
+                                    : "Cadastro ainda não finalizado pelo responsável"}
+                                </div>
+                              </div>
+
+                              <div className="text-xs text-slate-500">
+                                Atualizado em: {formatDateTimeBR(parent.profileUpdatedAt)}
+                              </div>
+                            </div>
+
+                            <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                              <InfoBox label="Telefone" value={parent.phone} />
+                              <InfoBox label="CPF" value={parent.cpf} />
+                              <InfoBox label="Telefone secundário" value={parent.phoneSecondary} />
+                              <InfoBox label="CEP" value={parent.zipCode} />
+                              <InfoBox label="Cidade/UF" value={`${field(parent.city)} / ${field(parent.state)}`} />
+                              <InfoBox label="Bairro" value={parent.neighborhood} />
+                            </div>
+
+                            <div className="mt-3">
+                              <InfoBox label="Endereço completo" value={parent.addressText} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="rounded-3xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+                Esta ficha é uma visualização inicial. Na próxima etapa vamos adicionar o botão
+                para gerar o PDF oficial da ficha do aluno com logo da escola e layout premium.
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
