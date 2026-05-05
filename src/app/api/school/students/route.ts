@@ -20,7 +20,17 @@ export async function GET(req: Request) {
     let query = supabaseAdmin
       .from("students")
       .select(
-        "id, school_id, full_name, birth_date, registration_number, class_id, created_at"
+        `
+        id,
+        school_id,
+        full_name,
+        birth_date,
+        registration_number,
+        class_id,
+        student_photo_url,
+        student_profile_updated_at,
+        created_at
+      `
       )
       .eq("school_id", guard.schoolId)
       .order("full_name", { ascending: true })
@@ -84,9 +94,21 @@ export async function POST(req: Request) {
         registration_number,
         birth_date,
         class_id: null,
+        student_photo_url: null,
+        student_profile_updated_at: null,
       })
       .select(
-        "id, school_id, full_name, birth_date, registration_number, class_id, created_at"
+        `
+        id,
+        school_id,
+        full_name,
+        birth_date,
+        registration_number,
+        class_id,
+        student_photo_url,
+        student_profile_updated_at,
+        created_at
+      `
       )
       .single();
 
