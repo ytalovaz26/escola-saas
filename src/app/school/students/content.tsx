@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -16,6 +16,7 @@ type StudentRow = {
   full_name: string;
   birth_date: string | null;
   registration_number: string | null;
+  student_photo_url?: string | null;
 };
 
 type StudentActiveClassRow = {
@@ -33,6 +34,8 @@ type StudentProfilePayload = {
     registrationNumber: string | null;
     legacyClassId: string | null;
     createdAt: string | null;
+    studentPhotoUrl?: string | null;
+    photoUrl?: string | null;
   };
   activeClass: {
     id: string;
@@ -75,7 +78,6 @@ type StudentProfilePayload = {
 function initials(name: string) {
   const safe = String(name || "").trim();
   if (!safe) return "AL";
-
   const parts = safe.split(/\s+/).filter(Boolean);
   return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "AL";
 }
@@ -83,27 +85,21 @@ function initials(name: string) {
 function initialsFromName(name: string | null | undefined) {
   const safe = String(name || "").trim();
   if (!safe) return "RP";
-
   const parts = safe.split(/\s+/).filter(Boolean);
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-
   return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "RP";
 }
 
 function formatDateBR(value?: string | null) {
   if (!value) return "—";
-
   const clean = String(value).slice(0, 10);
   const [y, m, d] = clean.split("-");
-
   if (!y || !m || !d) return value;
-
   return `${d}/${m}/${y}`;
 }
 
 function formatDateTimeBR(value?: string | null) {
   if (!value) return "—";
-
   try {
     return new Date(value).toLocaleString("pt-BR");
   } catch {
@@ -114,6 +110,11 @@ function formatDateTimeBR(value?: string | null) {
 function field(value?: string | null) {
   const safe = String(value || "").trim();
   return safe || "—";
+}
+
+function getStudentPhotoUrl(profile: StudentProfilePayload | null) {
+  if (!profile) return null;
+  return profile.student.studentPhotoUrl || profile.student.photoUrl || null;
 }
 
 async function safeJson(res: Response) {
@@ -127,13 +128,7 @@ async function safeJson(res: Response) {
   }
 }
 
-function InfoBox({
-  label,
-  value,
-}: {
-  label: string;
-  value?: string | null;
-}) {
+function InfoBox({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
@@ -149,6 +144,7 @@ function InfoBox({
 export default function StudentsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [classes, setClasses] = useState<ClassRow[]>([]);
@@ -171,6 +167,8 @@ export default function StudentsPage() {
   const [profileLoadingId, setProfileLoadingId] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<StudentProfilePayload | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoMessage, setPhotoMessage] = useState<string | null>(null);
 
   const activeMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -186,7 +184,6 @@ export default function StudentsPage() {
 
   const filtered = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-
     let list = students;
 
     if (filterClassId) {
@@ -197,7 +194,6 @@ export default function StudentsPage() {
       list = list.filter((s) => {
         const name = String(s.full_name || "").toLowerCase();
         const reg = String(s.registration_number || "").toLowerCase();
-
         return name.includes(q) || reg.includes(q);
       });
     }
@@ -412,10 +408,7 @@ export default function StudentsPage() {
   }
 
   async function unassignStudent(studentId: string, studentName: string) {
-    const confirmed = window.confirm(
-      `Deseja remover o aluno "${studentName}" da turma atual?`
-    );
-
+    const confirmed = window.confirm(`Deseja remover o aluno "${studentName}" da turma atual?`);
     if (!confirmed) return;
 
     try {
@@ -430,9 +423,7 @@ export default function StudentsPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          student_id: studentId,
-        }),
+        body: JSON.stringify({ student_id: studentId }),
       });
 
       const json = await safeJson(res);
@@ -456,10 +447,7 @@ export default function StudentsPage() {
   }
 
   async function deleteStudent(studentId: string, studentName: string) {
-    const confirmed = window.confirm(
-      `Tem certeza que deseja excluir o aluno "${studentName}"?`
-    );
-
+    const confirmed = window.confirm(`Tem certeza que deseja excluir o aluno "${studentName}"?`);
     if (!confirmed) return;
 
     try {
@@ -467,7 +455,6 @@ export default function StudentsPage() {
       setError(null);
 
       const token = await getAccessToken();
-
       const activeClassId = activeMap.get(studentId);
 
       if (activeClassId) {
@@ -477,9 +464,7 @@ export default function StudentsPage() {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({
-            student_id: studentId,
-          }),
+          body: JSON.stringify({ student_id: studentId }),
         });
 
         const unassignJson = await safeJson(unassignRes);
@@ -495,9 +480,7 @@ export default function StudentsPage() {
 
       const res = await fetch(`/api/school/students/${studentId}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       const json = await safeJson(res);
@@ -525,6 +508,7 @@ export default function StudentsPage() {
 
   async function openStudentProfile(studentId: string) {
     setProfileError(null);
+    setPhotoMessage(null);
     setSelectedProfile(null);
 
     try {
@@ -533,9 +517,7 @@ export default function StudentsPage() {
       const token = await getAccessToken();
 
       const res = await fetch(`/api/school/students/${studentId}/profile`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
 
@@ -562,6 +544,81 @@ export default function StudentsPage() {
     setSelectedProfile(null);
     setProfileError(null);
     setProfileLoadingId(null);
+    setPhotoMessage(null);
+    setUploadingPhoto(false);
+  }
+
+  async function uploadStudentPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] || null;
+    event.target.value = "";
+
+    if (!file || !selectedProfile?.student?.id) return;
+
+    if (!file.type.startsWith("image/")) {
+      setProfileError("Selecione um arquivo de imagem.");
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setProfileError("A foto deve ter no máximo 5MB.");
+      return;
+    }
+
+    try {
+      setUploadingPhoto(true);
+      setProfileError(null);
+      setPhotoMessage(null);
+
+      const token = await getAccessToken();
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`/api/school/students/${selectedProfile.student.id}/photo`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setProfileError(json?.error || "Erro ao enviar foto do aluno.");
+        return;
+      }
+
+      const photoUrl = String(json.photoUrl || "");
+
+      setSelectedProfile((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          student: {
+            ...prev.student,
+            studentPhotoUrl: photoUrl,
+            photoUrl,
+          },
+        };
+      });
+
+      setStudents((prev) =>
+        prev.map((s) =>
+          s.id === selectedProfile.student.id ? { ...s, student_photo_url: photoUrl } : s
+        )
+      );
+
+      setPhotoMessage("Foto do aluno atualizada com sucesso.");
+    } catch (e: any) {
+      setProfileError(e?.message || "Erro inesperado ao enviar foto do aluno.");
+
+      if (e?.message === "Not authenticated") {
+        router.replace("/login");
+      }
+    } finally {
+      setUploadingPhoto(false);
+    }
   }
 
   if (loading) {
@@ -571,6 +628,8 @@ export default function StudentsPage() {
       </main>
     );
   }
+
+  const selectedStudentPhotoUrl = getStudentPhotoUrl(selectedProfile);
 
   return (
     <main className="space-y-6">
@@ -707,9 +766,18 @@ export default function StudentsPage() {
                   className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"
                 >
                   <div className="flex items-center gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 text-white">
-                      {initials(s.full_name)}
-                    </div>
+                    {s.student_photo_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={s.student_photo_url}
+                        alt="Foto do aluno"
+                        className="h-12 w-12 rounded-xl border border-slate-200 object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 text-white">
+                        {initials(s.full_name)}
+                      </div>
+                    )}
 
                     <div>
                       <div className="font-semibold">{s.full_name}</div>
@@ -778,16 +846,31 @@ export default function StudentsPage() {
           <div className="my-6 w-full max-w-5xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
             <div className="bg-gradient-to-r from-slate-900 to-slate-700 px-6 py-6 text-white">
               <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
-                    Ficha completa do aluno
+                <div className="flex flex-col gap-4 md:flex-row md:items-center">
+                  {selectedStudentPhotoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={selectedStudentPhotoUrl}
+                      alt="Foto do aluno"
+                      className="h-24 w-24 rounded-3xl border border-white/20 object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-24 w-24 items-center justify-center rounded-3xl border border-white/20 bg-white/10 text-2xl font-bold">
+                      {initials(field(selectedProfile.student.fullName))}
+                    </div>
+                  )}
+
+                  <div>
+                    <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
+                      Ficha completa do aluno
+                    </div>
+                    <h2 className="mt-3 text-2xl font-semibold">
+                      {field(selectedProfile.student.fullName)}
+                    </h2>
+                    <p className="mt-1 text-sm text-slate-200">
+                      Dados oficiais da escola + dados preenchidos pelos responsáveis.
+                    </p>
                   </div>
-                  <h2 className="mt-3 text-2xl font-semibold">
-                    {field(selectedProfile.student.fullName)}
-                  </h2>
-                  <p className="mt-1 text-sm text-slate-200">
-                    Dados oficiais da escola + dados preenchidos pelos responsáveis.
-                  </p>
                 </div>
 
                 <button
@@ -801,6 +884,42 @@ export default function StudentsPage() {
             </div>
 
             <div className="space-y-6 p-5 md:p-6">
+              <section className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Foto do aluno</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      A direção pode enviar ou atualizar a foto oficial do aluno.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={uploadStudentPhoto}
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingPhoto}
+                      className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
+                    >
+                      {uploadingPhoto ? "Enviando foto..." : "Enviar foto do aluno"}
+                    </button>
+                  </div>
+                </div>
+
+                {photoMessage ? (
+                  <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                    {photoMessage}
+                  </div>
+                ) : null}
+              </section>
+
               <section>
                 <h3 className="text-lg font-semibold text-slate-900">Dados oficiais do aluno</h3>
                 <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">

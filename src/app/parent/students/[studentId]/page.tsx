@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -9,6 +9,7 @@ type ChildRow = {
   full_name: string;
   registration_number: string | null;
   relationship: string | null;
+  student_photo_url?: string | null;
   active_class: null | {
     class_id: string;
     started_at: string;
@@ -25,6 +26,7 @@ type ChildRow = {
 async function safeJson(res: Response) {
   const text = await res.text();
   if (!text) return null;
+
   try {
     return JSON.parse(text);
   } catch {
@@ -110,54 +112,148 @@ export default function ParentStudentPage() {
   const router = useRouter();
   const params = useParams<{ studentId: string }>();
   const studentId = String(params?.studentId || "").trim();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [child, setChild] = useState<ChildRow | null>(null);
+  const [studentPhotoUrl, setStudentPhotoUrl] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoMessage, setPhotoMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const title = useMemo(() => child?.full_name || "Aluno", [child]);
 
+  async function getAccessToken() {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError || !sessionData.session) {
+      throw new Error(sessionError?.message || "Not authenticated");
+    }
+
+    return sessionData.session.access_token;
+  }
+
+  async function loadStudentPhoto(token: string) {
+    const res = await fetch(`/api/parent/students/${studentId}/photo`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+
+    const json = await safeJson(res);
+
+    if (res.ok && json?.ok) {
+      setStudentPhotoUrl(json.photoUrl || null);
+    }
+  }
+
+  async function loadData() {
+    setError(null);
+    setPhotoMessage(null);
+
+    const token = await getAccessToken();
+
+    const res = await fetch("/api/parent/children", {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+
+    const json = await safeJson(res);
+
+    if (!res.ok || !json?.ok) {
+      setError(json?.error || "Falha ao carregar dados do responsável.");
+      if (res.status === 401) router.replace("/login");
+      return;
+    }
+
+    const list = (json.children ?? []) as ChildRow[];
+    const found = list.find((x) => x.id === studentId) || null;
+
+    if (!found) {
+      setError("Você não tem permissão para ver este aluno (não está vinculado).");
+      return;
+    }
+
+    setChild(found);
+    setStudentPhotoUrl(found.student_photo_url || null);
+
+    await loadStudentPhoto(token);
+  }
+
   useEffect(() => {
     (async () => {
       try {
-        setError(null);
-
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData.session?.access_token;
-
-        if (!token) {
-          router.replace("/login");
-          return;
-        }
-
-        const res = await fetch("/api/parent/children", {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
-        const json = await safeJson(res);
-
-        if (!res.ok || !json?.ok) {
-          setError(json?.error || "Falha ao carregar dados do responsável.");
-          if (res.status === 401) router.replace("/login");
-          return;
-        }
-
-        const list = (json.children ?? []) as ChildRow[];
-        const found = list.find((x) => x.id === studentId) || null;
-
-        if (!found) {
-          setError("Você não tem permissão para ver este aluno (não está vinculado).");
-          return;
-        }
-
-        setChild(found);
+        await loadData();
       } catch (e: any) {
-        setError(e?.message || "Erro inesperado");
+        const msg = e?.message || "Erro inesperado";
+        setError(msg);
+
+        if (msg === "Not authenticated") {
+          router.replace("/login");
+        }
       } finally {
         setLoading(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router, studentId]);
+
+  async function uploadStudentPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] || null;
+    event.target.value = "";
+
+    if (!file || !child?.id) return;
+
+    if (!file.type.startsWith("image/")) {
+      setError("Selecione um arquivo de imagem.");
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError("A foto deve ter no máximo 5MB.");
+      return;
+    }
+
+    try {
+      setUploadingPhoto(true);
+      setError(null);
+      setPhotoMessage(null);
+
+      const token = await getAccessToken();
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch(`/api/parent/students/${child.id}/photo`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "Erro ao enviar foto do aluno.");
+        return;
+      }
+
+      const photoUrl = String(json.photoUrl || "");
+
+      setStudentPhotoUrl(photoUrl);
+      setChild((prev) => (prev ? { ...prev, student_photo_url: photoUrl } : prev));
+      setPhotoMessage("Foto do aluno atualizada com sucesso.");
+    } catch (e: any) {
+      const msg = e?.message || "Erro inesperado ao enviar foto do aluno.";
+      setError(msg);
+
+      if (msg === "Not authenticated") {
+        router.replace("/login");
+      }
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -175,7 +271,7 @@ export default function ParentStudentPage() {
 
   if (error) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
         <div className="w-full max-w-lg rounded-3xl border border-red-200 bg-white p-6 shadow-sm">
           <h1 className="text-xl font-semibold text-slate-900">Erro</h1>
           <p className="mt-2 text-sm text-slate-600">{error}</p>
@@ -201,9 +297,18 @@ export default function ParentStudentPage() {
           <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-8 text-white md:px-8">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex items-start gap-4">
-                <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-3xl border border-white/15 bg-white/10 text-xl font-semibold backdrop-blur">
-                  {initials(child.full_name)}
-                </div>
+                {studentPhotoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={studentPhotoUrl}
+                    alt="Foto do aluno"
+                    className="h-20 w-20 shrink-0 rounded-3xl border border-white/15 object-cover"
+                  />
+                ) : (
+                  <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-3xl border border-white/15 bg-white/10 text-xl font-semibold backdrop-blur">
+                    {initials(child.full_name)}
+                  </div>
+                )}
 
                 <div className="min-w-0">
                   <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
@@ -234,6 +339,42 @@ export default function ParentStudentPage() {
                 Voltar para filhos
               </button>
             </div>
+          </div>
+
+          <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-6">
+            <div className="flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Foto do aluno</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-500">
+                  Envie ou atualize a foto do aluno para deixar a ficha escolar mais completa.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={uploadStudentPhoto}
+                />
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingPhoto}
+                  className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
+                >
+                  {uploadingPhoto ? "Enviando foto..." : "Enviar foto do aluno"}
+                </button>
+              </div>
+            </div>
+
+            {photoMessage ? (
+              <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                {photoMessage}
+              </div>
+            ) : null}
           </div>
 
           <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-3 md:p-6">

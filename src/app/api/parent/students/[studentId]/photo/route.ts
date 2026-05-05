@@ -4,7 +4,6 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 export const runtime = "nodejs";
 
 const STUDENT_PHOTOS_BUCKET = "student-photos";
-const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
@@ -15,22 +14,21 @@ function getBearerToken(req: Request) {
   return authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
 }
 
-function sanitizeExtension(fileName: string, mimeType: string) {
-  const lower = String(fileName || "").toLowerCase();
+function getExtFromFile(file: File) {
+  const name = String(file.name || "").toLowerCase();
+  const fromName = name.includes(".") ? name.split(".").pop() : "";
 
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "jpg";
-  if (lower.endsWith(".png")) return "png";
-  if (lower.endsWith(".webp")) return "webp";
+  if (fromName && ["jpg", "jpeg", "png", "webp"].includes(fromName)) {
+    return fromName === "jpeg" ? "jpg" : fromName;
+  }
 
-  if (mimeType === "image/jpeg") return "jpg";
-  if (mimeType === "image/png") return "png";
-  if (mimeType === "image/webp") return "webp";
+  const type = String(file.type || "").toLowerCase();
+
+  if (type.includes("png")) return "png";
+  if (type.includes("webp")) return "webp";
+  if (type.includes("jpeg") || type.includes("jpg")) return "jpg";
 
   return "jpg";
-}
-
-function isAllowedImage(mimeType: string) {
-  return ["image/jpeg", "image/png", "image/webp"].includes(mimeType);
 }
 
 async function getAuthenticatedParent(req: Request) {
@@ -67,7 +65,7 @@ async function getAuthenticatedParent(req: Request) {
     };
   }
 
-  if (!parent?.id) {
+  if (!parent?.id || !parent?.school_id) {
     return {
       ok: false as const,
       response: jsonError("Not a parent.", 403),
@@ -81,88 +79,125 @@ async function getAuthenticatedParent(req: Request) {
   };
 }
 
-export async function POST(
-  req: Request,
-  context: { params: Promise<{ studentId: string }> }
-) {
-  try {
-    const auth = await getAuthenticatedParent(req);
-    if (!auth.ok) return auth.response;
+async function validateStudentAccess(parentId: string, schoolId: string, studentId: string) {
+  const { data: link, error: linkErr } = await supabaseAdmin
+    .from("student_parents")
+    .select("id")
+    .eq("school_id", schoolId)
+    .eq("parent_id", parentId)
+    .eq("student_id", studentId)
+    .eq("is_active", true)
+    .maybeSingle();
 
-    const params = await context.params;
-    const studentId = String(params.studentId || "").trim();
+  if (linkErr) {
+    return { ok: false as const, error: "Erro ao validar vínculo: " + linkErr.message };
+  }
+
+  if (!link?.id) {
+    return { ok: false as const, error: "Você não tem permissão para atualizar este aluno." };
+  }
+
+  const { data: student, error: studentErr } = await supabaseAdmin
+    .from("students")
+    .select("id, school_id, student_photo_url")
+    .eq("id", studentId)
+    .eq("school_id", schoolId)
+    .maybeSingle();
+
+  if (studentErr) {
+    return { ok: false as const, error: "Erro ao buscar aluno: " + studentErr.message };
+  }
+
+  if (!student?.id) {
+    return { ok: false as const, error: "Aluno não encontrado." };
+  }
+
+  return { ok: true as const, student };
+}
+
+export async function GET(req: Request, ctx: { params: Promise<{ studentId: string }> }) {
+  const auth = await getAuthenticatedParent(req);
+  if (!auth.ok) return auth.response;
+
+  try {
+    const { studentId: rawStudentId } = await ctx.params;
+    const studentId = String(rawStudentId || "").trim();
 
     if (!studentId) {
       return jsonError("studentId é obrigatório.", 400);
     }
 
-    const { data: link, error: linkErr } = await supabaseAdmin
-      .from("student_parents")
-      .select("id, school_id, student_id, parent_id, is_active")
-      .eq("school_id", auth.parent.school_id)
-      .eq("student_id", studentId)
-      .eq("parent_id", auth.parent.id)
-      .eq("is_active", true)
-      .maybeSingle();
+    const access = await validateStudentAccess(
+      String(auth.parent.id),
+      String(auth.parent.school_id),
+      studentId
+    );
 
-    if (linkErr) {
-      return jsonError("Erro ao validar vínculo responsável/aluno: " + linkErr.message, 500);
+    if (!access.ok) {
+      return jsonError(access.error, 403);
     }
 
-    if (!link?.id) {
-      return jsonError("Você não tem permissão para alterar este aluno.", 403);
+    return NextResponse.json({
+      ok: true,
+      studentId,
+      photoUrl: access.student.student_photo_url || null,
+    });
+  } catch (e: any) {
+    return jsonError(e?.message || "Erro interno ao buscar foto do aluno.", 500);
+  }
+}
+
+export async function POST(req: Request, ctx: { params: Promise<{ studentId: string }> }) {
+  const auth = await getAuthenticatedParent(req);
+  if (!auth.ok) return auth.response;
+
+  try {
+    const { studentId: rawStudentId } = await ctx.params;
+    const studentId = String(rawStudentId || "").trim();
+    const schoolId = String(auth.parent.school_id || "");
+    const parentId = String(auth.parent.id || "");
+
+    if (!studentId) {
+      return jsonError("studentId é obrigatório.", 400);
     }
 
-    const { data: student, error: studentErr } = await supabaseAdmin
-      .from("students")
-      .select("id, school_id")
-      .eq("id", studentId)
-      .eq("school_id", auth.parent.school_id)
-      .maybeSingle();
+    const access = await validateStudentAccess(parentId, schoolId, studentId);
 
-    if (studentErr) {
-      return jsonError("Erro ao validar aluno: " + studentErr.message, 500);
+    if (!access.ok) {
+      return jsonError(access.error, 403);
     }
 
-    if (!student?.id) {
-      return jsonError("Aluno não encontrado.", 404);
-    }
-
-    const formData = await req.formData();
-    const file = formData.get("file");
+    const form = await req.formData();
+    const file = form.get("file");
 
     if (!(file instanceof File)) {
-      return jsonError("Envie a imagem no campo 'file'.", 400);
+      return jsonError("Envie uma imagem no campo file.", 400);
     }
 
-    if (!isAllowedImage(file.type)) {
-      return jsonError("Formato inválido. Envie JPG, PNG ou WEBP.", 415, {
-        receivedType: file.type,
-      });
+    if (!file.type.startsWith("image/")) {
+      return jsonError("O arquivo precisa ser uma imagem.", 400);
     }
 
-    if (file.size > MAX_FILE_SIZE_BYTES) {
-      return jsonError("Imagem muito grande. O limite é 5MB.", 413, {
-        maxSizeMb: 5,
-      });
+    const maxBytes = 5 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      return jsonError("A imagem deve ter no máximo 5MB.", 400);
     }
 
-    const bytes = Buffer.from(await file.arrayBuffer());
-    const ext = sanitizeExtension(file.name, file.type);
-    const now = Date.now();
+    const ext = getExtFromFile(file);
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
-    const filePath = `${auth.parent.school_id}/${studentId}/parent-upload-${now}.${ext}`;
+    const filePath = `${schoolId}/${studentId}/parent-upload-${Date.now()}.${ext}`;
 
     const { error: uploadErr } = await supabaseAdmin.storage
       .from(STUDENT_PHOTOS_BUCKET)
-      .upload(filePath, bytes, {
-        contentType: file.type,
+      .upload(filePath, buffer, {
+        contentType: file.type || "image/jpeg",
         upsert: true,
       });
 
     if (uploadErr) {
-      return jsonError("Erro ao enviar foto do aluno.", 500, {
-        details: uploadErr.message,
+      return jsonError("Erro ao enviar foto: " + uploadErr.message, 500, {
         bucket: STUDENT_PHOTOS_BUCKET,
         path: filePath,
       });
@@ -177,17 +212,14 @@ export async function POST(
     const { error: updateErr } = await supabaseAdmin
       .from("students")
       .update({
-        photo_url: photoUrl,
+        student_photo_url: photoUrl,
         student_profile_updated_at: new Date().toISOString(),
       })
       .eq("id", studentId)
-      .eq("school_id", auth.parent.school_id);
+      .eq("school_id", schoolId);
 
     if (updateErr) {
-      return jsonError("Foto enviada, mas não foi possível salvar no aluno.", 500, {
-        details: updateErr.message,
-        photoUrl,
-      });
+      return jsonError("Foto enviada, mas houve erro ao salvar no aluno: " + updateErr.message, 500);
     }
 
     return NextResponse.json({
