@@ -172,7 +172,65 @@ async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
   });
 }
 
-function drawHeader(params: {
+function getTextHeight(doc: PDFKit.PDFDocument, text: string, width: number, fontSize = 10) {
+  doc.font("Helvetica").fontSize(fontSize);
+
+  return doc.heightOfString(text || "—", {
+    width,
+    align: "left",
+  });
+}
+
+function drawDailyHeader(params: {
+  doc: PDFKit.PDFDocument;
+  schoolName: string;
+  className: string;
+  teacherName: string;
+  subjectName: string;
+  termLabel: string;
+  referenceMonthLabel: string;
+  logoBuffer: Buffer | null;
+}) {
+  const {
+    doc,
+    schoolName,
+    className,
+    teacherName,
+    subjectName,
+    termLabel,
+    referenceMonthLabel,
+    logoBuffer,
+  } = params;
+
+  const margin = 40;
+
+  if (logoBuffer) {
+    doc.image(logoBuffer, margin, 36, { fit: [70, 70] });
+  }
+
+  const titleX = margin + 84;
+
+  doc.font("Helvetica-Bold").fontSize(18).fillColor("#111827").text(schoolName, titleX, 40);
+  doc.font("Helvetica-Bold").fontSize(16).fillColor("#111827").text("Diário de Classe", titleX, 64);
+
+  doc.font("Helvetica").fontSize(10).fillColor("#374151");
+  doc.text(`Turma: ${className}`, margin, 120);
+  doc.text(`Professor(a): ${teacherName}`, margin, 136);
+  doc.text(`Disciplina: ${subjectName}`, margin, 152);
+  doc.text(`Período: ${termLabel || "—"}`, margin, 168);
+  doc.text(`Mês de referência: ${referenceMonthLabel}`, margin, 184);
+
+  doc
+    .moveTo(margin, 206)
+    .lineTo(doc.page.width - margin, 206)
+    .strokeColor("#e5e7eb")
+    .lineWidth(1)
+    .stroke();
+
+  return 225;
+}
+
+function drawSummaryHeader(params: {
   doc: PDFKit.PDFDocument;
   schoolName: string;
   className: string;
@@ -244,20 +302,16 @@ function drawHeader(params: {
   });
 }
 
-function drawTableHeader(doc: PDFKit.PDFDocument, y: number) {
+function drawSummaryTableHeader(doc: PDFKit.PDFDocument, y: number) {
   const margin = 40;
   const dateW = 86;
   const contentW = doc.page.width - margin * 2 - dateW;
 
-  doc
-    .rect(margin, y, dateW, 24)
-    .fillAndStroke("#f1f5f9", "#d1d5db");
-
-  doc
-    .rect(margin + dateW, y, contentW, 24)
-    .fillAndStroke("#f1f5f9", "#d1d5db");
+  doc.rect(margin, y, dateW, 24).fillAndStroke("#f1f5f9", "#d1d5db");
+  doc.rect(margin + dateW, y, contentW, 24).fillAndStroke("#f1f5f9", "#d1d5db");
 
   doc.font("Helvetica-Bold").fontSize(9).fillColor("#111827");
+
   doc.text("Data", margin + 8, y + 7, {
     width: dateW - 16,
     lineBreak: false,
@@ -271,63 +325,257 @@ function drawTableHeader(doc: PDFKit.PDFDocument, y: number) {
   return y + 24;
 }
 
-function drawFooter(params: {
+function drawDailyFooter(params: {
+  doc: PDFKit.PDFDocument;
+  className: string;
+  referenceMonthLabel: string;
+  lessonDate: string;
+  pageNumber: number;
+  totalPages: number;
+}) {
+  const { doc, className, referenceMonthLabel, lessonDate, pageNumber, totalPages } = params;
+
+  const margin = 40;
+  const safeBottom = doc.page.height - margin;
+  const lineY = safeBottom - 24;
+  const leftTextY = safeBottom - 16;
+  const rightTextY = safeBottom - 16;
+
+  const emitDate = new Date().toLocaleDateString("pt-BR");
+  const schoolDay = brDateFromISO(lessonDate);
+
+  doc
+    .moveTo(margin, lineY)
+    .lineTo(doc.page.width - margin, lineY)
+    .strokeColor("#e5e7eb")
+    .lineWidth(1)
+    .stroke();
+
+  doc
+    .font("Helvetica")
+    .fontSize(8)
+    .fillColor("#6b7280")
+    .text(
+      `Turma: ${className}  •  Aula do dia: ${schoolDay}  •  Mês: ${referenceMonthLabel}  •  Emitido em: ${emitDate}`,
+      margin,
+      leftTextY,
+      {
+        width: doc.page.width - margin * 2 - 90,
+        align: "left",
+        lineBreak: false,
+      }
+    );
+
+  doc
+    .font("Helvetica")
+    .fontSize(8)
+    .fillColor("#6b7280")
+    .text(`Página ${pageNumber} de ${totalPages}`, doc.page.width - margin - 90, rightTextY, {
+      width: 90,
+      align: "right",
+      lineBreak: false,
+    });
+}
+
+function drawSummaryFooter(params: {
   doc: PDFKit.PDFDocument;
   className: string;
   periodText: string;
+  pageNumber: number;
+  totalPages: number;
 }) {
-  const { doc, className, periodText } = params;
+  const { doc, className, periodText, pageNumber, totalPages } = params;
 
   const margin = 40;
-  const footerY = doc.page.height - 48;
+  const safeBottom = doc.page.height - margin;
+  const lineY = safeBottom - 24;
+  const textY = safeBottom - 16;
   const emitDate = new Date().toLocaleDateString("pt-BR");
 
   doc
-    .moveTo(margin, footerY - 10)
-    .lineTo(doc.page.width - margin, footerY - 10)
+    .moveTo(margin, lineY)
+    .lineTo(doc.page.width - margin, lineY)
     .strokeColor("#e5e7eb")
     .lineWidth(1)
     .stroke();
 
   doc.font("Helvetica").fontSize(8).fillColor("#6b7280");
 
-  doc.text(`Turma: ${className} • Período: ${periodText} • Emitido em: ${emitDate}`, margin, footerY, {
-    width: doc.page.width - margin * 2,
-    align: "center",
+  doc.text(`Turma: ${className} • Período: ${periodText} • Emitido em: ${emitDate}`, margin, textY, {
+    width: doc.page.width - margin * 2 - 90,
+    align: "left",
     lineBreak: false,
   });
+
+  doc.text(`Página ${pageNumber} de ${totalPages}`, doc.page.width - margin - 90, textY, {
+    width: 90,
+    align: "right",
+    lineBreak: false,
+  });
+}
+
+function estimateSectionHeight(doc: PDFKit.PDFDocument, value: string, width: number) {
+  const titleGap = 16;
+  const text = value?.trim() ? value.trim() : "—";
+  const textHeight = getTextHeight(doc, text, width - 24, 10);
+  const boxHeight = Math.max(40, textHeight + 20);
+
+  return titleGap + boxHeight + 18;
+}
+
+function drawSection(params: {
+  doc: PDFKit.PDFDocument;
+  x: number;
+  y: number;
+  width: number;
+  title: string;
+  value: string;
+}) {
+  const { doc, x, y, width, title, value } = params;
+  const text = value?.trim() ? value.trim() : "—";
+
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(title, x, y);
+
+  const boxY = y + 16;
+  const textHeight = getTextHeight(doc, text, width - 24, 10);
+  const boxHeight = Math.max(40, textHeight + 20);
+
+  doc
+    .roundedRect(x, boxY, width, boxHeight, 8)
+    .strokeColor("#d1d5db")
+    .lineWidth(1)
+    .stroke();
+
+  doc.font("Helvetica").fontSize(10).fillColor("#374151").text(text, x + 12, boxY + 10, {
+    width: width - 24,
+    align: "left",
+  });
+
+  return boxY + boxHeight;
 }
 
 function drawSignature(params: {
   doc: PDFKit.PDFDocument;
   teacherName: string;
+  y?: number;
 }) {
-  const { doc, teacherName } = params;
+  const { doc, teacherName, y } = params;
 
-  const lineStartX = doc.page.width - 250;
+  const signatureY = y ?? doc.page.height - 112;
+  const lineStartX = doc.page.width - 240;
   const lineEndX = doc.page.width - 60;
-  const lineY = doc.page.height - 112;
-  const centerX = (lineStartX + lineEndX) / 2;
 
   doc
-    .moveTo(lineStartX, lineY)
-    .lineTo(lineEndX, lineY)
+    .moveTo(lineStartX, signatureY)
+    .lineTo(lineEndX, signatureY)
     .strokeColor("#6b7280")
     .lineWidth(1)
     .stroke();
 
-  doc.font("Helvetica").fontSize(9).fillColor("#374151");
+  doc
+    .font("Helvetica")
+    .fontSize(10)
+    .fillColor("#374151")
+    .text(teacherName || "Professor(a)", lineStartX, signatureY + 6, {
+      width: lineEndX - lineStartX,
+      align: "center",
+      lineBreak: false,
+    });
 
-  const teacherSafe = teacherName || "Professor(a)";
-  const teacherWidth = doc.widthOfString(teacherSafe);
-  const labelWidth = doc.widthOfString("Professor(a)");
+  doc
+    .font("Helvetica")
+    .fontSize(10)
+    .fillColor("#374151")
+    .text("Professor(a)", lineStartX, signatureY + 20, {
+      width: lineEndX - lineStartX,
+      align: "center",
+      lineBreak: false,
+    });
+}
 
-  doc.text(teacherSafe, centerX - teacherWidth / 2, lineY + 8, {
-    lineBreak: false,
+function drawDailyReport(params: {
+  doc: PDFKit.PDFDocument;
+  entry: DiaryEntry;
+  schoolName: string;
+  className: string;
+  teacherName: string;
+  subjectName: string;
+  termLabel: string;
+  referenceMonthLabel: string;
+  logoBuffer: Buffer | null;
+}) {
+  const {
+    doc,
+    entry,
+    schoolName,
+    className,
+    teacherName,
+    subjectName,
+    termLabel,
+    referenceMonthLabel,
+    logoBuffer,
+  } = params;
+
+  const margin = 40;
+  const contentWidth = doc.page.width - margin * 2;
+  const bottomLimit = doc.page.height - 150;
+
+  let y = drawDailyHeader({
+    doc,
+    schoolName,
+    className,
+    teacherName,
+    subjectName,
+    termLabel,
+    referenceMonthLabel,
+    logoBuffer,
   });
 
-  doc.text("Professor(a)", centerX - labelWidth / 2, lineY + 22, {
-    lineBreak: false,
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(11)
+    .fillColor("#111827")
+    .text(`Data da aula: ${brDateFromISO(entry.lesson_date)}`, margin, y);
+
+  y += 24;
+
+  const blocks = [
+    { title: "Conteúdo ministrado", value: entry.content_taught || "" },
+    { title: "Metodologia", value: entry.methodology || "" },
+    { title: "Atividades desenvolvidas", value: entry.activities || "" },
+    { title: "Observações", value: entry.notes || "" },
+    { title: "Tarefa de casa", value: entry.homework || "" },
+  ];
+
+  for (const block of blocks) {
+    const blockHeight = estimateSectionHeight(doc, block.value || "", contentWidth);
+
+    if (y + blockHeight > bottomLimit) {
+      doc.addPage();
+      y = 50;
+    }
+
+    y =
+      drawSection({
+        doc,
+        x: margin,
+        y,
+        width: contentWidth,
+        title: block.title,
+        value: block.value || "",
+      }) + 18;
+  }
+
+  const signatureHeight = 44;
+  const signatureY = doc.page.height - 112;
+
+  if (y + signatureHeight > signatureY) {
+    doc.addPage();
+  }
+
+  drawSignature({
+    doc,
+    teacherName,
   });
 }
 
@@ -364,7 +612,7 @@ function drawSummaryReport(params: {
   const tableTopOtherPages = 68;
   const bottomLimit = doc.page.height - 150;
 
-  drawHeader({
+  drawSummaryHeader({
     doc,
     schoolName,
     className,
@@ -376,7 +624,7 @@ function drawSummaryReport(params: {
     logoBuffer,
   });
 
-  let y = drawTableHeader(doc, tableTopFirstPage);
+  let y = drawSummaryTableHeader(doc, tableTopFirstPage);
 
   for (const entry of entries) {
     const content = String(entry.content_taught || "").trim() || "—";
@@ -391,12 +639,6 @@ function drawSummaryReport(params: {
     const rowH = Math.max(24, contentHeight + 14);
 
     if (y + rowH > bottomLimit) {
-      drawFooter({
-        doc,
-        className,
-        periodText,
-      });
-
       doc.addPage();
 
       doc.font("Helvetica-Bold").fontSize(12).fillColor("#111827");
@@ -405,20 +647,11 @@ function drawSummaryReport(params: {
         align: "center",
       });
 
-      y = drawTableHeader(doc, tableTopOtherPages);
+      y = drawSummaryTableHeader(doc, tableTopOtherPages);
     }
 
-    doc
-      .rect(margin, y, dateW, rowH)
-      .strokeColor("#d1d5db")
-      .lineWidth(1)
-      .stroke();
-
-    doc
-      .rect(margin + dateW, y, contentW, rowH)
-      .strokeColor("#d1d5db")
-      .lineWidth(1)
-      .stroke();
+    doc.rect(margin, y, dateW, rowH).strokeColor("#d1d5db").lineWidth(1).stroke();
+    doc.rect(margin + dateW, y, contentW, rowH).strokeColor("#d1d5db").lineWidth(1).stroke();
 
     doc.font("Helvetica").fontSize(9).fillColor("#111827");
 
@@ -435,15 +668,16 @@ function drawSummaryReport(params: {
     y += rowH;
   }
 
+  const signatureHeight = 44;
+  const signatureY = doc.page.height - 112;
+
+  if (y + signatureHeight > signatureY) {
+    doc.addPage();
+  }
+
   drawSignature({
     doc,
     teacherName,
-  });
-
-  drawFooter({
-    doc,
-    className,
-    periodText,
   });
 }
 
@@ -470,6 +704,9 @@ export async function GET(req: Request) {
   const lessonDate = (url.searchParams.get("lessonDate") || "").trim();
   const startDateParam = (url.searchParams.get("startDate") || "").trim();
   const endDateParam = (url.searchParams.get("endDate") || "").trim();
+  const reportMode = (url.searchParams.get("reportMode") || "").trim();
+
+  const isDailyReport = Boolean(lessonDate) && reportMode !== "summary";
 
   let startDate = startDateParam;
   let endDate = endDateParam;
@@ -491,6 +728,10 @@ export async function GET(req: Request) {
   if (!classId) return jsonError("classId é obrigatório.", 400);
   if (!referenceMonth) return jsonError("referenceMonth é obrigatório.", 400);
   if (!subjectName) return jsonError("subjectName é obrigatório.", 400);
+
+  if (isDailyReport && !isValidDateYMD(lessonDate)) {
+    return jsonError("lessonDate inválida. Use o formato YYYY-MM-DD.", 400);
+  }
 
   if (!startDate || !endDate) {
     return jsonError("Informe startDate e endDate para gerar o relatório.", 400);
@@ -550,7 +791,9 @@ export async function GET(req: Request) {
     .eq("subject_name", subjectName)
     .order("reference_month", { ascending: true });
 
-  if (startMonth && endMonth) {
+  if (isDailyReport) {
+    diaryQuery = diaryQuery.eq("reference_month", referenceMonth);
+  } else if (startMonth && endMonth) {
     diaryQuery = diaryQuery.gte("reference_month", startMonth).lte("reference_month", endMonth);
   } else {
     diaryQuery = diaryQuery.eq("reference_month", referenceMonth);
@@ -569,7 +812,6 @@ export async function GET(req: Request) {
   }
 
   const diaryIds = diaries.map((d: any) => d.id).filter(Boolean);
-
   const firstDiary = diaries[0] as any;
 
   const teacherName = await getTeacherDisplayName({
@@ -577,13 +819,19 @@ export async function GET(req: Request) {
     schoolId,
   });
 
-  const { data: entries, error: entriesErr } = await supabaseAdmin
+  let entriesQuery = supabaseAdmin
     .from("class_diary_entries")
     .select("id, lesson_date, content_taught, methodology, activities, notes, homework")
     .in("diary_id", diaryIds)
-    .gte("lesson_date", startDate)
-    .lte("lesson_date", endDate)
     .order("lesson_date", { ascending: true });
+
+  if (isDailyReport) {
+    entriesQuery = entriesQuery.eq("lesson_date", lessonDate);
+  } else {
+    entriesQuery = entriesQuery.gte("lesson_date", startDate).lte("lesson_date", endDate);
+  }
+
+  const { data: entries, error: entriesErr } = await entriesQuery;
 
   if (entriesErr) {
     return jsonError("Falha ao buscar lançamentos do diário.", 500, {
@@ -594,35 +842,84 @@ export async function GET(req: Request) {
   const diaryEntries = (entries || []) as DiaryEntry[];
 
   if (diaryEntries.length === 0) {
-    return jsonError("Nenhum lançamento encontrado para o período selecionado.", 404);
+    return jsonError(
+      isDailyReport
+        ? "Nenhum lançamento encontrado para a data informada."
+        : "Nenhum lançamento encontrado para o período selecionado.",
+      404
+    );
   }
 
   const doc = new PDFDocument({
     size: "A4",
     layout: "portrait",
     margin: 40,
+    bufferPages: true,
     autoFirstPage: true,
   });
 
   const referenceMonthLabel = formatMonthLabel(referenceMonth);
   const selectedPeriodLabel = periodLabel(startDate, endDate);
+  const finalTermLabel = termLabel || firstDiary.term_label || "—";
 
-  drawSummaryReport({
-    doc,
-    entries: diaryEntries,
-    schoolName,
-    className,
-    teacherName,
-    subjectName,
-    termLabel: termLabel || firstDiary.term_label || "—",
-    referenceMonthLabel,
-    periodText: selectedPeriodLabel,
-    logoBuffer,
-  });
+  if (isDailyReport) {
+    drawDailyReport({
+      doc,
+      entry: diaryEntries[0],
+      schoolName,
+      className,
+      teacherName,
+      subjectName,
+      termLabel: finalTermLabel,
+      referenceMonthLabel,
+      logoBuffer,
+    });
+  } else {
+    drawSummaryReport({
+      doc,
+      entries: diaryEntries,
+      schoolName,
+      className,
+      teacherName,
+      subjectName,
+      termLabel: finalTermLabel,
+      referenceMonthLabel,
+      periodText: selectedPeriodLabel,
+      logoBuffer,
+    });
+  }
+
+  const range = doc.bufferedPageRange();
+  const totalPages = range.count;
+
+  for (let i = 0; i < totalPages; i++) {
+    doc.switchToPage(i);
+
+    if (isDailyReport) {
+      drawDailyFooter({
+        doc,
+        className,
+        referenceMonthLabel,
+        lessonDate: diaryEntries[0].lesson_date,
+        pageNumber: i + 1,
+        totalPages,
+      });
+    } else {
+      drawSummaryFooter({
+        doc,
+        className,
+        periodText: selectedPeriodLabel,
+        pageNumber: i + 1,
+        totalPages,
+      });
+    }
+  }
 
   const buffer = await pdfToBuffer(doc);
 
-  const safeFileName = `diario-classe-${classId}-${startDate}-ate-${endDate}.pdf`;
+  const safeFileName = isDailyReport
+    ? `diario-dia-${lessonDate}.pdf`
+    : `diario-classe-${classId}-${startDate}-ate-${endDate}.pdf`;
 
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
