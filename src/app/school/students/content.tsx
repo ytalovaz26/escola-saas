@@ -24,8 +24,26 @@ type StudentActiveClassRow = {
   class_id: string;
 };
 
+type StudentExtraForm = {
+  gender: string;
+  cpf: string;
+  rg: string;
+  birthCertificate: string;
+  motherName: string;
+  fatherName: string;
+  medicalNotes: string;
+  allergies: string;
+  continuousMedication: string;
+  foodRestrictions: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  authorizedPickupNotes: string;
+  generalNotes: string;
+};
+
 type StudentProfilePayload = {
   ok: true;
+  saved?: boolean;
   student: {
     id: string;
     schoolId: string;
@@ -36,6 +54,24 @@ type StudentProfilePayload = {
     createdAt: string | null;
     studentPhotoUrl?: string | null;
     photoUrl?: string | null;
+    studentPhotoUploadedAt?: string | null;
+    studentPhotoUploadedBy?: string | null;
+    studentProfileUpdatedAt?: string | null;
+
+    gender?: string | null;
+    cpf?: string | null;
+    rg?: string | null;
+    birthCertificate?: string | null;
+    motherName?: string | null;
+    fatherName?: string | null;
+    medicalNotes?: string | null;
+    allergies?: string | null;
+    continuousMedication?: string | null;
+    foodRestrictions?: string | null;
+    emergencyContactName?: string | null;
+    emergencyContactPhone?: string | null;
+    authorizedPickupNotes?: string | null;
+    generalNotes?: string | null;
   };
   activeClass: {
     id: string;
@@ -112,9 +148,53 @@ function field(value?: string | null) {
   return safe || "—";
 }
 
+function rawField(value?: string | null) {
+  return String(value || "").trim();
+}
+
 function getStudentPhotoUrl(profile: StudentProfilePayload | null) {
   if (!profile) return null;
   return profile.student.studentPhotoUrl || profile.student.photoUrl || null;
+}
+
+function emptyExtraForm(): StudentExtraForm {
+  return {
+    gender: "",
+    cpf: "",
+    rg: "",
+    birthCertificate: "",
+    motherName: "",
+    fatherName: "",
+    medicalNotes: "",
+    allergies: "",
+    continuousMedication: "",
+    foodRestrictions: "",
+    emergencyContactName: "",
+    emergencyContactPhone: "",
+    authorizedPickupNotes: "",
+    generalNotes: "",
+  };
+}
+
+function formFromProfile(profile: StudentProfilePayload | null): StudentExtraForm {
+  if (!profile) return emptyExtraForm();
+
+  return {
+    gender: rawField(profile.student.gender),
+    cpf: rawField(profile.student.cpf),
+    rg: rawField(profile.student.rg),
+    birthCertificate: rawField(profile.student.birthCertificate),
+    motherName: rawField(profile.student.motherName),
+    fatherName: rawField(profile.student.fatherName),
+    medicalNotes: rawField(profile.student.medicalNotes),
+    allergies: rawField(profile.student.allergies),
+    continuousMedication: rawField(profile.student.continuousMedication),
+    foodRestrictions: rawField(profile.student.foodRestrictions),
+    emergencyContactName: rawField(profile.student.emergencyContactName),
+    emergencyContactPhone: rawField(profile.student.emergencyContactPhone),
+    authorizedPickupNotes: rawField(profile.student.authorizedPickupNotes),
+    generalNotes: rawField(profile.student.generalNotes),
+  };
 }
 
 async function safeJson(res: Response) {
@@ -138,6 +218,58 @@ function InfoBox({ label, value }: { label: string; value?: string | null }) {
         {field(value)}
       </div>
     </div>
+  );
+}
+
+function TextInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </span>
+      <input
+        className="input w-full"
+        value={value}
+        placeholder={placeholder || label}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
+  );
+}
+
+function TextAreaInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </span>
+      <textarea
+        className="input min-h-[92px] w-full resize-y"
+        value={value}
+        placeholder={placeholder || label}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </label>
   );
 }
 
@@ -170,6 +302,11 @@ export default function StudentsPage() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoMessage, setPhotoMessage] = useState<string | null>(null);
   const [generatingPdf, setGeneratingPdf] = useState(false);
+
+  const [editingExtra, setEditingExtra] = useState(false);
+  const [extraForm, setExtraForm] = useState<StudentExtraForm>(emptyExtraForm());
+  const [savingExtra, setSavingExtra] = useState(false);
+  const [extraMessage, setExtraMessage] = useState<string | null>(null);
 
   const activeMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -510,7 +647,10 @@ export default function StudentsPage() {
   async function openStudentProfile(studentId: string) {
     setProfileError(null);
     setPhotoMessage(null);
+    setExtraMessage(null);
+    setEditingExtra(false);
     setSelectedProfile(null);
+    setExtraForm(emptyExtraForm());
 
     try {
       setProfileLoadingId(studentId);
@@ -529,7 +669,9 @@ export default function StudentsPage() {
         return;
       }
 
-      setSelectedProfile(json as StudentProfilePayload);
+      const profile = json as StudentProfilePayload;
+      setSelectedProfile(profile);
+      setExtraForm(formFromProfile(profile));
     } catch (e: any) {
       setProfileError(e?.message || "Erro inesperado ao carregar ficha do aluno.");
 
@@ -548,6 +690,71 @@ export default function StudentsPage() {
     setPhotoMessage(null);
     setUploadingPhoto(false);
     setGeneratingPdf(false);
+    setEditingExtra(false);
+    setExtraMessage(null);
+    setSavingExtra(false);
+    setExtraForm(emptyExtraForm());
+  }
+
+  function updateExtraForm<K extends keyof StudentExtraForm>(key: K, value: StudentExtraForm[K]) {
+    setExtraForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function startEditingExtra() {
+    setExtraForm(formFromProfile(selectedProfile));
+    setExtraMessage(null);
+    setProfileError(null);
+    setEditingExtra(true);
+  }
+
+  function cancelEditingExtra() {
+    setExtraForm(formFromProfile(selectedProfile));
+    setEditingExtra(false);
+    setExtraMessage(null);
+  }
+
+  async function saveStudentExtraProfile() {
+    if (!selectedProfile?.student?.id) return;
+
+    try {
+      setSavingExtra(true);
+      setProfileError(null);
+      setExtraMessage(null);
+
+      const token = await getAccessToken();
+
+      const res = await fetch(`/api/school/students/${selectedProfile.student.id}/profile`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+        body: JSON.stringify(extraForm),
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setProfileError(json?.error || "Erro ao salvar dados complementares do aluno.");
+        return;
+      }
+
+      const updatedProfile = json as StudentProfilePayload;
+
+      setSelectedProfile(updatedProfile);
+      setExtraForm(formFromProfile(updatedProfile));
+      setEditingExtra(false);
+      setExtraMessage("Dados complementares atualizados com sucesso.");
+    } catch (e: any) {
+      setProfileError(e?.message || "Erro inesperado ao salvar dados complementares.");
+
+      if (e?.message === "Not authenticated") {
+        router.replace("/login");
+      }
+    } finally {
+      setSavingExtra(false);
+    }
   }
 
   async function uploadStudentPhoto(event: ChangeEvent<HTMLInputElement>) {
@@ -932,13 +1139,13 @@ export default function StudentsPage() {
               <section className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <h3 className="text-lg font-semibold text-slate-900">Foto do aluno</h3>
+                    <h3 className="text-lg font-semibold text-slate-900">Foto e documentos</h3>
                     <p className="mt-1 text-sm text-slate-500">
-                      A direção pode enviar ou atualizar a foto oficial do aluno.
+                      A direção pode atualizar a foto, preencher dados complementares e gerar o PDF oficial.
                     </p>
                   </div>
 
-                  <div className="flex flex-col gap-2 sm:flex-row">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                     <input
                       ref={fileInputRef}
                       type="file"
@@ -950,7 +1157,7 @@ export default function StudentsPage() {
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      disabled={uploadingPhoto || generatingPdf}
+                      disabled={uploadingPhoto || generatingPdf || savingExtra}
                       className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
                     >
                       {uploadingPhoto ? "Enviando foto..." : "Enviar foto do aluno"}
@@ -958,8 +1165,17 @@ export default function StudentsPage() {
 
                     <button
                       type="button"
+                      onClick={startEditingExtra}
+                      disabled={uploadingPhoto || generatingPdf || savingExtra}
+                      className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      Editar dados complementares
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={generateStudentProfilePdf}
-                      disabled={generatingPdf || uploadingPhoto}
+                      disabled={generatingPdf || uploadingPhoto || savingExtra}
                       className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60"
                     >
                       {generatingPdf ? "Gerando PDF..." : "Gerar PDF da ficha"}
@@ -970,6 +1186,12 @@ export default function StudentsPage() {
                 {photoMessage ? (
                   <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                     {photoMessage}
+                  </div>
+                ) : null}
+
+                {extraMessage ? (
+                  <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                    {extraMessage}
                   </div>
                 ) : null}
               </section>
@@ -983,6 +1205,196 @@ export default function StudentsPage() {
                   <InfoBox label="Cadastro" value={formatDateTimeBR(selectedProfile.student.createdAt)} />
                 </div>
               </section>
+
+              {editingExtra ? (
+                <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">
+                        Editar dados complementares
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Estes dados alimentam a ficha completa e o PDF oficial do aluno.
+                      </p>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={cancelEditingExtra}
+                        disabled={savingExtra}
+                        className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        Cancelar
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={saveStudentExtraProfile}
+                        disabled={savingExtra}
+                        className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+                      >
+                        {savingExtra ? "Salvando..." : "Salvar dados"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    <TextInput
+                      label="Sexo"
+                      value={extraForm.gender}
+                      onChange={(value) => updateExtraForm("gender", value)}
+                    />
+                    <TextInput
+                      label="CPF"
+                      value={extraForm.cpf}
+                      onChange={(value) => updateExtraForm("cpf", value)}
+                    />
+                    <TextInput
+                      label="RG"
+                      value={extraForm.rg}
+                      onChange={(value) => updateExtraForm("rg", value)}
+                    />
+                    <TextInput
+                      label="Certidão de nascimento"
+                      value={extraForm.birthCertificate}
+                      onChange={(value) => updateExtraForm("birthCertificate", value)}
+                    />
+                  </div>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <TextInput
+                      label="Nome da mãe"
+                      value={extraForm.motherName}
+                      onChange={(value) => updateExtraForm("motherName", value)}
+                    />
+                    <TextInput
+                      label="Nome do pai"
+                      value={extraForm.fatherName}
+                      onChange={(value) => updateExtraForm("fatherName", value)}
+                    />
+                  </div>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <TextAreaInput
+                      label="Observações médicas / alertas"
+                      value={extraForm.medicalNotes}
+                      onChange={(value) => updateExtraForm("medicalNotes", value)}
+                      placeholder="Ex.: asma, uso de bombinha, restrições de atividade física..."
+                    />
+                    <TextAreaInput
+                      label="Alergias"
+                      value={extraForm.allergies}
+                      onChange={(value) => updateExtraForm("allergies", value)}
+                      placeholder="Ex.: medicamento, alimentos, picadas..."
+                    />
+                    <TextAreaInput
+                      label="Medicação contínua"
+                      value={extraForm.continuousMedication}
+                      onChange={(value) => updateExtraForm("continuousMedication", value)}
+                    />
+                    <TextAreaInput
+                      label="Restrições alimentares"
+                      value={extraForm.foodRestrictions}
+                      onChange={(value) => updateExtraForm("foodRestrictions", value)}
+                    />
+                  </div>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <TextInput
+                      label="Contato de emergência"
+                      value={extraForm.emergencyContactName}
+                      onChange={(value) => updateExtraForm("emergencyContactName", value)}
+                    />
+                    <TextInput
+                      label="Telefone de emergência"
+                      value={extraForm.emergencyContactPhone}
+                      onChange={(value) => updateExtraForm("emergencyContactPhone", value)}
+                    />
+                  </div>
+
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <TextAreaInput
+                      label="Autorizados para buscar / observações de retirada"
+                      value={extraForm.authorizedPickupNotes}
+                      onChange={(value) => updateExtraForm("authorizedPickupNotes", value)}
+                    />
+                    <TextAreaInput
+                      label="Observações gerais"
+                      value={extraForm.generalNotes}
+                      onChange={(value) => updateExtraForm("generalNotes", value)}
+                    />
+                  </div>
+                </section>
+              ) : (
+                <section>
+                  <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-slate-900">
+                        Dados complementares
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Informações adicionais usadas na ficha oficial do aluno.
+                      </p>
+                    </div>
+
+                    <div className="text-xs text-slate-500">
+                      Atualizado em:{" "}
+                      {formatDateTimeBR(selectedProfile.student.studentProfileUpdatedAt)}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                    <InfoBox label="Sexo" value={selectedProfile.student.gender} />
+                    <InfoBox label="CPF" value={selectedProfile.student.cpf} />
+                    <InfoBox label="RG" value={selectedProfile.student.rg} />
+                    <InfoBox
+                      label="Certidão"
+                      value={selectedProfile.student.birthCertificate}
+                    />
+                  </div>
+
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <InfoBox label="Nome da mãe" value={selectedProfile.student.motherName} />
+                    <InfoBox label="Nome do pai" value={selectedProfile.student.fatherName} />
+                  </div>
+
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <InfoBox
+                      label="Observações médicas / alertas"
+                      value={selectedProfile.student.medicalNotes}
+                    />
+                    <InfoBox label="Alergias" value={selectedProfile.student.allergies} />
+                    <InfoBox
+                      label="Medicação contínua"
+                      value={selectedProfile.student.continuousMedication}
+                    />
+                    <InfoBox
+                      label="Restrições alimentares"
+                      value={selectedProfile.student.foodRestrictions}
+                    />
+                    <InfoBox
+                      label="Contato de emergência"
+                      value={selectedProfile.student.emergencyContactName}
+                    />
+                    <InfoBox
+                      label="Telefone de emergência"
+                      value={selectedProfile.student.emergencyContactPhone}
+                    />
+                  </div>
+
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <InfoBox
+                      label="Autorizados para buscar / retirada"
+                      value={selectedProfile.student.authorizedPickupNotes}
+                    />
+                    <InfoBox
+                      label="Observações gerais"
+                      value={selectedProfile.student.generalNotes}
+                    />
+                  </div>
+                </section>
+              )}
 
               <section>
                 <h3 className="text-lg font-semibold text-slate-900">Turma atual</h3>
@@ -1061,7 +1473,10 @@ export default function StudentsPage() {
                               <InfoBox label="CPF" value={parent.cpf} />
                               <InfoBox label="Telefone secundário" value={parent.phoneSecondary} />
                               <InfoBox label="CEP" value={parent.zipCode} />
-                              <InfoBox label="Cidade/UF" value={`${field(parent.city)} / ${field(parent.state)}`} />
+                              <InfoBox
+                                label="Cidade/UF"
+                                value={`${field(parent.city)} / ${field(parent.state)}`}
+                              />
                               <InfoBox label="Bairro" value={parent.neighborhood} />
                             </div>
 
