@@ -27,6 +27,10 @@ export async function GET(req: Request) {
         birth_date,
         registration_number,
         class_id,
+        student_photo_url,
+        student_photo_uploaded_at,
+        student_photo_uploaded_by,
+        student_profile_updated_at,
         created_at
       `
       )
@@ -48,13 +52,7 @@ export async function GET(req: Request) {
       return jsonFail(500, error.message);
     }
 
-    const students = (data || []).map((student: any) => ({
-      ...student,
-      student_photo_url: null,
-      studentProfileUpdatedAt: null,
-    }));
-
-    return jsonOk({ students });
+    return jsonOk({ students: data || [] });
   } catch (err) {
     logRouteError("GET /api/school/students", err, {
       schoolId: guard.schoolId,
@@ -98,6 +96,8 @@ export async function POST(req: Request) {
         registration_number,
         birth_date,
         class_id: null,
+        student_photo_url: null,
+        student_profile_updated_at: new Date().toISOString(),
       })
       .select(
         `
@@ -107,6 +107,10 @@ export async function POST(req: Request) {
         birth_date,
         registration_number,
         class_id,
+        student_photo_url,
+        student_photo_uploaded_at,
+        student_photo_uploaded_by,
+        student_profile_updated_at,
         created_at
       `
       )
@@ -116,16 +120,7 @@ export async function POST(req: Request) {
       return jsonFail(500, error.message);
     }
 
-    return jsonOk(
-      {
-        student: {
-          ...data,
-          student_photo_url: null,
-          studentProfileUpdatedAt: null,
-        },
-      },
-      201
-    );
+    return jsonOk({ student: data }, 201);
   } catch (err) {
     logRouteError("POST /api/school/students", err, {
       schoolId: guard.schoolId,

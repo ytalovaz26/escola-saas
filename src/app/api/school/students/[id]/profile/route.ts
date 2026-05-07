@@ -65,6 +65,10 @@ export async function GET(
         birth_date,
         registration_number,
         class_id,
+        student_photo_url,
+        student_photo_uploaded_at,
+        student_photo_uploaded_by,
+        student_profile_updated_at,
         created_at
       `
       )
@@ -188,6 +192,7 @@ export async function GET(
       }
 
       const linkByParentId = new Map<string, any>();
+
       for (const link of links || []) {
         linkByParentId.set(String(link.parent_id), link);
       }
@@ -231,9 +236,12 @@ export async function GET(
         legacyClassId: student.class_id ?? null,
         createdAt: student.created_at ?? null,
 
-        // Mantém compatibilidade visual sem quebrar enquanto a coluna oficial não existe no banco atual.
-        studentPhotoUrl: null,
-        studentProfileUpdatedAt: null,
+        studentPhotoUrl: student.student_photo_url ?? null,
+        photoUrl: student.student_photo_url ?? null,
+        studentPhotoUploadedAt: student.student_photo_uploaded_at ?? null,
+        studentPhotoUploadedBy: student.student_photo_uploaded_by ?? null,
+        studentProfileUpdatedAt:
+          student.student_profile_updated_at ?? student.created_at ?? null,
       },
       activeClass,
       parents,
