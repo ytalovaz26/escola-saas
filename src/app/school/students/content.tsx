@@ -169,6 +169,7 @@ export default function StudentsPage() {
   const [selectedProfile, setSelectedProfile] = useState<StudentProfilePayload | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoMessage, setPhotoMessage] = useState<string | null>(null);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
 
   const activeMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -546,6 +547,7 @@ export default function StudentsPage() {
     setProfileLoadingId(null);
     setPhotoMessage(null);
     setUploadingPhoto(false);
+    setGeneratingPdf(false);
   }
 
   async function uploadStudentPhoto(event: ChangeEvent<HTMLInputElement>) {
@@ -618,6 +620,49 @@ export default function StudentsPage() {
       }
     } finally {
       setUploadingPhoto(false);
+    }
+  }
+
+  async function generateStudentProfilePdf() {
+    if (!selectedProfile?.student?.id) return;
+
+    try {
+      setGeneratingPdf(true);
+      setProfileError(null);
+
+      const token = await getAccessToken();
+      const url = `/api/school/students/${selectedProfile.student.id}/profile-pdf`;
+
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        const json = await safeJson(res);
+        setProfileError(json?.error || "Erro ao gerar PDF da ficha do aluno.");
+        return;
+      }
+
+      const blob = await res.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+
+      window.open(objectUrl, "_blank", "noopener,noreferrer");
+
+      setTimeout(() => {
+        window.URL.revokeObjectURL(objectUrl);
+      }, 60_000);
+    } catch (e: any) {
+      setProfileError(e?.message || "Erro inesperado ao gerar PDF da ficha do aluno.");
+
+      if (e?.message === "Not authenticated") {
+        router.replace("/login");
+      }
+    } finally {
+      setGeneratingPdf(false);
     }
   }
 
@@ -905,10 +950,19 @@ export default function StudentsPage() {
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      disabled={uploadingPhoto}
+                      disabled={uploadingPhoto || generatingPdf}
                       className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
                     >
                       {uploadingPhoto ? "Enviando foto..." : "Enviar foto do aluno"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={generateStudentProfilePdf}
+                      disabled={generatingPdf || uploadingPhoto}
+                      className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      {generatingPdf ? "Gerando PDF..." : "Gerar PDF da ficha"}
                     </button>
                   </div>
                 </div>
@@ -1020,11 +1074,6 @@ export default function StudentsPage() {
                     ))}
                   </div>
                 )}
-              </section>
-
-              <section className="rounded-3xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
-                Esta ficha é uma visualização inicial. Na próxima etapa vamos adicionar o botão
-                para gerar o PDF oficial da ficha do aluno com logo da escola e layout premium.
               </section>
             </div>
           </div>
