@@ -58,6 +58,14 @@ function normalizeYear(value: any) {
   return year;
 }
 
+function isStudentClassSyntheticId(value: string) {
+  return String(value || "").startsWith("student_class:");
+}
+
+function getStudentClassIdFromSyntheticId(value: string) {
+  return String(value || "").replace(/^student_class:/, "").trim();
+}
+
 async function ensureEnrollment(enrollmentId: string, schoolId: string) {
   const { data, error } = await supabaseAdmin
     .from("enrollments")
@@ -93,6 +101,33 @@ async function ensureEnrollment(enrollmentId: string, schoolId: string) {
   }
 
   return { ok: true as const, enrollment: data };
+}
+
+async function ensureStudentClassLink(studentClassId: string, schoolId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("student_classes")
+    .select("id, school_id, student_id, class_id, is_active, started_at, ended_at, created_at")
+    .eq("id", studentClassId)
+    .eq("school_id", schoolId)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      ok: false as const,
+      status: 500,
+      error: "Erro ao buscar vínculo aluno/turma: " + error.message,
+    };
+  }
+
+  if (!data?.id) {
+    return {
+      ok: false as const,
+      status: 404,
+      error: "Vínculo aluno/turma não encontrado.",
+    };
+  }
+
+  return { ok: true as const, link: data };
 }
 
 async function ensureStudentBelongsToSchool(studentId: string, schoolId: string) {
@@ -156,6 +191,82 @@ async function ensureParentBelongsToSchool(parentId: string | null, schoolId: st
   return { ok: true as const, parent: data };
 }
 
+async function syncActiveClassLink({
+  schoolId,
+  studentId,
+  classId,
+  enrollmentDate,
+}: {
+  schoolId: string;
+  studentId: string;
+  classId: string | null;
+  enrollmentDate: string | null;
+}) {
+  if (!classId) {
+    return { ok: true as const };
+  }
+
+  const { data: currentActive, error: currentErr } = await supabaseAdmin
+    .from("student_classes")
+    .select("id, school_id, student_id, class_id, is_active, started_at, ended_at, created_at")
+    .eq("school_id", schoolId)
+    .eq("student_id", studentId)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (currentErr) {
+    return {
+      ok: false as const,
+      error: "Erro ao verificar vínculo ativo aluno/turma: " + currentErr.message,
+    };
+  }
+
+  if (currentActive?.id && String(currentActive.class_id) === String(classId)) {
+    return { ok: true as const };
+  }
+
+  const now = new Date().toISOString();
+
+  const { error: deactivateErr } = await supabaseAdmin
+    .from("student_classes")
+    .update({
+      is_active: false,
+      ended_at: now,
+    })
+    .eq("school_id", schoolId)
+    .eq("student_id", studentId)
+    .eq("is_active", true);
+
+  if (deactivateErr) {
+    return {
+      ok: false as const,
+      error: "Erro ao encerrar vínculo ativo anterior do aluno: " + deactivateErr.message,
+    };
+  }
+
+  const { error: insertErr } = await supabaseAdmin
+    .from("student_classes")
+    .insert({
+      school_id: schoolId,
+      student_id: studentId,
+      class_id: classId,
+      is_active: true,
+      started_at: enrollmentDate || now.slice(0, 10),
+      ended_at: null,
+    });
+
+  if (insertErr) {
+    return {
+      ok: false as const,
+      error: "Erro ao criar vínculo ativo aluno/turma: " + insertErr.message,
+    };
+  }
+
+  return { ok: true as const };
+}
+
 export async function GET(
   req: Request,
   context: { params: Promise<{ id: string }> }
@@ -181,6 +292,65 @@ export async function GET(
 
     if (!enrollmentId) {
       return jsonError("ID da matrícula é obrigatório.", 400);
+    }
+
+    if (isStudentClassSyntheticId(enrollmentId)) {
+      const studentClassId = getStudentClassIdFromSyntheticId(enrollmentId);
+      const linkCheck = await ensureStudentClassLink(studentClassId, schoolId);
+
+      if (!linkCheck.ok) {
+        return jsonError(linkCheck.error, linkCheck.status);
+      }
+
+      const link = linkCheck.link;
+
+      const { data: student, error: studentErr } = await supabaseAdmin
+        .from("students")
+        .select("id, full_name, registration_number, birth_date, student_photo_url")
+        .eq("id", link.student_id)
+        .eq("school_id", schoolId)
+        .maybeSingle();
+
+      if (studentErr) {
+        return jsonError("Erro ao buscar aluno do vínculo: " + studentErr.message, 500);
+      }
+
+      const { data: classRow, error: classErr } = await supabaseAdmin
+        .from("classes")
+        .select("id, name, grade, shift")
+        .eq("id", link.class_id)
+        .eq("school_id", schoolId)
+        .maybeSingle();
+
+      if (classErr) {
+        return jsonError("Erro ao buscar turma do vínculo: " + classErr.message, 500);
+      }
+
+      return jsonOk({
+        enrollment: {
+          id: `student_class:${link.id}`,
+          school_id: link.school_id,
+          student_id: link.student_id,
+          class_id: link.class_id,
+          academic_year: normalizeYear(link.started_at || new Date().getFullYear()),
+          enrollment_number: null,
+          status: link.is_active ? "active" : "inactive",
+          enrollment_date: String(link.started_at || link.created_at || new Date().toISOString()).slice(0, 10),
+          cancellation_date: link.ended_at ? String(link.ended_at).slice(0, 10) : null,
+          transfer_date: null,
+          financial_responsible_parent_id: null,
+          pedagogical_responsible_parent_id: null,
+          notes: "Registro exibido a partir do vínculo ativo aluno/turma.",
+          created_at: link.created_at,
+          updated_at: link.created_at,
+          studentClassLinkId: link.id,
+          source: "student_classes",
+          student: student || null,
+          class: classRow || null,
+          financialResponsible: null,
+          pedagogicalResponsible: null,
+        },
+      });
     }
 
     const enrollmentCheck = await ensureEnrollment(enrollmentId, schoolId);
@@ -245,6 +415,7 @@ export async function GET(
     return jsonOk({
       enrollment: {
         ...enrollment,
+        source: "enrollments",
         student: student || null,
         class: classRow,
         financialResponsible: enrollment.financial_responsible_parent_id
@@ -285,6 +456,13 @@ export async function PATCH(
 
     if (!enrollmentId) {
       return jsonError("ID da matrícula é obrigatório.", 400);
+    }
+
+    if (isStudentClassSyntheticId(enrollmentId)) {
+      return jsonError(
+        "Este registro foi criado a partir do vínculo aluno/turma. Para editar os detalhes completos, crie uma matrícula oficial para o aluno.",
+        409
+      );
     }
 
     const currentCheck = await ensureEnrollment(enrollmentId, schoolId);
@@ -447,6 +625,43 @@ export async function PATCH(
       return jsonError("Matrícula não encontrada após atualização.", 404);
     }
 
+    if (nextStatus === "active") {
+      const sync = await syncActiveClassLink({
+        schoolId,
+        studentId: nextStudentId,
+        classId: nextClassId,
+        enrollmentDate: nextEnrollmentDate,
+      });
+
+      if (!sync.ok) {
+        return jsonError(sync.error, 500, {
+          enrollment,
+          warning: "A matrícula foi atualizada, mas o vínculo aluno/turma não foi sincronizado.",
+        });
+      }
+    }
+
+    if (nextStatus !== "active") {
+      const now = new Date().toISOString();
+
+      const { error: deactivateErr } = await supabaseAdmin
+        .from("student_classes")
+        .update({
+          is_active: false,
+          ended_at: nextCancellationDate || nextTransferDate || now,
+        })
+        .eq("school_id", schoolId)
+        .eq("student_id", nextStudentId)
+        .eq("class_id", nextClassId)
+        .eq("is_active", true);
+
+      if (deactivateErr) {
+        return jsonError("Matrícula atualizada, mas houve erro ao encerrar vínculo aluno/turma: " + deactivateErr.message, 500, {
+          enrollment,
+        });
+      }
+    }
+
     return jsonOk({ enrollment });
   } catch (e: any) {
     return jsonError(e?.message || "Erro interno ao atualizar matrícula.", 500);
@@ -480,11 +695,45 @@ export async function DELETE(
       return jsonError("ID da matrícula é obrigatório.", 400);
     }
 
+    if (isStudentClassSyntheticId(enrollmentId)) {
+      const studentClassId = getStudentClassIdFromSyntheticId(enrollmentId);
+
+      const linkCheck = await ensureStudentClassLink(studentClassId, schoolId);
+
+      if (!linkCheck.ok) {
+        return jsonError(linkCheck.error, linkCheck.status);
+      }
+
+      const now = new Date().toISOString();
+
+      const { error } = await supabaseAdmin
+        .from("student_classes")
+        .update({
+          is_active: false,
+          ended_at: now,
+        })
+        .eq("id", studentClassId)
+        .eq("school_id", schoolId);
+
+      if (error) {
+        return jsonError("Erro ao remover aluno da turma: " + error.message, 500);
+      }
+
+      return jsonOk({
+        deleted: true,
+        enrollmentId,
+        studentClassLinkId: studentClassId,
+        source: "student_classes",
+      });
+    }
+
     const currentCheck = await ensureEnrollment(enrollmentId, schoolId);
 
     if (!currentCheck.ok) {
       return jsonError(currentCheck.error, currentCheck.status);
     }
+
+    const current = currentCheck.enrollment;
 
     const { error } = await supabaseAdmin
       .from("enrollments")
@@ -496,9 +745,25 @@ export async function DELETE(
       return jsonError("Erro ao excluir matrícula: " + error.message, 500);
     }
 
+    if (current.student_id && current.class_id) {
+      const now = new Date().toISOString();
+
+      await supabaseAdmin
+        .from("student_classes")
+        .update({
+          is_active: false,
+          ended_at: now,
+        })
+        .eq("school_id", schoolId)
+        .eq("student_id", current.student_id)
+        .eq("class_id", current.class_id)
+        .eq("is_active", true);
+    }
+
     return jsonOk({
       deleted: true,
       enrollmentId,
+      source: "enrollments",
     });
   } catch (e: any) {
     return jsonError(e?.message || "Erro interno ao excluir matrícula.", 500);

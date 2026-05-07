@@ -58,10 +58,24 @@ function normalizeYear(value: any) {
   return year;
 }
 
+function buildClassLabel(classRow: any) {
+  if (!classRow) return null;
+
+  const parts = [
+    classRow.name,
+    classRow.grade,
+    classRow.shift,
+  ]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+
+  return parts.join(" • ") || null;
+}
+
 async function ensureStudentBelongsToSchool(studentId: string, schoolId: string) {
   const { data, error } = await supabaseAdmin
     .from("students")
-    .select("id, school_id, full_name, registration_number")
+    .select("id, school_id, full_name, registration_number, birth_date, student_photo_url")
     .eq("id", studentId)
     .eq("school_id", schoolId)
     .maybeSingle();
@@ -119,6 +133,119 @@ async function ensureParentBelongsToSchool(parentId: string | null, schoolId: st
   return { ok: true as const, parent: data };
 }
 
+async function deactivateOtherActiveStudentClassLinks({
+  schoolId,
+  studentId,
+}: {
+  schoolId: string;
+  studentId: string;
+}) {
+  const now = new Date().toISOString();
+
+  const { error } = await supabaseAdmin
+    .from("student_classes")
+    .update({
+      is_active: false,
+      ended_at: now,
+    })
+    .eq("school_id", schoolId)
+    .eq("student_id", studentId)
+    .eq("is_active", true);
+
+  if (error) {
+    return {
+      ok: false as const,
+      error: "Erro ao encerrar vínculo ativo anterior do aluno: " + error.message,
+    };
+  }
+
+  return { ok: true as const };
+}
+
+async function createActiveStudentClassLink({
+  schoolId,
+  studentId,
+  classId,
+  startedAt,
+}: {
+  schoolId: string;
+  studentId: string;
+  classId: string;
+  startedAt: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("student_classes")
+    .insert({
+      school_id: schoolId,
+      student_id: studentId,
+      class_id: classId,
+      is_active: true,
+      started_at: startedAt,
+      ended_at: null,
+    })
+    .select("id, school_id, student_id, class_id, is_active, started_at, ended_at, created_at")
+    .single();
+
+  if (error) {
+    return {
+      ok: false as const,
+      error: "Erro ao criar vínculo ativo aluno/turma: " + error.message,
+    };
+  }
+
+  return { ok: true as const, link: data };
+}
+
+async function syncActiveClassLink({
+  schoolId,
+  studentId,
+  classId,
+  enrollmentDate,
+}: {
+  schoolId: string;
+  studentId: string;
+  classId: string | null;
+  enrollmentDate: string;
+}) {
+  if (!classId) {
+    return { ok: true as const, link: null };
+  }
+
+  const { data: currentActive, error: currentErr } = await supabaseAdmin
+    .from("student_classes")
+    .select("id, school_id, student_id, class_id, is_active, started_at, ended_at, created_at")
+    .eq("school_id", schoolId)
+    .eq("student_id", studentId)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (currentErr) {
+    return {
+      ok: false as const,
+      error: "Erro ao verificar vínculo ativo aluno/turma: " + currentErr.message,
+    };
+  }
+
+  if (currentActive?.id && String(currentActive.class_id) === String(classId)) {
+    return { ok: true as const, link: currentActive };
+  }
+
+  const deactivate = await deactivateOtherActiveStudentClassLinks({ schoolId, studentId });
+
+  if (!deactivate.ok) {
+    return deactivate;
+  }
+
+  return await createActiveStudentClassLink({
+    schoolId,
+    studentId,
+    classId,
+    startedAt: enrollmentDate,
+  });
+}
+
 export async function GET(req: Request) {
   const guard = await requireStaff(req, [
     "director",
@@ -144,8 +271,9 @@ export async function GET(req: Request) {
     const status = normalizeText(url.searchParams.get("status"));
     const yearRaw = normalizeText(url.searchParams.get("academicYear"));
     const q = normalizeText(url.searchParams.get("q"));
+    const academicYear = yearRaw ? normalizeYear(yearRaw) : null;
 
-    let query = supabaseAdmin
+    let enrollmentsQuery = supabaseAdmin
       .from("enrollments")
       .select(
         `
@@ -171,38 +299,111 @@ export async function GET(req: Request) {
       .limit(1000);
 
     if (studentId) {
-      query = query.eq("student_id", studentId);
+      enrollmentsQuery = enrollmentsQuery.eq("student_id", studentId);
     }
 
     if (classId) {
-      query = query.eq("class_id", classId);
+      enrollmentsQuery = enrollmentsQuery.eq("class_id", classId);
     }
 
     if (status) {
-      query = query.eq("status", status);
+      enrollmentsQuery = enrollmentsQuery.eq("status", status);
     }
 
-    if (yearRaw) {
-      query = query.eq("academic_year", normalizeYear(yearRaw));
+    if (academicYear) {
+      enrollmentsQuery = enrollmentsQuery.eq("academic_year", academicYear);
     }
 
-    const { data: enrollments, error } = await query;
+    const { data: enrollments, error: enrollmentsErr } = await enrollmentsQuery;
 
-    if (error) {
-      return jsonError("Erro ao buscar matrículas: " + error.message, 500);
+    if (enrollmentsErr) {
+      return jsonError("Erro ao buscar matrículas: " + enrollmentsErr.message, 500);
     }
+
+    let linksQuery = supabaseAdmin
+      .from("student_classes")
+      .select(
+        `
+        id,
+        school_id,
+        student_id,
+        class_id,
+        is_active,
+        started_at,
+        ended_at,
+        created_at
+      `
+      )
+      .eq("school_id", schoolId)
+      .order("created_at", { ascending: false })
+      .limit(1000);
+
+    if (studentId) {
+      linksQuery = linksQuery.eq("student_id", studentId);
+    }
+
+    if (classId) {
+      linksQuery = linksQuery.eq("class_id", classId);
+    }
+
+    if (!status || status === "active") {
+      linksQuery = linksQuery.eq("is_active", true);
+    }
+
+    const { data: studentClassLinks, error: linksErr } = await linksQuery;
+
+    if (linksErr) {
+      return jsonError("Erro ao buscar vínculos de alunos com turmas: " + linksErr.message, 500);
+    }
+
+    const enrollmentStudentClassPairs = new Set(
+      (enrollments || []).map((row: any) => `${String(row.student_id)}::${String(row.class_id || "")}`)
+    );
+
+    const syntheticEnrollments = (studentClassLinks || [])
+      .filter((link: any) => {
+        const pair = `${String(link.student_id)}::${String(link.class_id || "")}`;
+        return !enrollmentStudentClassPairs.has(pair);
+      })
+      .map((link: any) => ({
+        id: `student_class:${link.id}`,
+        school_id: link.school_id,
+        student_id: link.student_id,
+        class_id: link.class_id,
+        academic_year: academicYear || normalizeYear(link.started_at || new Date().getFullYear()),
+        enrollment_number: null,
+        status: link.is_active ? "active" : "inactive",
+        enrollment_date: String(link.started_at || link.created_at || new Date().toISOString()).slice(0, 10),
+        cancellation_date: link.ended_at ? String(link.ended_at).slice(0, 10) : null,
+        transfer_date: null,
+        financial_responsible_parent_id: null,
+        pedagogical_responsible_parent_id: null,
+        notes: "Registro exibido a partir do vínculo ativo aluno/turma.",
+        created_at: link.created_at,
+        updated_at: link.created_at,
+        studentClassLinkId: link.id,
+        source: "student_classes",
+      }));
+
+    const allRows = [
+      ...(enrollments || []).map((row: any) => ({
+        ...row,
+        source: "enrollments",
+      })),
+      ...syntheticEnrollments,
+    ];
 
     const studentIds = Array.from(
-      new Set((enrollments || []).map((row: any) => String(row.student_id)).filter(Boolean))
+      new Set(allRows.map((row: any) => String(row.student_id)).filter(Boolean))
     );
 
     const classIds = Array.from(
-      new Set((enrollments || []).map((row: any) => String(row.class_id || "")).filter(Boolean))
+      new Set(allRows.map((row: any) => String(row.class_id || "")).filter(Boolean))
     );
 
     const parentIds = Array.from(
       new Set(
-        (enrollments || [])
+        allRows
           .flatMap((row: any) => [
             row.financial_responsible_parent_id,
             row.pedagogical_responsible_parent_id,
@@ -258,7 +459,7 @@ export async function GET(req: Request) {
       parentsById = new Map((parents || []).map((parent: any) => [String(parent.id), parent]));
     }
 
-    let rows = (enrollments || []).map((enrollment: any) => {
+    let rows = allRows.map((enrollment: any) => {
       const student = studentsById.get(String(enrollment.student_id)) || null;
       const classRow = enrollment.class_id
         ? classesById.get(String(enrollment.class_id)) || null
@@ -276,6 +477,7 @@ export async function GET(req: Request) {
         ...enrollment,
         student,
         class: classRow,
+        classLabel: buildClassLabel(classRow),
         financialResponsible,
         pedagogicalResponsible,
       };
@@ -296,6 +498,12 @@ export async function GET(req: Request) {
         );
       });
     }
+
+    rows.sort((a: any, b: any) => {
+      const aName = String(a.student?.full_name || "");
+      const bName = String(b.student?.full_name || "");
+      return aName.localeCompare(bName);
+    });
 
     return jsonOk({
       enrollments: rows,
@@ -330,7 +538,9 @@ export async function POST(req: Request) {
     const academicYear = normalizeYear(body.academic_year || body.academicYear);
     const enrollmentNumber = normalizeText(body.enrollment_number || body.enrollmentNumber);
     const status = normalizeStatus(body.status);
-    const enrollmentDate = normalizeDate(body.enrollment_date || body.enrollmentDate) || new Date().toISOString().slice(0, 10);
+    const enrollmentDate =
+      normalizeDate(body.enrollment_date || body.enrollmentDate) ||
+      new Date().toISOString().slice(0, 10);
     const cancellationDate = normalizeDate(body.cancellation_date || body.cancellationDate);
     const transferDate = normalizeDate(body.transfer_date || body.transferDate);
     const financialResponsibleParentId = normalizeText(
@@ -343,6 +553,10 @@ export async function POST(req: Request) {
 
     if (!studentId) {
       return jsonError("student_id é obrigatório.", 422);
+    }
+
+    if (!classId) {
+      return jsonError("class_id é obrigatório.", 422);
     }
 
     const studentCheck = await ensureStudentBelongsToSchool(studentId, schoolId);
@@ -369,7 +583,7 @@ export async function POST(req: Request) {
       return jsonError(pedagogicalCheck.error, 422);
     }
 
-    const { data: existingActive, error: existingErr } = await supabaseAdmin
+    const { data: existingActiveEnrollment, error: existingErr } = await supabaseAdmin
       .from("enrollments")
       .select("id, status, academic_year")
       .eq("school_id", schoolId)
@@ -382,56 +596,111 @@ export async function POST(req: Request) {
       return jsonError("Erro ao verificar matrícula ativa: " + existingErr.message, 500);
     }
 
-    if (existingActive?.id && status === "active") {
-      return jsonError(
-        "Este aluno já possui matrícula ativa para este ano letivo.",
-        409,
-        { enrollmentId: existingActive.id }
-      );
-    }
+    let enrollment: any = null;
 
-    const { data: enrollment, error } = await supabaseAdmin
-      .from("enrollments")
-      .insert({
-        school_id: schoolId,
-        student_id: studentId,
-        class_id: classId,
-        academic_year: academicYear,
-        enrollment_number: enrollmentNumber,
-        status,
-        enrollment_date: enrollmentDate,
-        cancellation_date: cancellationDate,
-        transfer_date: transferDate,
-        financial_responsible_parent_id: financialResponsibleParentId,
-        pedagogical_responsible_parent_id: pedagogicalResponsibleParentId,
-        notes,
-      })
-      .select(
+    if (existingActiveEnrollment?.id && status === "active") {
+      const { data: updatedEnrollment, error: updateEnrollmentErr } = await supabaseAdmin
+        .from("enrollments")
+        .update({
+          class_id: classId,
+          enrollment_number: enrollmentNumber,
+          enrollment_date: enrollmentDate,
+          cancellation_date: cancellationDate,
+          transfer_date: transferDate,
+          financial_responsible_parent_id: financialResponsibleParentId,
+          pedagogical_responsible_parent_id: pedagogicalResponsibleParentId,
+          notes,
+        })
+        .eq("id", existingActiveEnrollment.id)
+        .eq("school_id", schoolId)
+        .select(
+          `
+          id,
+          school_id,
+          student_id,
+          class_id,
+          academic_year,
+          enrollment_number,
+          status,
+          enrollment_date,
+          cancellation_date,
+          transfer_date,
+          financial_responsible_parent_id,
+          pedagogical_responsible_parent_id,
+          notes,
+          created_at,
+          updated_at
         `
-        id,
-        school_id,
-        student_id,
-        class_id,
-        academic_year,
-        enrollment_number,
-        status,
-        enrollment_date,
-        cancellation_date,
-        transfer_date,
-        financial_responsible_parent_id,
-        pedagogical_responsible_parent_id,
-        notes,
-        created_at,
-        updated_at
-      `
-      )
-      .single();
+        )
+        .maybeSingle();
 
-    if (error) {
-      return jsonError("Erro ao criar matrícula: " + error.message, 500);
+      if (updateEnrollmentErr) {
+        return jsonError("Erro ao atualizar matrícula ativa: " + updateEnrollmentErr.message, 500);
+      }
+
+      enrollment = updatedEnrollment;
+    } else {
+      const { data: createdEnrollment, error } = await supabaseAdmin
+        .from("enrollments")
+        .insert({
+          school_id: schoolId,
+          student_id: studentId,
+          class_id: classId,
+          academic_year: academicYear,
+          enrollment_number: enrollmentNumber,
+          status,
+          enrollment_date: enrollmentDate,
+          cancellation_date: cancellationDate,
+          transfer_date: transferDate,
+          financial_responsible_parent_id: financialResponsibleParentId,
+          pedagogical_responsible_parent_id: pedagogicalResponsibleParentId,
+          notes,
+        })
+        .select(
+          `
+          id,
+          school_id,
+          student_id,
+          class_id,
+          academic_year,
+          enrollment_number,
+          status,
+          enrollment_date,
+          cancellation_date,
+          transfer_date,
+          financial_responsible_parent_id,
+          pedagogical_responsible_parent_id,
+          notes,
+          created_at,
+          updated_at
+        `
+        )
+        .single();
+
+      if (error) {
+        return jsonError("Erro ao criar matrícula: " + error.message, 500);
+      }
+
+      enrollment = createdEnrollment;
     }
 
-    return jsonOk({ enrollment }, 201);
+    if (status === "active") {
+      const sync = await syncActiveClassLink({
+        schoolId,
+        studentId,
+        classId,
+        enrollmentDate,
+      });
+
+      if (!sync.ok) {
+        return jsonError(sync.error, 500, {
+          enrollment,
+          warning: "A matrícula foi salva, mas o vínculo aluno/turma não foi sincronizado.",
+        });
+      }
+    }
+
+    return jsonOk({ enrollment }, existingActiveEnrollment?.id ? 200 : 201);
   } catch (e: any) {
     return jsonError(e?.message || "Erro interno ao criar matrícula.", 500);
   }
