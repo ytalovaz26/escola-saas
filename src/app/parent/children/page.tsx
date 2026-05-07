@@ -8,6 +8,9 @@ type ChildRow = {
   id: string;
   full_name: string;
   registration_number: string | null;
+  birth_date?: string | null;
+  student_photo_url?: string | null;
+  studentProfileUpdatedAt?: string | null;
   relationship: string | null;
   active_class: null | {
     class_id: string;
@@ -24,7 +27,9 @@ type ChildRow = {
 
 async function safeJson(res: Response) {
   const text = await res.text();
+
   if (!text) return null;
+
   try {
     return JSON.parse(text);
   } catch {
@@ -34,9 +39,11 @@ async function safeJson(res: Response) {
 
 function initials(name?: string | null) {
   const safe = String(name || "").trim();
+
   if (!safe) return "AL";
 
   const parts = safe.split(/\s+/).filter(Boolean);
+
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
 
   return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
@@ -44,14 +51,50 @@ function initials(name?: string | null) {
 
 function classLabel(child: ChildRow) {
   const cls = child.active_class?.class;
+
   if (!cls) return "Sem turma ativa";
 
   const parts: string[] = [];
+
   if (cls.name) parts.push(cls.name);
   if (cls.grade) parts.push(cls.grade);
   if (cls.shift) parts.push(cls.shift);
 
   return parts.join(" • ") || "Turma ativa";
+}
+
+function StudentAvatar({
+  child,
+  size = "md",
+}: {
+  child: ChildRow;
+  size?: "md" | "lg";
+}) {
+  const photoUrl = String(child.student_photo_url || "").trim();
+
+  const sizeClasses =
+    size === "lg"
+      ? "h-20 w-20 rounded-3xl text-xl"
+      : "h-14 w-14 rounded-2xl text-sm";
+
+  if (photoUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={photoUrl}
+        alt={`Foto de ${child.full_name}`}
+        className={`${sizeClasses} shrink-0 border border-slate-200 object-cover shadow-sm`}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`${sizeClasses} flex shrink-0 items-center justify-center bg-slate-900 font-semibold text-white shadow-sm`}
+    >
+      {initials(child.full_name)}
+    </div>
+  );
 }
 
 function MetricCard({
@@ -68,9 +111,11 @@ function MetricCard({
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
         {label}
       </div>
+
       <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
         {value}
       </div>
+
       <div className="mt-2 text-sm leading-6 text-slate-500">{help}</div>
     </div>
   );
@@ -121,9 +166,7 @@ function PremiumCard({
       <div className="border-b border-slate-200 bg-slate-50/70 px-5 py-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="flex min-w-0 items-start gap-4">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white">
-              {initials(child.full_name)}
-            </div>
+            <StudentAvatar child={child} />
 
             <div className="min-w-0">
               <h2 className="truncate text-lg font-semibold text-slate-900">
@@ -151,11 +194,21 @@ function PremiumCard({
                 >
                   {hasClass ? "Turma ativa" : "Sem turma ativa"}
                 </span>
+
+                {child.student_photo_url ? (
+                  <span className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                    Foto cadastrada
+                  </span>
+                ) : (
+                  <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                    Sem foto
+                  </span>
+                )}
               </div>
             </div>
           </div>
 
-          <div className="text-[11px] font-mono text-slate-400 break-all md:max-w-[200px]">
+          <div className="break-all font-mono text-[11px] text-slate-400 md:max-w-[200px]">
             {child.id}
           </div>
         </div>
@@ -167,9 +220,11 @@ function PremiumCard({
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Turma atual
             </div>
+
             <div className="mt-2 text-base font-semibold text-slate-900">
               {classLabel(child)}
             </div>
+
             <div className="mt-2 text-sm leading-6 text-slate-500">
               Acesse rapidamente presença, histórico mensal e boletim escolar deste aluno.
             </div>
@@ -195,10 +250,12 @@ export default function ParentChildrenPage() {
   const [error, setError] = useState<string | null>(null);
 
   const totalChildren = useMemo(() => children.length, [children]);
+
   const activeClassCount = useMemo(
     () => children.filter((child) => !!child.active_class?.class).length,
     [children]
   );
+
   const noClassCount = useMemo(
     () => children.filter((child) => !child.active_class?.class).length,
     [children]
@@ -226,7 +283,11 @@ export default function ParentChildrenPage() {
 
         if (!res.ok || !json?.ok) {
           setError(json?.error || "Falha ao carregar seus filhos.");
-          if (res.status === 401) router.replace("/login");
+
+          if (res.status === 401) {
+            router.replace("/login");
+          }
+
           return;
         }
 
@@ -250,6 +311,7 @@ export default function ParentChildrenPage() {
               <div className="h-32 rounded-3xl bg-slate-100" />
             </div>
           </div>
+
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="h-32 rounded-3xl bg-slate-100" />
             <div className="h-32 rounded-3xl bg-slate-100" />
@@ -262,10 +324,12 @@ export default function ParentChildrenPage() {
 
   if (error) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+      <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
         <div className="w-full max-w-lg rounded-3xl border border-red-200 bg-white p-6 shadow-sm">
           <h1 className="text-xl font-semibold text-slate-900">Erro</h1>
+
           <p className="mt-2 text-sm text-slate-600">{error}</p>
+
           <button
             onClick={() => router.push("/parent")}
             className="mt-4 w-full rounded-2xl bg-slate-900 p-3 text-white"
@@ -288,7 +352,9 @@ export default function ParentChildrenPage() {
                   Área do responsável
                 </div>
 
-                <h1 className="mt-3 text-3xl font-semibold tracking-tight">Meus filhos</h1>
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+                  Meus filhos
+                </h1>
 
                 <p className="mt-2 max-w-3xl text-sm text-slate-200">
                   Acompanhe presença, boletim e rotina escolar de cada aluno vinculado à sua conta.
@@ -330,6 +396,7 @@ export default function ParentChildrenPage() {
             <h2 className="text-xl font-semibold tracking-tight text-slate-900">
               Painéis dos alunos
             </h2>
+
             <p className="mt-1 text-sm text-slate-500">
               Entre em cada aluno para consultar frequência, boletim e informações escolares.
             </p>
