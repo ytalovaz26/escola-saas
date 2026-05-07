@@ -31,6 +31,11 @@ function jsonError(message: string, status = 400, extra?: any) {
 
 function field(value: any) {
   const safe = String(value ?? "").trim();
+  return safe || "Não informado";
+}
+
+function shortField(value: any) {
+  const safe = String(value ?? "").trim();
   return safe || "—";
 }
 
@@ -40,7 +45,7 @@ function brDate(value?: string | null) {
   const clean = String(value).slice(0, 10);
   const [y, m, d] = clean.split("-");
 
-  if (!y || !m || !d) return field(value);
+  if (!y || !m || !d) return shortField(value);
 
   return `${d}/${m}/${y}`;
 }
@@ -75,7 +80,7 @@ function buildAddressText(parent: ParentRow) {
 
   if (zip) parts.push(`CEP ${zip}`);
 
-  return parts.length > 0 ? parts.join(", ") : "—";
+  return parts.length > 0 ? parts.join(", ") : "Não informado";
 }
 
 function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: string } | null {
@@ -188,12 +193,11 @@ function drawInfoBox(
   y: number,
   width: number,
   label: string,
-  value: string
+  value: string,
+  height = 48
 ) {
-  const boxHeight = 48;
-
   doc
-    .roundedRect(x, y, width, boxHeight, 10)
+    .roundedRect(x, y, width, height, 10)
     .fillAndStroke("#f8fafc", "#e5e7eb");
 
   doc.font("Helvetica-Bold").fontSize(7).fillColor("#94a3b8");
@@ -205,9 +209,42 @@ function drawInfoBox(
   doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a");
   doc.text(value || "—", x + 12, y + 25, {
     width: width - 24,
-    height: 16,
+    height: height - 30,
     ellipsis: true,
   });
+}
+
+function drawTextArea(
+  doc: PDFKit.PDFDocument,
+  x: number,
+  y: number,
+  width: number,
+  label: string,
+  value: string,
+  minHeight = 58
+) {
+  const text = field(value);
+  const calculatedHeight = doc.heightOfString(text, { width: width - 24 }) + 36;
+  const height = Math.max(minHeight, Math.min(calculatedHeight, 96));
+
+  doc
+    .roundedRect(x, y, width, height, 10)
+    .fillAndStroke("#f8fafc", "#e5e7eb");
+
+  doc.font("Helvetica-Bold").fontSize(7).fillColor("#94a3b8");
+  doc.text(label.toUpperCase(), x + 12, y + 10, {
+    width: width - 24,
+    lineBreak: false,
+  });
+
+  doc.font("Helvetica").fontSize(9).fillColor("#0f172a");
+  doc.text(text, x + 12, y + 25, {
+    width: width - 24,
+    height: height - 32,
+    ellipsis: true,
+  });
+
+  return height;
 }
 
 function ensureSpace(doc: PDFKit.PDFDocument, y: number, needed: number) {
@@ -234,6 +271,19 @@ function safeFileName(value: string) {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .toLowerCase();
+}
+
+function initialsFromName(name: string | null | undefined) {
+  const safe = String(name || "").trim();
+  if (!safe) return "AL";
+
+  return safe
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0])
+    .join("")
+    .toUpperCase();
 }
 
 export async function GET(
@@ -288,6 +338,13 @@ export async function GET(
         mother_name,
         father_name,
         medical_notes,
+        allergies,
+        continuous_medication,
+        food_restrictions,
+        emergency_contact_name,
+        emergency_contact_phone,
+        authorized_pickup_notes,
+        general_notes,
         created_at
       `
       )
@@ -399,6 +456,9 @@ export async function GET(
     const margin = 40;
     const pageWidth = doc.page.width;
     const contentWidth = pageWidth - margin * 2;
+    const colGap = 10;
+    const colW = (contentWidth - colGap * 3) / 4;
+    const halfW = (contentWidth - colGap) / 2;
 
     doc.rect(0, 0, pageWidth, 126).fill("#0f172a");
 
@@ -441,15 +501,7 @@ export async function GET(
       });
     } else {
       doc.font("Helvetica-Bold").fontSize(28).fillColor("#334155");
-      const initials = String(student.full_name || "AL")
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, 2)
-        .map((p: string) => p[0])
-        .join("")
-        .toUpperCase();
-
-      doc.text(initials || "AL", photoX, photoY + 34, {
+      doc.text(initialsFromName(student.full_name), photoX, photoY + 34, {
         width: photoSize,
         align: "center",
       });
@@ -461,7 +513,7 @@ export async function GET(
     });
 
     doc.font("Helvetica").fontSize(10).fillColor("#475569");
-    doc.text(`Matrícula: ${field(student.registration_number)}`, photoX + photoSize + 22, y + 40, {
+    doc.text(`Matrícula: ${shortField(student.registration_number)}`, photoX + photoSize + 22, y + 40, {
       width: contentWidth - photoSize - 22,
     });
 
@@ -477,58 +529,53 @@ export async function GET(
 
     y = sectionTitle(doc, "Dados oficiais do aluno", y);
 
-    const colGap = 10;
-    const colW = (contentWidth - colGap * 3) / 4;
-
     drawInfoBox(doc, margin, y, colW, "Nome completo", field(student.full_name));
-    drawInfoBox(doc, margin + (colW + colGap), y, colW, "Matrícula", field(student.registration_number));
+    drawInfoBox(doc, margin + (colW + colGap), y, colW, "Matrícula", shortField(student.registration_number));
     drawInfoBox(doc, margin + (colW + colGap) * 2, y, colW, "Nascimento", brDate(student.birth_date));
-    drawInfoBox(doc, margin + (colW + colGap) * 3, y, colW, "Sexo", field(student.gender));
+    drawInfoBox(doc, margin + (colW + colGap) * 3, y, colW, "Sexo", shortField(student.gender));
 
     y += 62;
 
-    drawInfoBox(doc, margin, y, colW, "CPF", field(student.cpf));
-    drawInfoBox(doc, margin + (colW + colGap), y, colW, "RG", field(student.rg));
-    drawInfoBox(doc, margin + (colW + colGap) * 2, y, colW, "Certidão", field(student.birth_certificate));
+    drawInfoBox(doc, margin, y, colW, "CPF", shortField(student.cpf));
+    drawInfoBox(doc, margin + (colW + colGap), y, colW, "RG", shortField(student.rg));
+    drawInfoBox(doc, margin + (colW + colGap) * 2, y, colW, "Certidão", shortField(student.birth_certificate));
     drawInfoBox(doc, margin + (colW + colGap) * 3, y, colW, "Atualizado", brDateTime(student.student_profile_updated_at));
 
     y += 78;
 
-    y = sectionTitle(doc, "Filiação e informações complementares", y);
+    y = sectionTitle(doc, "Filiação", y);
 
-    drawInfoBox(doc, margin, y, (contentWidth - colGap) / 2, "Nome da mãe", field(student.mother_name));
-    drawInfoBox(
-      doc,
-      margin + (contentWidth - colGap) / 2 + colGap,
-      y,
-      (contentWidth - colGap) / 2,
-      "Nome do pai",
-      field(student.father_name)
-    );
+    drawInfoBox(doc, margin, y, halfW, "Nome da mãe", shortField(student.mother_name));
+    drawInfoBox(doc, margin + halfW + colGap, y, halfW, "Nome do pai", shortField(student.father_name));
+
+    y += 78;
+
+    y = ensureSpace(doc, y, 260);
+    y = sectionTitle(doc, "Saúde, segurança e observações", y);
+
+    const area1 = drawTextArea(doc, margin, y, halfW, "Observações médicas / alertas", field(student.medical_notes), 64);
+    const area2 = drawTextArea(doc, margin + halfW + colGap, y, halfW, "Alergias", field(student.allergies), 64);
+    y += Math.max(area1, area2) + 12;
+
+    const area3 = drawTextArea(doc, margin, y, halfW, "Medicação contínua", field(student.continuous_medication), 64);
+    const area4 = drawTextArea(doc, margin + halfW + colGap, y, halfW, "Restrições alimentares", field(student.food_restrictions), 64);
+    y += Math.max(area3, area4) + 12;
+
+    drawInfoBox(doc, margin, y, halfW, "Contato de emergência", shortField(student.emergency_contact_name));
+    drawInfoBox(doc, margin + halfW + colGap, y, halfW, "Telefone de emergência", shortField(student.emergency_contact_phone));
 
     y += 62;
 
-    const notesHeight = Math.max(
-      56,
-      doc.heightOfString(field(student.medical_notes), { width: contentWidth - 24 }) + 32
-    );
-
-    doc.roundedRect(margin, y, contentWidth, notesHeight, 10).fillAndStroke("#f8fafc", "#e5e7eb");
-    doc.font("Helvetica-Bold").fontSize(7).fillColor("#94a3b8");
-    doc.text("OBSERVAÇÕES MÉDICAS / ALERTAS", margin + 12, y + 10);
-    doc.font("Helvetica").fontSize(9).fillColor("#0f172a");
-    doc.text(field(student.medical_notes), margin + 12, y + 25, {
-      width: contentWidth - 24,
-    });
-
-    y += notesHeight + 22;
+    const area5 = drawTextArea(doc, margin, y, halfW, "Autorizados para buscar", field(student.authorized_pickup_notes), 64);
+    const area6 = drawTextArea(doc, margin + halfW + colGap, y, halfW, "Observações gerais", field(student.general_notes), 64);
+    y += Math.max(area5, area6) + 22;
 
     y = ensureSpace(doc, y, 110);
     y = sectionTitle(doc, "Turma atual", y);
 
-    drawInfoBox(doc, margin, y, colW, "Turma", field(activeClass?.name));
-    drawInfoBox(doc, margin + (colW + colGap), y, colW, "Série", field(activeClass?.grade));
-    drawInfoBox(doc, margin + (colW + colGap) * 2, y, colW, "Turno", field(activeClass?.shift));
+    drawInfoBox(doc, margin, y, colW, "Turma", shortField(activeClass?.name));
+    drawInfoBox(doc, margin + (colW + colGap), y, colW, "Série", shortField(activeClass?.grade));
+    drawInfoBox(doc, margin + (colW + colGap) * 2, y, colW, "Turno", shortField(activeClass?.shift));
     drawInfoBox(doc, margin + (colW + colGap) * 3, y, colW, "Vínculo desde", brDate(activeLink?.started_at));
 
     y += 78;
@@ -546,7 +593,7 @@ export async function GET(
       y += 70;
     } else {
       for (const parent of parents) {
-        const parentHeight = 154;
+        const parentHeight = 164;
         y = ensureSpace(doc, y, parentHeight + 20);
 
         doc.roundedRect(margin, y, contentWidth, parentHeight, 12).fillAndStroke("#ffffff", "#e5e7eb");
@@ -566,13 +613,18 @@ export async function GET(
           { width: contentWidth - 28 }
         );
 
-        const rowY = y + 56;
+        doc.font("Helvetica").fontSize(8).fillColor("#64748b");
+        doc.text(`Atualizado em: ${brDateTime(parent.profile_updated_at || parent.created_at)}`, margin + 14, y + 46, {
+          width: contentWidth - 28,
+        });
+
+        const rowY = y + 68;
         const pColW = (contentWidth - 28 - colGap * 2) / 3;
         const startX = margin + 14;
 
-        drawInfoBox(doc, startX, rowY, pColW, "Telefone", field(parent.phone));
-        drawInfoBox(doc, startX + pColW + colGap, rowY, pColW, "CPF", field(parent.cpf));
-        drawInfoBox(doc, startX + (pColW + colGap) * 2, rowY, pColW, "Telefone secundário", field(parent.phone_secondary));
+        drawInfoBox(doc, startX, rowY, pColW, "Telefone", shortField(parent.phone));
+        drawInfoBox(doc, startX + pColW + colGap, rowY, pColW, "CPF", shortField(parent.cpf));
+        drawInfoBox(doc, startX + (pColW + colGap) * 2, rowY, pColW, "Telefone secundário", shortField(parent.phone_secondary));
 
         const addressY = rowY + 62;
 
@@ -590,20 +642,23 @@ export async function GET(
       }
     }
 
-    y = ensureSpace(doc, y, 90);
+    y = ensureSpace(doc, y, 95);
 
-    doc.font("Helvetica").fontSize(9).fillColor("#64748b");
+    doc.roundedRect(margin, y, contentWidth, 50, 10).fillAndStroke("#f8fafc", "#e5e7eb");
+    doc.font("Helvetica").fontSize(8.5).fillColor("#64748b");
     doc.text(
-      "Declaro que as informações apresentadas nesta ficha correspondem aos dados registrados no sistema escolar até a data de emissão deste documento.",
-      margin,
-      y,
+      "Declaro que as informações apresentadas nesta ficha correspondem aos dados registrados no sistema escolar até a data de emissão deste documento. Dados não informados devem ser atualizados pela secretaria ou pelo responsável autorizado.",
+      margin + 12,
+      y + 12,
       {
-        width: contentWidth,
+        width: contentWidth - 24,
         align: "left",
       }
     );
 
-    y += 62;
+    y += 78;
+
+    y = ensureSpace(doc, y, 55);
 
     doc
       .moveTo(pageWidth - 250, y)
