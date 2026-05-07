@@ -34,7 +34,7 @@ function field(value: any) {
   return safe || "Não informado";
 }
 
-function shortField(value: any) {
+function compactField(value: any) {
   const safe = String(value ?? "").trim();
   return safe || "—";
 }
@@ -45,7 +45,7 @@ function brDate(value?: string | null) {
   const clean = String(value).slice(0, 10);
   const [y, m, d] = clean.split("-");
 
-  if (!y || !m || !d) return shortField(value);
+  if (!y || !m || !d) return compactField(value);
 
   return `${d}/${m}/${y}`;
 }
@@ -58,6 +58,16 @@ function brDateTime(value?: string | null) {
   } catch {
     return brDate(value);
   }
+}
+
+function safeFileName(value: string) {
+  return String(value || "aluno")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
 }
 
 function buildAddressText(parent: ParentRow) {
@@ -83,11 +93,26 @@ function buildAddressText(parent: ParentRow) {
   return parts.length > 0 ? parts.join(", ") : "Não informado";
 }
 
-function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: string } | null {
-  const u = String(logoUrl || "").trim();
+function initialsFromName(name: string | null | undefined) {
+  const safe = String(name || "").trim();
+  if (!safe) return "AL";
+
+  const parts = safe.split(/\s+/).filter(Boolean);
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "AL";
+}
+
+function parseSupabaseStorageRef(url: string): { bucket: string; path: string } | null {
+  const u = String(url || "").trim();
+
   if (!u) return null;
 
   const pub = u.split("/storage/v1/object/public/");
+
   if (pub.length === 2) {
     const rest = pub[1];
     const parts = rest.split("/");
@@ -98,6 +123,7 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
   }
 
   const sign = u.split("/storage/v1/object/sign/");
+
   if (sign.length === 2) {
     const rest = sign[1].split("?")[0];
     const parts = rest.split("/");
@@ -123,6 +149,7 @@ async function getImageBuffer(url: string | null | undefined): Promise<Buffer | 
     if (!url) return null;
 
     const clean = String(url).trim();
+
     if (!clean) return null;
 
     const ref = parseSupabaseStorageRef(clean);
@@ -137,6 +164,7 @@ async function getImageBuffer(url: string | null | undefined): Promise<Buffer | 
     }
 
     const res = await fetch(clean);
+
     if (!res.ok) return null;
 
     const ab = await res.arrayBuffer();
@@ -161,9 +189,87 @@ async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
   });
 }
 
+function drawPill(
+  doc: PDFKit.PDFDocument,
+  x: number,
+  y: number,
+  text: string,
+  options?: {
+    bg?: string;
+    color?: string;
+    width?: number;
+  }
+) {
+  const bg = options?.bg || "#e0f2fe";
+  const color = options?.color || "#075985";
+  const width = options?.width || Math.max(74, text.length * 5.2 + 18);
+
+  doc.roundedRect(x, y, width, 20, 10).fill(bg);
+
+  doc.font("Helvetica-Bold").fontSize(7.5).fillColor(color);
+  doc.text(text, x + 9, y + 6, {
+    width: width - 18,
+    align: "center",
+    lineBreak: false,
+  });
+}
+
+function drawHeader(
+  doc: PDFKit.PDFDocument,
+  schoolName: string,
+  logoBuffer: Buffer | null,
+  pageTitle = "Ficha Completa do Aluno"
+) {
+  const pageWidth = doc.page.width;
+  const margin = 34;
+
+  doc.save();
+
+  doc.rect(0, 0, pageWidth, 92).fill("#0f172a");
+  doc.rect(0, 88, pageWidth, 4).fill("#2563eb");
+
+  if (logoBuffer) {
+    doc.roundedRect(margin, 22, 48, 48, 10).fill("#ffffff");
+    doc.image(logoBuffer, margin + 4, 26, {
+      fit: [40, 40],
+      align: "center",
+      valign: "center",
+    });
+  } else {
+    doc.roundedRect(margin, 22, 48, 48, 10).fill("#ffffff");
+    doc.font("Helvetica-Bold").fontSize(14).fillColor("#0f172a");
+    doc.text("ESC", margin, 38, {
+      width: 48,
+      align: "center",
+    });
+  }
+
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#bfdbfe");
+  doc.text(schoolName, margin + 62, 24, {
+    width: pageWidth - margin * 2 - 62,
+    ellipsis: true,
+  });
+
+  doc.font("Helvetica-Bold").fontSize(20).fillColor("#ffffff");
+  doc.text(pageTitle, margin + 62, 40, {
+    width: pageWidth - margin * 2 - 62,
+    ellipsis: true,
+  });
+
+  doc.font("Helvetica").fontSize(8.5).fillColor("#cbd5e1");
+  doc.text("Documento oficial com dados escolares, saúde, segurança e responsáveis vinculados.", margin + 62, 66, {
+    width: pageWidth - margin * 2 - 62,
+    ellipsis: true,
+  });
+
+  doc.restore();
+}
+
 function drawFooter(doc: PDFKit.PDFDocument, pageNumber: number, totalPages: number) {
-  const margin = 40;
-  const y = doc.page.height - 45;
+  const margin = 34;
+  const y = doc.page.height - 38;
+
+  doc.save();
 
   doc
     .moveTo(margin, y - 10)
@@ -172,19 +278,69 @@ function drawFooter(doc: PDFKit.PDFDocument, pageNumber: number, totalPages: num
     .lineWidth(1)
     .stroke();
 
-  doc.font("Helvetica").fontSize(8).fillColor("#6b7280");
+  doc.font("Helvetica").fontSize(7.5).fillColor("#64748b");
 
-  doc.text(`Emitido em: ${new Date().toLocaleDateString("pt-BR")}`, margin, y, {
-    width: 220,
+  doc.text(`Emitido em ${new Date().toLocaleString("pt-BR")}`, margin, y, {
+    width: 230,
     align: "left",
     lineBreak: false,
   });
 
-  doc.text(`Página ${pageNumber} de ${totalPages}`, doc.page.width - margin - 120, y, {
-    width: 120,
+  doc.text(`Página ${pageNumber} de ${totalPages}`, doc.page.width - margin - 110, y, {
+    width: 110,
     align: "right",
     lineBreak: false,
   });
+
+  doc.restore();
+}
+
+function addPremiumPage(
+  doc: PDFKit.PDFDocument,
+  schoolName: string,
+  logoBuffer: Buffer | null
+) {
+  doc.addPage();
+  drawHeader(doc, schoolName, logoBuffer);
+  return 118;
+}
+
+function ensureSpace(
+  doc: PDFKit.PDFDocument,
+  y: number,
+  needed: number,
+  schoolName: string,
+  logoBuffer: Buffer | null
+) {
+  const bottomLimit = doc.page.height - 60;
+
+  if (y + needed <= bottomLimit) return y;
+
+  return addPremiumPage(doc, schoolName, logoBuffer);
+}
+
+function sectionTitle(doc: PDFKit.PDFDocument, title: string, y: number, subtitle?: string) {
+  doc.save();
+
+  doc.font("Helvetica-Bold").fontSize(11.5).fillColor("#0f172a");
+  doc.text(title, 34, y, {
+    width: doc.page.width - 68,
+    lineBreak: false,
+  });
+
+  if (subtitle) {
+    doc.font("Helvetica").fontSize(7.8).fillColor("#64748b");
+    doc.text(subtitle, 34, y + 15, {
+      width: doc.page.width - 68,
+      ellipsis: true,
+    });
+
+    doc.restore();
+    return y + 30;
+  }
+
+  doc.restore();
+  return y + 22;
 }
 
 function drawInfoBox(
@@ -194,96 +350,185 @@ function drawInfoBox(
   width: number,
   label: string,
   value: string,
-  height = 48
+  options?: {
+    height?: number;
+    bg?: string;
+    labelColor?: string;
+    valueColor?: string;
+    valueSize?: number;
+    maxLines?: number;
+  }
 ) {
-  doc
-    .roundedRect(x, y, width, height, 10)
-    .fillAndStroke("#f8fafc", "#e5e7eb");
+  const boxHeight = options?.height || 42;
+  const bg = options?.bg || "#f8fafc";
+  const labelColor = options?.labelColor || "#64748b";
+  const valueColor = options?.valueColor || "#0f172a";
+  const valueSize = options?.valueSize || 8.4;
+  const maxLines = options?.maxLines || 1;
 
-  doc.font("Helvetica-Bold").fontSize(7).fillColor("#94a3b8");
-  doc.text(label.toUpperCase(), x + 12, y + 10, {
-    width: width - 24,
+  doc.save();
+
+  doc.roundedRect(x, y, width, boxHeight, 9).fillAndStroke(bg, "#e5e7eb");
+
+  doc.font("Helvetica-Bold").fontSize(6.6).fillColor(labelColor);
+  doc.text(label.toUpperCase(), x + 9, y + 8, {
+    width: width - 18,
+    height: 8,
+    ellipsis: true,
     lineBreak: false,
   });
 
-  doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a");
-  doc.text(value || "—", x + 12, y + 25, {
-    width: width - 24,
-    height: height - 30,
+  doc.font("Helvetica-Bold").fontSize(valueSize).fillColor(valueColor);
+
+  doc.text(value || "—", x + 9, y + 21, {
+    width: width - 18,
+    height: maxLines === 1 ? 12 : boxHeight - 27,
     ellipsis: true,
   });
+
+  doc.restore();
 }
 
-function drawTextArea(
+function drawLongBox(
   doc: PDFKit.PDFDocument,
   x: number,
   y: number,
   width: number,
   label: string,
   value: string,
-  minHeight = 58
+  height = 58
 ) {
-  const text = field(value);
-  const calculatedHeight = doc.heightOfString(text, { width: width - 24 }) + 36;
-  const height = Math.max(minHeight, Math.min(calculatedHeight, 96));
+  doc.save();
 
-  doc
-    .roundedRect(x, y, width, height, 10)
-    .fillAndStroke("#f8fafc", "#e5e7eb");
+  doc.roundedRect(x, y, width, height, 10).fillAndStroke("#f8fafc", "#e5e7eb");
 
-  doc.font("Helvetica-Bold").fontSize(7).fillColor("#94a3b8");
-  doc.text(label.toUpperCase(), x + 12, y + 10, {
-    width: width - 24,
-    lineBreak: false,
-  });
-
-  doc.font("Helvetica").fontSize(9).fillColor("#0f172a");
-  doc.text(text, x + 12, y + 25, {
-    width: width - 24,
-    height: height - 32,
+  doc.font("Helvetica-Bold").fontSize(6.7).fillColor("#64748b");
+  doc.text(label.toUpperCase(), x + 10, y + 8, {
+    width: width - 20,
     ellipsis: true,
   });
 
-  return height;
+  doc.font("Helvetica").fontSize(8.1).fillColor("#0f172a");
+  doc.text(value || "—", x + 10, y + 22, {
+    width: width - 20,
+    height: height - 29,
+    ellipsis: true,
+  });
+
+  doc.restore();
 }
 
-function ensureSpace(doc: PDFKit.PDFDocument, y: number, needed: number) {
-  const bottomLimit = doc.page.height - 85;
+function drawStudentHero(
+  doc: PDFKit.PDFDocument,
+  student: any,
+  activeClass: any,
+  studentPhotoBuffer: Buffer | null,
+  y: number
+) {
+  const margin = 34;
+  const contentWidth = doc.page.width - margin * 2;
+  const cardHeight = 112;
+  const photoSize = 78;
 
-  if (y + needed <= bottomLimit) return y;
+  doc.save();
 
-  doc.addPage();
-  return 50;
+  doc.roundedRect(margin, y, contentWidth, cardHeight, 16).fillAndStroke("#ffffff", "#dbeafe");
+
+  const photoX = margin + 16;
+  const photoY = y + 17;
+
+  doc.roundedRect(photoX, photoY, photoSize, photoSize, 14).fillAndStroke("#eff6ff", "#dbeafe");
+
+  if (studentPhotoBuffer) {
+    doc.image(studentPhotoBuffer, photoX, photoY, {
+      fit: [photoSize, photoSize],
+      align: "center",
+      valign: "center",
+    });
+  } else {
+    doc.font("Helvetica-Bold").fontSize(24).fillColor("#1e293b");
+    doc.text(initialsFromName(student.full_name), photoX, photoY + 26, {
+      width: photoSize,
+      align: "center",
+    });
+  }
+
+  const textX = photoX + photoSize + 18;
+  const textW = contentWidth - photoSize - 50;
+
+  drawPill(doc, textX, y + 15, "ALUNO", {
+    bg: "#dbeafe",
+    color: "#1d4ed8",
+    width: 58,
+  });
+
+  doc.font("Helvetica-Bold").fontSize(16.5).fillColor("#0f172a");
+  doc.text(field(student.full_name), textX, y + 41, {
+    width: textW,
+    ellipsis: true,
+  });
+
+  doc.font("Helvetica").fontSize(8.6).fillColor("#475569");
+  doc.text(
+    `Matrícula: ${compactField(student.registration_number)}  •  Nascimento: ${brDate(student.birth_date)}  •  Turma: ${compactField(activeClass?.name)}`,
+    textX,
+    y + 66,
+    {
+      width: textW,
+      ellipsis: true,
+    }
+  );
+
+  doc.font("Helvetica").fontSize(8).fillColor("#64748b");
+  doc.text(`Cadastro: ${brDateTime(student.created_at)}`, textX, y + 84, {
+    width: textW,
+    ellipsis: true,
+  });
+
+  doc.restore();
+
+  return y + cardHeight + 18;
 }
 
-function sectionTitle(doc: PDFKit.PDFDocument, title: string, y: number) {
-  doc.font("Helvetica-Bold").fontSize(13).fillColor("#0f172a");
-  doc.text(title, 40, y);
+function drawSignatureBlock(doc: PDFKit.PDFDocument, y: number) {
+  const margin = 34;
+  const contentWidth = doc.page.width - margin * 2;
 
-  return y + 24;
-}
+  doc.save();
 
-function safeFileName(value: string) {
-  return String(value || "aluno")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9-_]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .toLowerCase();
-}
+  doc.roundedRect(margin, y, contentWidth, 70, 12).fillAndStroke("#ffffff", "#e5e7eb");
 
-function initialsFromName(name: string | null | undefined) {
-  const safe = String(name || "").trim();
-  if (!safe) return "AL";
+  doc.font("Helvetica").fontSize(8.2).fillColor("#475569");
+  doc.text(
+    "Declaro que as informações apresentadas nesta ficha correspondem aos dados registrados no sistema escolar até a data de emissão deste documento.",
+    margin + 14,
+    y + 14,
+    {
+      width: contentWidth - 28,
+      height: 22,
+    }
+  );
 
-  return safe
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0])
-    .join("")
-    .toUpperCase();
+  const lineW = 210;
+  const lineX = margin + contentWidth - lineW - 20;
+  const lineY = y + 48;
+
+  doc
+    .moveTo(lineX, lineY)
+    .lineTo(lineX + lineW, lineY)
+    .strokeColor("#64748b")
+    .lineWidth(1)
+    .stroke();
+
+  doc.font("Helvetica").fontSize(7.8).fillColor("#334155");
+  doc.text("Assinatura da direção / secretaria", lineX, lineY + 7, {
+    width: lineW,
+    align: "center",
+  });
+
+  doc.restore();
+
+  return y + 84;
 }
 
 export async function GET(
@@ -407,6 +652,12 @@ export async function GET(
       new Set((links || []).map((link: any) => String(link.parent_id)).filter(Boolean))
     );
 
+    const relationshipByParentId = new Map<string, string | null>();
+
+    for (const link of links || []) {
+      relationshipByParentId.set(String(link.parent_id), link.relationship ?? null);
+    }
+
     let parents: ParentRow[] = [];
 
     if (parentIds.length > 0) {
@@ -442,247 +693,198 @@ export async function GET(
       parents = (parentRows || []) as ParentRow[];
     }
 
+    const schoolName = field(school?.name || "Escola");
     const schoolLogoBuffer = await getImageBuffer(school?.brand_logo_url || school?.logo_url || null);
     const studentPhotoBuffer = await getImageBuffer(student.student_photo_url || null);
 
     const doc = new PDFDocument({
       size: "A4",
       layout: "portrait",
-      margin: 40,
+      margin: 34,
       bufferPages: true,
       autoFirstPage: true,
     });
 
-    const margin = 40;
+    const margin = 34;
     const pageWidth = doc.page.width;
     const contentWidth = pageWidth - margin * 2;
-    const colGap = 10;
-    const colW = (contentWidth - colGap * 3) / 4;
-    const halfW = (contentWidth - colGap) / 2;
+    const gap = 8;
+    const col4 = (contentWidth - gap * 3) / 4;
+    const col3 = (contentWidth - gap * 2) / 3;
+    const col2 = (contentWidth - gap) / 2;
 
-    doc.rect(0, 0, pageWidth, 126).fill("#0f172a");
+    drawHeader(doc, schoolName, schoolLogoBuffer);
 
-    if (schoolLogoBuffer) {
-      doc.image(schoolLogoBuffer, margin, 28, { fit: [72, 72] });
-    }
+    let y = 114;
 
-    const titleX = schoolLogoBuffer ? margin + 88 : margin;
-
-    doc.font("Helvetica-Bold").fontSize(17).fillColor("#ffffff");
-    doc.text(field(school?.name || "Escola"), titleX, 32, {
-      width: pageWidth - titleX - margin,
-      ellipsis: true,
-    });
-
-    doc.font("Helvetica-Bold").fontSize(21).fillColor("#ffffff");
-    doc.text("Ficha Completa do Aluno", titleX, 58, {
-      width: pageWidth - titleX - margin,
-      ellipsis: true,
-    });
-
-    doc.font("Helvetica").fontSize(9).fillColor("#cbd5e1");
-    doc.text("Documento oficial com dados escolares e responsáveis vinculados.", titleX, 88, {
-      width: pageWidth - titleX - margin,
-    });
-
-    let y = 152;
-
-    const photoX = margin;
-    const photoY = y;
-    const photoSize = 96;
-
-    doc.roundedRect(photoX, photoY, photoSize, photoSize, 18).fillAndStroke("#f8fafc", "#e5e7eb");
-
-    if (studentPhotoBuffer) {
-      doc.image(studentPhotoBuffer, photoX, photoY, {
-        fit: [photoSize, photoSize],
-        align: "center",
-        valign: "center",
-      });
-    } else {
-      doc.font("Helvetica-Bold").fontSize(28).fillColor("#334155");
-      doc.text(initialsFromName(student.full_name), photoX, photoY + 34, {
-        width: photoSize,
-        align: "center",
-      });
-    }
-
-    doc.font("Helvetica-Bold").fontSize(20).fillColor("#0f172a");
-    doc.text(field(student.full_name), photoX + photoSize + 22, y + 8, {
-      width: contentWidth - photoSize - 22,
-    });
-
-    doc.font("Helvetica").fontSize(10).fillColor("#475569");
-    doc.text(`Matrícula: ${shortField(student.registration_number)}`, photoX + photoSize + 22, y + 40, {
-      width: contentWidth - photoSize - 22,
-    });
-
-    doc.text(`Nascimento: ${brDate(student.birth_date)}`, photoX + photoSize + 22, y + 58, {
-      width: contentWidth - photoSize - 22,
-    });
-
-    doc.text(`Cadastro: ${brDateTime(student.created_at)}`, photoX + photoSize + 22, y + 76, {
-      width: contentWidth - photoSize - 22,
-    });
-
-    y += 128;
+    y = drawStudentHero(doc, student, activeClass, studentPhotoBuffer, y);
 
     y = sectionTitle(doc, "Dados oficiais do aluno", y);
 
-    drawInfoBox(doc, margin, y, colW, "Nome completo", field(student.full_name));
-    drawInfoBox(doc, margin + (colW + colGap), y, colW, "Matrícula", shortField(student.registration_number));
-    drawInfoBox(doc, margin + (colW + colGap) * 2, y, colW, "Nascimento", brDate(student.birth_date));
-    drawInfoBox(doc, margin + (colW + colGap) * 3, y, colW, "Sexo", shortField(student.gender));
+    drawInfoBox(doc, margin, y, col4, "Nome completo", field(student.full_name));
+    drawInfoBox(doc, margin + (col4 + gap), y, col4, "Matrícula", compactField(student.registration_number));
+    drawInfoBox(doc, margin + (col4 + gap) * 2, y, col4, "Nascimento", brDate(student.birth_date));
+    drawInfoBox(doc, margin + (col4 + gap) * 3, y, col4, "Sexo", compactField(student.gender));
 
-    y += 62;
+    y += 50;
 
-    drawInfoBox(doc, margin, y, colW, "CPF", shortField(student.cpf));
-    drawInfoBox(doc, margin + (colW + colGap), y, colW, "RG", shortField(student.rg));
-    drawInfoBox(doc, margin + (colW + colGap) * 2, y, colW, "Certidão", shortField(student.birth_certificate));
-    drawInfoBox(doc, margin + (colW + colGap) * 3, y, colW, "Atualizado", brDateTime(student.student_profile_updated_at));
+    drawInfoBox(doc, margin, y, col4, "CPF", compactField(student.cpf));
+    drawInfoBox(doc, margin + (col4 + gap), y, col4, "RG", compactField(student.rg));
+    drawInfoBox(doc, margin + (col4 + gap) * 2, y, col4, "Certidão", compactField(student.birth_certificate));
+    drawInfoBox(doc, margin + (col4 + gap) * 3, y, col4, "Atualizado", brDateTime(student.student_profile_updated_at));
 
-    y += 78;
+    y += 64;
 
     y = sectionTitle(doc, "Filiação", y);
 
-    drawInfoBox(doc, margin, y, halfW, "Nome da mãe", shortField(student.mother_name));
-    drawInfoBox(doc, margin + halfW + colGap, y, halfW, "Nome do pai", shortField(student.father_name));
+    drawInfoBox(doc, margin, y, col2, "Nome da mãe", field(student.mother_name), {
+      height: 44,
+      maxLines: 1,
+    });
 
-    y += 78;
-
-    y = ensureSpace(doc, y, 260);
-    y = sectionTitle(doc, "Saúde, segurança e observações", y);
-
-    const area1 = drawTextArea(doc, margin, y, halfW, "Observações médicas / alertas", field(student.medical_notes), 64);
-    const area2 = drawTextArea(doc, margin + halfW + colGap, y, halfW, "Alergias", field(student.allergies), 64);
-    y += Math.max(area1, area2) + 12;
-
-    const area3 = drawTextArea(doc, margin, y, halfW, "Medicação contínua", field(student.continuous_medication), 64);
-    const area4 = drawTextArea(doc, margin + halfW + colGap, y, halfW, "Restrições alimentares", field(student.food_restrictions), 64);
-    y += Math.max(area3, area4) + 12;
-
-    drawInfoBox(doc, margin, y, halfW, "Contato de emergência", shortField(student.emergency_contact_name));
-    drawInfoBox(doc, margin + halfW + colGap, y, halfW, "Telefone de emergência", shortField(student.emergency_contact_phone));
+    drawInfoBox(doc, margin + col2 + gap, y, col2, "Nome do pai", field(student.father_name), {
+      height: 44,
+      maxLines: 1,
+    });
 
     y += 62;
 
-    const area5 = drawTextArea(doc, margin, y, halfW, "Autorizados para buscar", field(student.authorized_pickup_notes), 64);
-    const area6 = drawTextArea(doc, margin + halfW + colGap, y, halfW, "Observações gerais", field(student.general_notes), 64);
-    y += Math.max(area5, area6) + 22;
+    y = ensureSpace(doc, y, 192, schoolName, schoolLogoBuffer);
+    y = sectionTitle(doc, "Saúde, segurança e observações", y);
 
-    y = ensureSpace(doc, y, 110);
+    drawLongBox(doc, margin, y, col2, "Observações médicas / alertas", field(student.medical_notes), 52);
+    drawLongBox(doc, margin + col2 + gap, y, col2, "Alergias", field(student.allergies), 52);
+
+    y += 60;
+
+    drawLongBox(doc, margin, y, col2, "Medicação contínua", field(student.continuous_medication), 52);
+    drawLongBox(doc, margin + col2 + gap, y, col2, "Restrições alimentares", field(student.food_restrictions), 52);
+
+    y += 60;
+
+    drawInfoBox(doc, margin, y, col2, "Contato de emergência", field(student.emergency_contact_name), {
+      height: 44,
+    });
+
+    drawInfoBox(doc, margin + col2 + gap, y, col2, "Telefone de emergência", field(student.emergency_contact_phone), {
+      height: 44,
+    });
+
+    y += 52;
+
+    drawLongBox(doc, margin, y, col2, "Autorizados para buscar / retirada", field(student.authorized_pickup_notes), 52);
+    drawLongBox(doc, margin + col2 + gap, y, col2, "Observações gerais", field(student.general_notes), 52);
+
+    y += 70;
+
+    y = ensureSpace(doc, y, 78, schoolName, schoolLogoBuffer);
     y = sectionTitle(doc, "Turma atual", y);
 
-    drawInfoBox(doc, margin, y, colW, "Turma", shortField(activeClass?.name));
-    drawInfoBox(doc, margin + (colW + colGap), y, colW, "Série", shortField(activeClass?.grade));
-    drawInfoBox(doc, margin + (colW + colGap) * 2, y, colW, "Turno", shortField(activeClass?.shift));
-    drawInfoBox(doc, margin + (colW + colGap) * 3, y, colW, "Vínculo desde", brDate(activeLink?.started_at));
+    drawInfoBox(doc, margin, y, col4, "Turma", compactField(activeClass?.name));
+    drawInfoBox(doc, margin + (col4 + gap), y, col4, "Série", compactField(activeClass?.grade));
+    drawInfoBox(doc, margin + (col4 + gap) * 2, y, col4, "Turno", compactField(activeClass?.shift));
+    drawInfoBox(doc, margin + (col4 + gap) * 3, y, col4, "Vínculo desde", brDate(activeLink?.started_at));
 
-    y += 78;
+    y += 64;
 
-    y = ensureSpace(doc, y, 130);
-    y = sectionTitle(doc, "Responsáveis vinculados", y);
+    y = ensureSpace(doc, y, 142, schoolName, schoolLogoBuffer);
+    y = sectionTitle(doc, "Responsáveis vinculados", y, "Dados de contato e endereço dos responsáveis associados ao aluno.");
 
     if (parents.length === 0) {
-      doc.roundedRect(margin, y, contentWidth, 54, 10).fillAndStroke("#f8fafc", "#e5e7eb");
-      doc.font("Helvetica").fontSize(10).fillColor("#475569");
+      doc.roundedRect(margin, y, contentWidth, 54, 12).fillAndStroke("#f8fafc", "#e5e7eb");
+      doc.font("Helvetica").fontSize(9).fillColor("#475569");
       doc.text("Nenhum responsável vinculado ao aluno.", margin + 14, y + 20, {
         width: contentWidth - 28,
       });
 
-      y += 70;
+      y += 68;
     } else {
       for (const parent of parents) {
-        const parentHeight = 164;
-        y = ensureSpace(doc, y, parentHeight + 20);
+        const parentHeight = 132;
 
-        doc.roundedRect(margin, y, contentWidth, parentHeight, 12).fillAndStroke("#ffffff", "#e5e7eb");
+        y = ensureSpace(doc, y, parentHeight + 12, schoolName, schoolLogoBuffer);
 
-        doc.font("Helvetica-Bold").fontSize(12).fillColor("#0f172a");
-        doc.text(field(parent.full_name), margin + 14, y + 14, {
-          width: contentWidth - 28,
-        });
+        doc.save();
 
-        doc.font("Helvetica").fontSize(8).fillColor("#64748b");
-        doc.text(
-          parent.first_login_completed
-            ? "Cadastro completo preenchido"
-            : "Cadastro ainda não finalizado pelo responsável",
-          margin + 14,
-          y + 33,
-          { width: contentWidth - 28 }
-        );
+        doc.roundedRect(margin, y, contentWidth, parentHeight, 14).fillAndStroke("#ffffff", "#e5e7eb");
 
-        doc.font("Helvetica").fontSize(8).fillColor("#64748b");
-        doc.text(`Atualizado em: ${brDateTime(parent.profile_updated_at || parent.created_at)}`, margin + 14, y + 46, {
-          width: contentWidth - 28,
-        });
-
-        const rowY = y + 68;
-        const pColW = (contentWidth - 28 - colGap * 2) / 3;
-        const startX = margin + 14;
-
-        drawInfoBox(doc, startX, rowY, pColW, "Telefone", shortField(parent.phone));
-        drawInfoBox(doc, startX + pColW + colGap, rowY, pColW, "CPF", shortField(parent.cpf));
-        drawInfoBox(doc, startX + (pColW + colGap) * 2, rowY, pColW, "Telefone secundário", shortField(parent.phone_secondary));
-
-        const addressY = rowY + 62;
-
-        doc.roundedRect(startX, addressY, contentWidth - 28, 44, 10).fillAndStroke("#f8fafc", "#e5e7eb");
-        doc.font("Helvetica-Bold").fontSize(7).fillColor("#94a3b8");
-        doc.text("ENDEREÇO", startX + 12, addressY + 9);
-        doc.font("Helvetica").fontSize(9).fillColor("#0f172a");
-        doc.text(buildAddressText(parent), startX + 12, addressY + 23, {
-          width: contentWidth - 52,
-          height: 14,
+        doc.font("Helvetica-Bold").fontSize(11.5).fillColor("#0f172a");
+        doc.text(field(parent.full_name), margin + 14, y + 13, {
+          width: contentWidth - 170,
           ellipsis: true,
         });
 
-        y += parentHeight + 14;
+        const relationship = relationshipByParentId.get(String(parent.id));
+
+        if (relationship) {
+          drawPill(doc, margin + contentWidth - 122, y + 12, relationship, {
+            bg: "#eff6ff",
+            color: "#1d4ed8",
+            width: 96,
+          });
+        }
+
+        doc.font("Helvetica").fontSize(7.6).fillColor("#64748b");
+        doc.text(
+          parent.first_login_completed
+            ? "Cadastro completo preenchido no Portal dos Pais"
+            : "Cadastro ainda não finalizado pelo responsável",
+          margin + 14,
+          y + 31,
+          {
+            width: contentWidth - 28,
+            ellipsis: true,
+          }
+        );
+
+        const rowY = y + 52;
+        const innerX = margin + 14;
+        const innerW = contentWidth - 28;
+        const pCol = (innerW - gap * 2) / 3;
+
+        drawInfoBox(doc, innerX, rowY, pCol, "Telefone", compactField(parent.phone), {
+          height: 40,
+          valueSize: 8.2,
+        });
+
+        drawInfoBox(doc, innerX + pCol + gap, rowY, pCol, "CPF", compactField(parent.cpf), {
+          height: 40,
+          valueSize: 8.2,
+        });
+
+        drawInfoBox(doc, innerX + (pCol + gap) * 2, rowY, pCol, "Telefone secundário", compactField(parent.phone_secondary), {
+          height: 40,
+          valueSize: 8.2,
+        });
+
+        drawInfoBox(doc, innerX, rowY + 47, innerW, "Endereço", buildAddressText(parent), {
+          height: 40,
+          valueSize: 8,
+        });
+
+        doc.restore();
+
+        y += parentHeight + 10;
       }
     }
 
-    y = ensureSpace(doc, y, 95);
-
-    doc.roundedRect(margin, y, contentWidth, 50, 10).fillAndStroke("#f8fafc", "#e5e7eb");
-    doc.font("Helvetica").fontSize(8.5).fillColor("#64748b");
-    doc.text(
-      "Declaro que as informações apresentadas nesta ficha correspondem aos dados registrados no sistema escolar até a data de emissão deste documento. Dados não informados devem ser atualizados pela secretaria ou pelo responsável autorizado.",
-      margin + 12,
-      y + 12,
-      {
-        width: contentWidth - 24,
-        align: "left",
-      }
-    );
-
-    y += 78;
-
-    y = ensureSpace(doc, y, 55);
-
-    doc
-      .moveTo(pageWidth - 250, y)
-      .lineTo(pageWidth - margin, y)
-      .strokeColor("#64748b")
-      .lineWidth(1)
-      .stroke();
-
-    doc.font("Helvetica").fontSize(9).fillColor("#334155");
-    doc.text("Assinatura da direção / secretaria", pageWidth - 250, y + 8, {
-      width: 210,
-      align: "center",
-    });
+    y = ensureSpace(doc, y, 86, schoolName, schoolLogoBuffer);
+    drawSignatureBlock(doc, y);
 
     const range = doc.bufferedPageRange();
     const totalPages = range.count;
 
     for (let i = 0; i < totalPages; i++) {
       doc.switchToPage(i);
+
+      if (i > 0) {
+        drawHeader(doc, schoolName, schoolLogoBuffer);
+      }
+
       drawFooter(doc, i + 1, totalPages);
     }
 
     const buffer = await pdfToBuffer(doc);
-
     const fileName = `ficha-aluno-${safeFileName(student.full_name || studentId)}.pdf`;
 
     return new NextResponse(new Uint8Array(buffer), {
