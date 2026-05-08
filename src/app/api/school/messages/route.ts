@@ -128,7 +128,15 @@ export async function GET(req: Request) {
 
     const messageIds = (messages || []).map((m: any) => String(m.id)).filter(Boolean);
 
-    let statsByMessage = new Map<string, any>();
+    const statsByMessage = new Map<
+      string,
+      {
+        sent: number;
+        delivered: number;
+        read: number;
+        pending: number;
+      }
+    >();
 
     if (messageIds.length > 0) {
       const { data: recipients, error: recErr } = await supabaseAdmin
@@ -143,6 +151,7 @@ export async function GET(req: Request) {
 
       for (const row of recipients || []) {
         const messageId = String((row as any).message_id);
+
         const current = statsByMessage.get(messageId) || {
           sent: 0,
           delivered: 0,
@@ -150,16 +159,30 @@ export async function GET(req: Request) {
           pending: 0,
         };
 
+        const deliveredAt = (row as any).delivered_at;
+        const readAt = (row as any).read_at;
+
+        // ENVIADO: todo destinatário registrado para receber o comunicado.
         current.sent += 1;
-        if ((row as any).delivered_at) current.delivered += 1;
-        if ((row as any).read_at) current.read += 1;
+
+        // VISUALIZADO: quem abriu/visualizou.
+        if (readAt) {
+          current.read += 1;
+        }
+
+        // ENTREGUE: quem recebeu, mas ainda NÃO visualizou.
+        // Essa é a regra premium solicitada:
+        // entregue = delivered_at preenchido + read_at vazio.
+        if (deliveredAt && !readAt) {
+          current.delivered += 1;
+        }
+
+        // PENDENTE: quem ainda não tem entrega nem visualização registrada.
+        if (!deliveredAt && !readAt) {
+          current.pending += 1;
+        }
 
         statsByMessage.set(messageId, current);
-      }
-
-      for (const [messageId, stat] of statsByMessage.entries()) {
-        stat.pending = Math.max(0, stat.sent - stat.read);
-        statsByMessage.set(messageId, stat);
       }
     }
 
