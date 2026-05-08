@@ -143,20 +143,11 @@ function getEnrollmentStudentName(enrollment: EnrollmentRow) {
 
 function getEnrollmentStudentRegistration(enrollment: EnrollmentRow) {
   const student = getEnrollmentStudent(enrollment);
-  return (
-    enrollment.enrollment_number ||
-    student?.registration_number ||
-    "—"
-  );
+  return enrollment.enrollment_number || student?.registration_number || "—";
 }
 
 function getEnrollmentStartDate(enrollment: EnrollmentRow) {
-  return (
-    enrollment.enrollment_date ||
-    enrollment.started_at ||
-    enrollment.created_at ||
-    null
-  );
+  return enrollment.enrollment_date || enrollment.started_at || enrollment.created_at || null;
 }
 
 function getEnrollmentClassId(enrollment: EnrollmentRow, fallbackClassId: string) {
@@ -172,10 +163,7 @@ function StudentAvatar({
 }) {
   const photoUrl = String(student?.student_photo_url || "").trim();
 
-  const sizeClass =
-    size === "sm"
-      ? "h-10 w-10 rounded-xl text-xs"
-      : "h-12 w-12 rounded-2xl text-sm";
+  const sizeClass = size === "sm" ? "h-10 w-10 text-xs" : "h-12 w-12 text-sm";
 
   if (photoUrl) {
     return (
@@ -183,14 +171,14 @@ function StudentAvatar({
       <img
         src={photoUrl}
         alt={`Foto de ${student?.full_name || "aluno"}`}
-        className={`${sizeClass} shrink-0 border border-slate-200 object-cover shadow-sm`}
+        className={`${sizeClass} shrink-0 rounded-full border border-slate-200 object-cover shadow-sm`}
       />
     );
   }
 
   return (
     <div
-      className={`${sizeClass} flex shrink-0 items-center justify-center bg-slate-900 font-semibold text-white shadow-sm`}
+      className={`${sizeClass} flex shrink-0 items-center justify-center rounded-full bg-slate-900 font-semibold text-white shadow-sm`}
     >
       {initials(student?.full_name)}
     </div>

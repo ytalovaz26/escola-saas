@@ -1023,10 +1023,10 @@ export default function StudentsPage() {
                       <img
                         src={s.student_photo_url}
                         alt="Foto do aluno"
-                        className="h-12 w-12 rounded-xl border border-slate-200 object-cover"
+                        className="h-12 w-12 rounded-full border border-slate-200 object-cover"
                       />
                     ) : (
-                      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-900 text-white">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-white">
                         {initials(s.full_name)}
                       </div>
                     )}
@@ -1104,10 +1104,10 @@ export default function StudentsPage() {
                     <img
                       src={selectedStudentPhotoUrl}
                       alt="Foto do aluno"
-                      className="h-24 w-24 rounded-3xl border border-white/20 object-cover"
+                      className="h-24 w-24 rounded-full border border-white/20 object-cover"
                     />
                   ) : (
-                    <div className="flex h-24 w-24 items-center justify-center rounded-3xl border border-white/20 bg-white/10 text-2xl font-bold">
+                    <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/20 bg-white/10 text-2xl font-bold">
                       {initials(field(selectedProfile.student.fullName))}
                     </div>
                   )}
@@ -1442,10 +1442,10 @@ export default function StudentsPage() {
                             <img
                               src={parent.photoUrl}
                               alt="Foto do responsável"
-                              className="h-16 w-16 rounded-2xl border border-slate-200 object-cover"
+                              className="h-16 w-16 rounded-full border border-slate-200 object-cover"
                             />
                           ) : (
-                            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-900 text-sm font-bold text-white">
+                            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">
                               {initialsFromName(parent.fullName)}
                             </div>
                           )}

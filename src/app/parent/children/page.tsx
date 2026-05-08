@@ -74,8 +74,8 @@ function StudentAvatar({
 
   const sizeClasses =
     size === "lg"
-      ? "h-20 w-20 rounded-3xl text-xl"
-      : "h-14 w-14 rounded-2xl text-sm";
+      ? "h-20 w-20 text-xl"
+      : "h-14 w-14 text-sm";
 
   if (photoUrl) {
     return (
@@ -83,14 +83,14 @@ function StudentAvatar({
       <img
         src={photoUrl}
         alt={`Foto de ${child.full_name}`}
-        className={`${sizeClasses} shrink-0 border border-slate-200 object-cover shadow-sm`}
+        className={`${sizeClasses} shrink-0 rounded-full border border-slate-200 object-cover shadow-sm`}
       />
     );
   }
 
   return (
     <div
-      className={`${sizeClasses} flex shrink-0 items-center justify-center bg-slate-900 font-semibold text-white shadow-sm`}
+      className={`${sizeClasses} flex shrink-0 items-center justify-center rounded-full bg-slate-900 font-semibold text-white shadow-sm`}
     >
       {initials(child.full_name)}
     </div>
