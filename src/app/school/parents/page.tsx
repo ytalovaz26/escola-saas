@@ -18,6 +18,7 @@ type ParentRow = {
   user_id: string | null;
   full_name: string;
   phone: string | null;
+  photo_url: string | null;
   created_at: string;
 };
 
@@ -39,9 +40,47 @@ type LinkRow = {
 function initialsFromName(name: string) {
   const safe = String(name || "").trim();
   if (!safe) return "RP";
+
   const parts = safe.split(/\s+/).filter(Boolean);
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+
   return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+}
+
+function ParentAvatar({
+  parent,
+  size = "md",
+}: {
+  parent: ParentRow;
+  size?: "sm" | "md" | "lg";
+}) {
+  const photoUrl = String(parent.photo_url || "").trim();
+
+  const sizeClasses =
+    size === "lg"
+      ? "h-16 w-16 text-base"
+      : size === "sm"
+        ? "h-11 w-11 text-xs"
+        : "h-12 w-12 text-xs";
+
+  if (photoUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={photoUrl}
+        alt={`Foto de ${parent.full_name}`}
+        className={`${sizeClasses} shrink-0 rounded-full border border-slate-200 object-cover shadow-sm`}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`${sizeClasses} flex shrink-0 items-center justify-center rounded-full bg-slate-900 font-bold text-white shadow-sm`}
+    >
+      {initialsFromName(parent.full_name)}
+    </div>
+  );
 }
 
 export default function ParentsPage() {
@@ -82,14 +121,18 @@ export default function ParentsPage() {
 
   const childrenByParentId = useMemo(() => {
     const map = new Map<string, StudentRow[]>();
+
     for (const l of links) {
       if (!l.is_active) continue;
+
       const s = studentById.get(l.student_id);
       if (!s) continue;
+
       const arr = map.get(l.parent_id) ?? [];
       arr.push(s);
       map.set(l.parent_id, arr);
     }
+
     return map;
   }, [links, studentById]);
 
@@ -99,6 +142,7 @@ export default function ParentsPage() {
 
   function friendlyLinkError(msg: string) {
     const lower = (msg || "").toLowerCase();
+
     if (
       lower.includes("duplicate key") ||
       lower.includes("unique") ||
@@ -106,6 +150,7 @@ export default function ParentsPage() {
     ) {
       return "Esse responsável já está vinculado a esse aluno (ou existe um vínculo antigo que precisa ser reativado).";
     }
+
     return msg;
   }
 
@@ -127,7 +172,9 @@ export default function ParentsPage() {
         });
 
         const text = await res.text();
+
         let json: any = null;
+
         try {
           json = text ? JSON.parse(text) : null;
         } catch {
@@ -155,6 +202,7 @@ export default function ParentsPage() {
         }
 
         const sid = payload.school?.schoolId;
+
         if (!sid) {
           setError("Usuário sem escola vinculada.");
           return;
@@ -172,7 +220,7 @@ export default function ParentsPage() {
   async function loadParents(sid: string) {
     const { data, error } = await supabase
       .from("parents")
-      .select("id,school_id,user_id,full_name,phone,created_at")
+      .select("id,school_id,user_id,full_name,phone,photo_url,created_at")
       .eq("school_id", sid)
       .order("created_at", { ascending: false });
 
@@ -222,6 +270,7 @@ export default function ParentsPage() {
 
   async function refreshAll() {
     if (!schoolId) return;
+
     await Promise.all([loadParents(schoolId), loadStudents(schoolId), loadLinks(schoolId)]);
   }
 
@@ -230,6 +279,7 @@ export default function ParentsPage() {
 
     if (!parentName.trim()) return alert("Informe o nome do responsável.");
     if (!parentEmail.trim()) return alert("Informe o e-mail do responsável.");
+
     if (!tempPassword.trim() || tempPassword.trim().length < 6) {
       return alert("Senha temporária precisa ter pelo menos 6 caracteres.");
     }
@@ -262,7 +312,9 @@ export default function ParentsPage() {
       });
 
       const text = await res.text();
+
       let json: any = null;
+
       try {
         json = text ? JSON.parse(text) : null;
       } catch {
@@ -328,8 +380,11 @@ export default function ParentsPage() {
     const s = studentById.get(studentId);
 
     const ok = confirm(
-      `Confirma desvincular?\n\nResponsável: ${p?.full_name || parentId}\nAluno: ${s?.full_name || studentId}`
+      `Confirma desvincular?\n\nResponsável: ${p?.full_name || parentId}\nAluno: ${
+        s?.full_name || studentId
+      }`
     );
+
     if (!ok) return;
 
     try {
@@ -359,7 +414,9 @@ export default function ParentsPage() {
       });
 
       const text = await res.text();
+
       let json: any = null;
+
       try {
         json = text ? JSON.parse(text) : null;
       } catch {
@@ -394,7 +451,10 @@ export default function ParentsPage() {
 
         <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-28 animate-pulse rounded-3xl border border-slate-200 bg-white shadow-sm" />
+            <div
+              key={i}
+              className="h-28 animate-pulse rounded-3xl border border-slate-200 bg-white shadow-sm"
+            />
           ))}
         </section>
 
@@ -405,9 +465,10 @@ export default function ParentsPage() {
 
   if (error) {
     return (
-      <main className="min-h-[70vh] flex items-center justify-center">
+      <main className="flex min-h-[70vh] items-center justify-center">
         <div className="w-full max-w-xl rounded-[28px] border border-red-200 bg-white p-8 shadow-sm">
           <h1 className="text-xl font-semibold text-slate-900">Não foi possível carregar</h1>
+
           <p className="mt-3 text-sm leading-6 text-slate-600">{error}</p>
 
           <button
@@ -423,7 +484,6 @@ export default function ParentsPage() {
 
   return (
     <main className="space-y-6">
-      {/* Hero */}
       <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
         <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 px-6 py-7 text-white md:px-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -431,7 +491,11 @@ export default function ParentsPage() {
               <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
                 Relacionamento Escolar
               </div>
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight">Pais e Responsáveis</h1>
+
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+                Pais e Responsáveis
+              </h1>
+
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200">
                 Cadastre responsáveis com login, vincule aos alunos e mantenha a base
                 de relacionamento escolar organizada e pronta para crescer.
@@ -449,34 +513,44 @@ export default function ParentsPage() {
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Escola vinculada
             </div>
-            <div className="mt-3 break-all font-mono text-xs text-slate-700">{schoolId}</div>
+
+            <div className="mt-3 break-all font-mono text-xs text-slate-700">
+              {schoolId}
+            </div>
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Responsáveis cadastrados
             </div>
-            <div className="mt-3 text-3xl font-semibold text-slate-900">{totalParents}</div>
+
+            <div className="mt-3 text-3xl font-semibold text-slate-900">
+              {totalParents}
+            </div>
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Base ativa
             </div>
+
             <div className="mt-3 text-sm leading-6 text-slate-700">
               Com login: <span className="font-semibold">{totalWithLogin}</span>
               <br />
-              Vínculos ativos: <span className="font-semibold">{totalLinkedChildren}</span>
+              Vínculos ativos:{" "}
+              <span className="font-semibold">{totalLinkedChildren}</span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Criar responsável */}
       <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Cadastrar responsável</h2>
+            <h2 className="text-lg font-semibold text-slate-900">
+              Cadastrar responsável
+            </h2>
+
             <p className="mt-1 text-sm text-slate-500">
               Crie o acesso do responsável com e-mail e senha temporária.
             </p>
@@ -489,7 +563,10 @@ export default function ParentsPage() {
 
         <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-500">Nome completo *</label>
+            <label className="mb-1.5 block text-xs font-medium text-slate-500">
+              Nome completo *
+            </label>
+
             <input
               className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-200"
               placeholder="Ex: Maria Aparecida Souza"
@@ -499,7 +576,10 @@ export default function ParentsPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-500">Telefone</label>
+            <label className="mb-1.5 block text-xs font-medium text-slate-500">
+              Telefone
+            </label>
+
             <input
               className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-200"
               placeholder="Ex: (64) 9xxxx-xxxx"
@@ -509,7 +589,10 @@ export default function ParentsPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-500">E-mail *</label>
+            <label className="mb-1.5 block text-xs font-medium text-slate-500">
+              E-mail *
+            </label>
+
             <input
               className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-200"
               placeholder="responsavel@exemplo.com"
@@ -519,7 +602,10 @@ export default function ParentsPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-500">Senha temporária *</label>
+            <label className="mb-1.5 block text-xs font-medium text-slate-500">
+              Senha temporária *
+            </label>
+
             <input
               className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-200"
               placeholder="Ex: Mae@1234"
@@ -553,18 +639,24 @@ export default function ParentsPage() {
         </div>
       </section>
 
-      {/* Vincular */}
       <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Vincular responsável ao aluno</h2>
+          <h2 className="text-lg font-semibold text-slate-900">
+            Vincular responsável ao aluno
+          </h2>
+
           <p className="mt-1 text-sm text-slate-500">
-            Reative vínculos antigos automaticamente quando o par responsável ↔ aluno já existir.
+            Reative vínculos antigos automaticamente quando o par responsável ↔️ aluno já
+            existir.
           </p>
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-500">Responsável</label>
+            <label className="mb-1.5 block text-xs font-medium text-slate-500">
+              Responsável
+            </label>
+
             <select
               className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-200"
               value={selectedParentId}
@@ -583,7 +675,10 @@ export default function ParentsPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-500">Aluno</label>
+            <label className="mb-1.5 block text-xs font-medium text-slate-500">
+              Aluno
+            </label>
+
             <select
               className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-200"
               value={selectedStudentId}
@@ -613,13 +708,16 @@ export default function ParentsPage() {
         </div>
       </section>
 
-      {/* Lista */}
       <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Responsáveis cadastrados</h2>
+            <h2 className="text-lg font-semibold text-slate-900">
+              Responsáveis cadastrados
+            </h2>
+
             <p className="mt-1 text-sm text-slate-500">
-              Visualize logins criados, vínculos ativos e gerencie desvinculações com segurança.
+              Visualize logins criados, vínculos ativos e gerencie desvinculações com
+              segurança.
             </p>
           </div>
 
@@ -634,43 +732,60 @@ export default function ParentsPage() {
 
         {parents.length === 0 ? (
           <div className="mt-6 rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
-            <div className="text-sm font-medium text-slate-700">Nenhum responsável cadastrado</div>
+            <div className="text-sm font-medium text-slate-700">
+              Nenhum responsável cadastrado
+            </div>
+
             <p className="mt-1 text-sm text-slate-500">
               Cadastre o primeiro responsável para iniciar a base de relacionamento escolar.
             </p>
           </div>
         ) : (
           <>
-            {/* Mobile cards */}
             <div className="mt-6 grid grid-cols-1 gap-4 xl:hidden">
               {parents.map((p) => {
                 const kids = childrenByParentId.get(p.id) ?? [];
 
                 return (
-                  <div key={p.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                  <div
+                    key={p.id}
+                    className="rounded-3xl border border-slate-200 bg-slate-50 p-5"
+                  >
                     <div className="flex items-start gap-3">
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-xs font-bold text-white">
-                        {initialsFromName(p.full_name)}
-                      </div>
+                      <ParentAvatar parent={p} />
 
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-slate-900">{p.full_name}</div>
+                        <div className="text-sm font-semibold text-slate-900">
+                          {p.full_name}
+                        </div>
+
                         <div className="mt-1 text-xs text-slate-500">
                           {p.user_id ? "Login criado ✅" : "Sem login"}
                         </div>
-                        <div className="mt-1 break-all font-mono text-[11px] text-slate-500">{p.id}</div>
+
+                        <div className="mt-1 break-all font-mono text-[11px] text-slate-500">
+                          {p.id}
+                        </div>
                       </div>
                     </div>
 
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-400">Contato</div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                        Contato
+                      </div>
+
                       <div className="mt-1 text-sm text-slate-700">{p.phone ?? "—"}</div>
                     </div>
 
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-400">Filhos vinculados</div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-400">
+                        Filhos vinculados
+                      </div>
+
                       {kids.length === 0 ? (
-                        <div className="mt-2 text-sm text-slate-500">Nenhum vínculo ativo.</div>
+                        <div className="mt-2 text-sm text-slate-500">
+                          Nenhum vínculo ativo.
+                        </div>
                       ) : (
                         <div className="mt-3 space-y-2">
                           {kids.map((k) => {
@@ -683,9 +798,14 @@ export default function ParentsPage() {
                                 className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3"
                               >
                                 <div className="min-w-0">
-                                  <div className="text-sm font-medium text-slate-900">{k.full_name}</div>
+                                  <div className="text-sm font-medium text-slate-900">
+                                    {k.full_name}
+                                  </div>
+
                                   <div className="text-xs text-slate-500">
-                                    {k.registration_number ? k.registration_number : "Sem matrícula"}
+                                    {k.registration_number
+                                      ? k.registration_number
+                                      : "Sem matrícula"}
                                   </div>
                                 </div>
 
@@ -707,7 +827,6 @@ export default function ParentsPage() {
               })}
             </div>
 
-            {/* Desktop table */}
             <div className="mt-6 hidden overflow-hidden rounded-3xl border border-slate-200 xl:block">
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[1100px]">
@@ -716,15 +835,19 @@ export default function ParentsPage() {
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Responsável
                       </th>
+
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Contato
                       </th>
+
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Filhos vinculados
                       </th>
+
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Ações
                       </th>
+
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         ID
                       </th>
@@ -736,15 +859,19 @@ export default function ParentsPage() {
                       const kids = childrenByParentId.get(p.id) ?? [];
 
                       return (
-                        <tr key={p.id} className="border-b border-slate-100 last:border-b-0 align-top">
+                        <tr
+                          key={p.id}
+                          className="border-b border-slate-100 align-top last:border-b-0"
+                        >
                           <td className="px-5 py-4">
                             <div className="flex items-start gap-3">
-                              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-xs font-bold text-white">
-                                {initialsFromName(p.full_name)}
-                              </div>
+                              <ParentAvatar parent={p} size="sm" />
 
                               <div className="min-w-0">
-                                <div className="text-sm font-semibold text-slate-900">{p.full_name}</div>
+                                <div className="text-sm font-semibold text-slate-900">
+                                  {p.full_name}
+                                </div>
+
                                 <div className="mt-1 text-xs text-slate-500">
                                   {p.user_id ? "Login criado ✅" : "Sem login"}
                                 </div>
@@ -758,7 +885,9 @@ export default function ParentsPage() {
 
                           <td className="px-5 py-4">
                             {kids.length === 0 ? (
-                              <span className="text-sm text-slate-500">Nenhum vínculo ativo</span>
+                              <span className="text-sm text-slate-500">
+                                Nenhum vínculo ativo
+                              </span>
                             ) : (
                               <div className="space-y-2">
                                 {kids.map((k) => (
@@ -766,8 +895,13 @@ export default function ParentsPage() {
                                     key={k.id}
                                     className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
                                   >
-                                    <span className="font-medium text-slate-900">{k.full_name}</span>
-                                    {k.registration_number ? ` • ${k.registration_number}` : ""}
+                                    <span className="font-medium text-slate-900">
+                                      {k.full_name}
+                                    </span>
+
+                                    {k.registration_number
+                                      ? ` • ${k.registration_number}`
+                                      : ""}
                                   </div>
                                 ))}
                               </div>
@@ -790,7 +924,9 @@ export default function ParentsPage() {
                                       disabled={busy}
                                       onClick={() => unlinkParentFromStudent(p.id, k.id)}
                                     >
-                                      {busy ? "Desvinculando..." : `Desvincular ${k.full_name}`}
+                                      {busy
+                                        ? "Desvinculando..."
+                                        : `Desvincular ${k.full_name}`}
                                     </button>
                                   );
                                 })}
@@ -799,7 +935,9 @@ export default function ParentsPage() {
                           </td>
 
                           <td className="px-5 py-4">
-                            <div className="break-all font-mono text-[11px] text-slate-500">{p.id}</div>
+                            <div className="break-all font-mono text-[11px] text-slate-500">
+                              {p.id}
+                            </div>
                           </td>
                         </tr>
                       );
