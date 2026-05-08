@@ -125,17 +125,20 @@ function ActionButton({
   label,
   onClick,
   primary = false,
+  disabled = false,
 }: {
   label: string;
   onClick: () => void;
   primary?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={[
-        "rounded-2xl px-4 py-2.5 text-sm font-medium transition",
+        "rounded-2xl px-4 py-2.5 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
         primary
           ? "bg-slate-900 text-white hover:opacity-90"
           : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
@@ -152,12 +155,16 @@ function PremiumCard({
   onDaily,
   onMonthly,
   onReport,
+  onStudentCard,
+  generatingCard,
 }: {
   child: ChildRow;
   onOpen: () => void;
   onDaily: () => void;
   onMonthly: () => void;
   onReport: () => void;
+  onStudentCard: () => void;
+  generatingCard: boolean;
 }) {
   const hasClass = !!child.active_class?.class;
 
@@ -215,7 +222,7 @@ function PremiumCard({
       </div>
 
       <div className="p-5">
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_520px]">
           <div className="rounded-3xl border border-slate-200 bg-white p-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Turma atual
@@ -226,7 +233,8 @@ function PremiumCard({
             </div>
 
             <div className="mt-2 text-sm leading-6 text-slate-500">
-              Acesse rapidamente presença, histórico mensal e boletim escolar deste aluno.
+              Acesse rapidamente presença, histórico mensal, boletim e carteirinha
+              escolar deste aluno.
             </div>
           </div>
 
@@ -234,6 +242,11 @@ function PremiumCard({
             <ActionButton label="Abrir aluno" onClick={onOpen} />
             <ActionButton label="Presença diária" onClick={onDaily} />
             <ActionButton label="Presença mensal" onClick={onMonthly} />
+            <ActionButton
+              label={generatingCard ? "Gerando carteirinha..." : "Gerar carteirinha"}
+              onClick={onStudentCard}
+              disabled={generatingCard}
+            />
             <ActionButton label="Ver boletim" onClick={onReport} primary />
           </div>
         </div>
@@ -248,6 +261,7 @@ export default function ParentChildrenPage() {
   const [loading, setLoading] = useState(true);
   const [children, setChildren] = useState<ChildRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [generatingCardStudentId, setGeneratingCardStudentId] = useState<string | null>(null);
 
   const totalChildren = useMemo(() => children.length, [children]);
 
@@ -261,18 +275,65 @@ export default function ParentChildrenPage() {
     [children]
   );
 
+  async function getAccessToken() {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError || !sessionData.session) {
+      throw new Error(sessionError?.message || "Not authenticated");
+    }
+
+    return sessionData.session.access_token;
+  }
+
+  async function generateStudentCardPdf(studentId: string) {
+    if (!studentId) return;
+
+    try {
+      setError(null);
+      setGeneratingCardStudentId(studentId);
+
+      const token = await getAccessToken();
+
+      const res = await fetch(`/api/parent/students/${studentId}/student-card-pdf`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        const json = await safeJson(res);
+        setError(json?.error || "Erro ao gerar carteirinha do aluno.");
+        return;
+      }
+
+      const blob = await res.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+
+      window.open(objectUrl, "_blank", "noopener,noreferrer");
+
+      setTimeout(() => {
+        window.URL.revokeObjectURL(objectUrl);
+      }, 60_000);
+    } catch (e: any) {
+      const msg = e?.message || "Erro inesperado ao gerar carteirinha do aluno.";
+      setError(msg);
+
+      if (msg === "Not authenticated" || String(msg).toLowerCase().includes("sessão")) {
+        router.replace("/login");
+      }
+    } finally {
+      setGeneratingCardStudentId(null);
+    }
+  }
+
   useEffect(() => {
     (async () => {
       try {
         setError(null);
 
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData.session?.access_token;
-
-        if (!token) {
-          router.replace("/login");
-          return;
-        }
+        const token = await getAccessToken();
 
         const res = await fetch("/api/parent/children", {
           headers: { Authorization: `Bearer ${token}` },
@@ -293,7 +354,12 @@ export default function ParentChildrenPage() {
 
         setChildren((json.children ?? []) as ChildRow[]);
       } catch (e: any) {
-        setError(e?.message || "Erro inesperado");
+        const msg = e?.message || "Erro inesperado";
+        setError(msg);
+
+        if (msg === "Not authenticated" || String(msg).toLowerCase().includes("sessão")) {
+          router.replace("/login");
+        }
       } finally {
         setLoading(false);
       }
@@ -322,7 +388,7 @@ export default function ParentChildrenPage() {
     );
   }
 
-  if (error) {
+  if (error && children.length === 0) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
         <div className="w-full max-w-lg rounded-3xl border border-red-200 bg-white p-6 shadow-sm">
@@ -357,7 +423,8 @@ export default function ParentChildrenPage() {
                 </h1>
 
                 <p className="mt-2 max-w-3xl text-sm text-slate-200">
-                  Acompanhe presença, boletim e rotina escolar de cada aluno vinculado à sua conta.
+                  Acompanhe presença, boletim, carteirinha e rotina escolar de cada aluno
+                  vinculado à sua conta.
                 </p>
               </div>
 
@@ -391,6 +458,12 @@ export default function ParentChildrenPage() {
           </div>
         </section>
 
+        {error ? (
+          <section className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            {error}
+          </section>
+        ) : null}
+
         <section>
           <div className="mb-4">
             <h2 className="text-xl font-semibold tracking-tight text-slate-900">
@@ -398,7 +471,8 @@ export default function ParentChildrenPage() {
             </h2>
 
             <p className="mt-1 text-sm text-slate-500">
-              Entre em cada aluno para consultar frequência, boletim e informações escolares.
+              Entre em cada aluno para consultar frequência, boletim, histórico e carteirinha
+              escolar.
             </p>
           </div>
 
@@ -420,6 +494,8 @@ export default function ParentChildrenPage() {
                   onDaily={() => router.push(`/parent/students/${child.id}/daily`)}
                   onMonthly={() => router.push(`/parent/students/${child.id}/monthly`)}
                   onReport={() => router.push(`/parent/students/${child.id}/report-card`)}
+                  onStudentCard={() => generateStudentCardPdf(child.id)}
+                  generatingCard={generatingCardStudentId === child.id}
                 />
               ))}
             </div>
