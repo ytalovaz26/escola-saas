@@ -26,25 +26,49 @@ type StudentRow = {
   full_name: string;
   birth_date: string | null;
   registration_number: string | null;
+  student_photo_url?: string | null;
   created_at: string;
+};
+
+type EnrollmentStudent = {
+  id: string;
+  full_name: string;
+  registration_number: string | null;
+  birth_date: string | null;
+  student_photo_url?: string | null;
+  created_at?: string | null;
+};
+
+type EnrollmentClass = {
+  id: string;
+  name: string;
+  grade: string | null;
+  shift: string | null;
 };
 
 type EnrollmentRow = {
   id: string;
-  student_id: string;
-  class_id: string;
   school_id: string;
-  is_active: boolean;
-  started_at: string;
-  ended_at: string | null;
-  created_at: string;
-  students?: {
-    id: string;
-    full_name: string;
-    registration_number: string | null;
-    birth_date: string | null;
-    created_at: string;
-  } | null;
+  student_id: string;
+  class_id: string | null;
+  academic_year?: number | null;
+  enrollment_number?: string | null;
+  status?: string | null;
+  enrollment_date?: string | null;
+  cancellation_date?: string | null;
+  transfer_date?: string | null;
+  notes?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  student?: EnrollmentStudent | null;
+  students?: EnrollmentStudent | null;
+
+  class?: EnrollmentClass | null;
+
+  is_active?: boolean;
+  started_at?: string | null;
+  ended_at?: string | null;
 };
 
 async function getAccessToken() {
@@ -67,7 +91,8 @@ async function safeJson(res: Response) {
 function formatDateBR(value?: string | null) {
   if (!value) return "—";
 
-  const [y, m, d] = String(value).split("-");
+  const clean = String(value).slice(0, 10);
+  const [y, m, d] = clean.split("-");
 
   if (!y || !m || !d) return value;
 
@@ -90,6 +115,85 @@ function roleCanManage(role: string | null | undefined) {
     r === "director" ||
     r === "coordenador" ||
     r === "coordinator"
+  );
+}
+
+function initials(name?: string | null) {
+  const safe = String(name || "").trim();
+
+  if (!safe) return "AL";
+
+  const parts = safe.split(/\s+/).filter(Boolean);
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "AL";
+}
+
+function getEnrollmentStudent(enrollment: EnrollmentRow) {
+  return enrollment.student || enrollment.students || null;
+}
+
+function getEnrollmentStudentName(enrollment: EnrollmentRow) {
+  const student = getEnrollmentStudent(enrollment);
+  return student?.full_name || "Aluno sem nome carregado";
+}
+
+function getEnrollmentStudentRegistration(enrollment: EnrollmentRow) {
+  const student = getEnrollmentStudent(enrollment);
+  return (
+    enrollment.enrollment_number ||
+    student?.registration_number ||
+    "—"
+  );
+}
+
+function getEnrollmentStartDate(enrollment: EnrollmentRow) {
+  return (
+    enrollment.enrollment_date ||
+    enrollment.started_at ||
+    enrollment.created_at ||
+    null
+  );
+}
+
+function getEnrollmentClassId(enrollment: EnrollmentRow, fallbackClassId: string) {
+  return enrollment.class_id || enrollment.class?.id || fallbackClassId;
+}
+
+function StudentAvatar({
+  student,
+  size = "md",
+}: {
+  student: EnrollmentStudent | StudentRow | null;
+  size?: "sm" | "md";
+}) {
+  const photoUrl = String(student?.student_photo_url || "").trim();
+
+  const sizeClass =
+    size === "sm"
+      ? "h-10 w-10 rounded-xl text-xs"
+      : "h-12 w-12 rounded-2xl text-sm";
+
+  if (photoUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={photoUrl}
+        alt={`Foto de ${student?.full_name || "aluno"}`}
+        className={`${sizeClass} shrink-0 border border-slate-200 object-cover shadow-sm`}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`${sizeClass} flex shrink-0 items-center justify-center bg-slate-900 font-semibold text-white shadow-sm`}
+    >
+      {initials(student?.full_name)}
+    </div>
   );
 }
 
@@ -121,16 +225,6 @@ export default function EnrollmentsPage() {
     return m;
   }, [classes]);
 
-  const enrollmentByStudentId = useMemo(() => {
-    const m = new Map<string, EnrollmentRow>();
-
-    for (const e of enrollments) {
-      m.set(e.student_id, e);
-    }
-
-    return m;
-  }, [enrollments]);
-
   const selectedClass = useMemo(() => {
     return classById.get(selectedClassId || "") || null;
   }, [classById, selectedClassId]);
@@ -152,17 +246,17 @@ export default function EnrollmentsPage() {
       .slice(0, 50);
   }, [students, queryNormalized]);
 
-  const availableStudentsForAdd = useMemo(() => {
-    const activeStudentIds = new Set(enrollments.map((e) => e.student_id));
+  const activeStudentIds = useMemo(() => {
+    return new Set(enrollments.map((e) => String(e.student_id)));
+  }, [enrollments]);
 
+  const availableStudentsForAdd = useMemo(() => {
     return matchedStudents.filter((s) => !activeStudentIds.has(s.id)).slice(0, 30);
-  }, [matchedStudents, enrollments]);
+  }, [matchedStudents, activeStudentIds]);
 
   const alreadyEnrolledMatches = useMemo(() => {
-    const activeStudentIds = new Set(enrollments.map((e) => e.student_id));
-
     return matchedStudents.filter((s) => activeStudentIds.has(s.id)).slice(0, 30);
-  }, [matchedStudents, enrollments]);
+  }, [matchedStudents, activeStudentIds]);
 
   const selectedStudent = useMemo(() => {
     return students.find((s) => s.id === selectedStudentId) || null;
@@ -225,7 +319,7 @@ export default function EnrollmentsPage() {
     setError(null);
 
     const res = await fetch(
-      `/api/school/enrollments?classId=${encodeURIComponent(classId)}&active=1`,
+      `/api/school/enrollments?classId=${encodeURIComponent(classId)}&status=active`,
       {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
@@ -347,7 +441,7 @@ export default function EnrollmentsPage() {
         body: JSON.stringify({
           studentId,
           classId,
-          mode: "rpc",
+          status: "active",
         }),
       });
 
@@ -505,7 +599,7 @@ export default function EnrollmentsPage() {
                 </h1>
 
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
-                  Controle o vínculo aluno ↔ turma com segurança, histórico e operação
+                  Controle o vínculo aluno ↔️ turma com segurança, histórico e operação
                   centralizada.
                 </p>
               </div>
@@ -659,8 +753,8 @@ export default function EnrollmentsPage() {
               </h2>
 
               <p className="mt-1 text-sm text-slate-500">
-                A busca agora mostra alunos disponíveis e também avisa quando o aluno já
-                está matriculado nesta turma.
+                A busca mostra alunos disponíveis e também avisa quando o aluno já está
+                matriculado nesta turma.
               </p>
             </div>
 
@@ -705,8 +799,10 @@ export default function EnrollmentsPage() {
                         onClick={() => setSelectedStudentId(s.id)}
                         type="button"
                       >
-                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="min-w-0">
+                        <div className="flex items-center gap-3">
+                          <StudentAvatar student={s} size="sm" />
+
+                          <div className="min-w-0 flex-1">
                             <div className="truncate font-medium text-slate-900">
                               {s.full_name}
                             </div>
@@ -718,9 +814,11 @@ export default function EnrollmentsPage() {
                             </div>
                           </div>
 
-                          <div className="truncate text-[11px] text-slate-400 sm:text-right">
-                            {s.id}
-                          </div>
+                          {selectedStudentId === s.id ? (
+                            <div className="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
+                              Selecionado
+                            </div>
+                          ) : null}
                         </div>
                       </button>
                     ))}
@@ -736,13 +834,19 @@ export default function EnrollmentsPage() {
 
                   <div className="divide-y divide-emerald-100">
                     {alreadyEnrolledMatches.map((s) => (
-                      <div key={s.id} className="px-4 py-3">
-                        <div className="font-medium text-emerald-950">{s.full_name}</div>
+                      <div key={s.id} className="flex items-center gap-3 px-4 py-3">
+                        <StudentAvatar student={s} size="sm" />
 
-                        <div className="mt-1 text-xs text-emerald-700">
-                          {s.registration_number
-                            ? `Matrícula: ${s.registration_number}`
-                            : "Matrícula: —"}
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-emerald-950">
+                            {s.full_name}
+                          </div>
+
+                          <div className="mt-1 text-xs text-emerald-700">
+                            {s.registration_number
+                              ? `Matrícula: ${s.registration_number}`
+                              : "Matrícula: —"}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -810,8 +914,7 @@ export default function EnrollmentsPage() {
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  Remover encerra vínculo. Trocar turma cria novo vínculo ativo e preserva
-                  o histórico.
+                  Visualize nome, foto, matrícula e data de início do vínculo ativo.
                 </p>
               </div>
 
@@ -842,12 +945,13 @@ export default function EnrollmentsPage() {
           ) : (
             <>
               <div className="hidden overflow-x-auto lg:block">
-                <table className="w-full min-w-[920px] text-sm">
+                <table className="w-full min-w-[980px] text-sm">
                   <thead className="bg-slate-50">
                     <tr className="text-left text-slate-500">
                       <th className="px-6 py-4 font-medium">Aluno</th>
                       <th className="px-6 py-4 font-medium">Matrícula</th>
                       <th className="px-6 py-4 font-medium">Início</th>
+                      <th className="px-6 py-4 font-medium">Status</th>
                       <th className="px-6 py-4 font-medium">Trocar turma</th>
                       <th className="px-6 py-4 font-medium">Ações</th>
                     </tr>
@@ -855,35 +959,50 @@ export default function EnrollmentsPage() {
 
                   <tbody className="divide-y divide-slate-200">
                     {enrollments.map((e) => {
-                      const st = e.students;
-                      const displayName = st?.full_name || e.student_id;
-                      const reg = st?.registration_number || "—";
+                      const st = getEnrollmentStudent(e);
+                      const displayName = getEnrollmentStudentName(e);
+                      const reg = getEnrollmentStudentRegistration(e);
+                      const startDate = getEnrollmentStartDate(e);
+                      const currentClassId = getEnrollmentClassId(e, selectedClassId);
 
                       return (
                         <tr key={e.id} className="align-middle">
                           <td className="px-6 py-4">
-                            <div className="font-medium text-slate-900">
-                              {displayName}
-                            </div>
+                            <div className="flex items-center gap-3">
+                              <StudentAvatar student={st} />
 
-                            <div className="mt-1 text-xs text-slate-400">
-                              {e.student_id}
+                              <div className="min-w-0">
+                                <div className="truncate font-semibold text-slate-900">
+                                  {displayName}
+                                </div>
+
+                                <div className="mt-1 truncate text-xs text-slate-500">
+                                  {st?.birth_date
+                                    ? `Nascimento: ${formatDateBR(st.birth_date)}`
+                                    : "Nascimento: —"}
+                                </div>
+                              </div>
                             </div>
                           </td>
 
-                          <td className="px-6 py-4 text-slate-700">{reg}</td>
+                          <td className="px-6 py-4">
+                            <div className="font-medium text-slate-800">{reg}</div>
+                          </td>
 
                           <td className="px-6 py-4 text-slate-700">
-                            {formatDateBR(e.started_at)}
+                            {formatDateBR(startDate)}
+                          </td>
+
+                          <td className="px-6 py-4">
+                            <span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                              Ativo
+                            </span>
                           </td>
 
                           <td className="px-6 py-4">
                             <select
                               className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-slate-400"
-                              value={
-                                enrollmentByStudentId.get(e.student_id)?.class_id ||
-                                selectedClassId
-                              }
+                              value={currentClassId}
                               onChange={(ev) =>
                                 moveStudentToClass(e.student_id, ev.target.value)
                               }
@@ -892,6 +1011,8 @@ export default function EnrollmentsPage() {
                               {classes.map((c) => (
                                 <option key={c.id} value={c.id}>
                                   {c.name}
+                                  {c.grade ? ` • ${c.grade}` : ""}
+                                  {c.shift ? ` • ${c.shift}` : ""}
                                 </option>
                               ))}
                             </select>
@@ -915,9 +1036,11 @@ export default function EnrollmentsPage() {
 
               <div className="space-y-4 p-4 lg:hidden">
                 {enrollments.map((e) => {
-                  const st = e.students;
-                  const displayName = st?.full_name || e.student_id;
-                  const reg = st?.registration_number || "—";
+                  const st = getEnrollmentStudent(e);
+                  const displayName = getEnrollmentStudentName(e);
+                  const reg = getEnrollmentStudentRegistration(e);
+                  const startDate = getEnrollmentStartDate(e);
+                  const currentClassId = getEnrollmentClassId(e, selectedClassId);
 
                   return (
                     <div
@@ -925,17 +1048,23 @@ export default function EnrollmentsPage() {
                       className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate text-base font-semibold text-slate-900">
-                            {displayName}
-                          </div>
+                        <div className="flex min-w-0 items-center gap-3">
+                          <StudentAvatar student={st} />
 
-                          <div className="mt-1 break-all text-xs text-slate-400">
-                            {e.student_id}
+                          <div className="min-w-0">
+                            <div className="truncate text-base font-semibold text-slate-900">
+                              {displayName}
+                            </div>
+
+                            <div className="mt-1 text-xs text-slate-500">
+                              {st?.birth_date
+                                ? `Nascimento: ${formatDateBR(st.birth_date)}`
+                                : "Nascimento: —"}
+                            </div>
                           </div>
                         </div>
 
-                        <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                        <div className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
                           Ativo
                         </div>
                       </div>
@@ -957,7 +1086,7 @@ export default function EnrollmentsPage() {
                           </div>
 
                           <div className="mt-1 text-sm font-medium text-slate-800">
-                            {formatDateBR(e.started_at)}
+                            {formatDateBR(startDate)}
                           </div>
                         </div>
                       </div>
@@ -969,10 +1098,7 @@ export default function EnrollmentsPage() {
 
                         <select
                           className="w-full rounded-2xl border border-slate-300 bg-white px-3 py-3 text-sm text-slate-800 outline-none transition focus:border-slate-400"
-                          value={
-                            enrollmentByStudentId.get(e.student_id)?.class_id ||
-                            selectedClassId
-                          }
+                          value={currentClassId}
                           onChange={(ev) =>
                             moveStudentToClass(e.student_id, ev.target.value)
                           }
@@ -981,6 +1107,8 @@ export default function EnrollmentsPage() {
                           {classes.map((c) => (
                             <option key={c.id} value={c.id}>
                               {c.name}
+                              {c.grade ? ` • ${c.grade}` : ""}
+                              {c.shift ? ` • ${c.shift}` : ""}
                             </option>
                           ))}
                         </select>
