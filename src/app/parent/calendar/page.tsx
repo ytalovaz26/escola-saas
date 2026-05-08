@@ -15,13 +15,15 @@ type CalendarEventRow = {
   school_id: string;
   title: string;
   description: string | null;
-  starts_at: string;
-  ends_at: string | null;
+  event_date: string;
   created_at: string;
 };
 
-function safeJson(text: string) {
+async function safeJsonFromResponse(res: Response) {
+  const text = await res.text();
+
   if (!text) return null;
+
   try {
     return JSON.parse(text);
   } catch {
@@ -29,9 +31,20 @@ function safeJson(text: string) {
   }
 }
 
-function formatDayBR(yyyyMmDd: string) {
+function normalizeDateOnly(value?: string | null) {
+  if (!value) return "";
+
+  return String(value).slice(0, 10);
+}
+
+function makeLocalDateFromYYYYMMDD(yyyyMmDd: string) {
   const [y, m, d] = yyyyMmDd.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
+
+  return new Date(y, (m || 1) - 1, d || 1);
+}
+
+function formatDayBR(yyyyMmDd: string) {
+  const date = makeLocalDateFromYYYYMMDD(yyyyMmDd);
 
   return date.toLocaleDateString("pt-BR", {
     weekday: "long",
@@ -42,8 +55,7 @@ function formatDayBR(yyyyMmDd: string) {
 }
 
 function formatShortDateBR(yyyyMmDd: string) {
-  const [y, m, d] = yyyyMmDd.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
+  const date = makeLocalDateFromYYYYMMDD(yyyyMmDd);
 
   return date.toLocaleDateString("pt-BR", {
     day: "2-digit",
@@ -52,21 +64,14 @@ function formatShortDateBR(yyyyMmDd: string) {
   });
 }
 
-function formatTimeBR(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+function formatDateTimeBR(value?: string | null) {
+  if (!value) return "—";
 
-  return d.toLocaleTimeString("pt-BR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
+  const date = new Date(value);
 
-function formatDateTimeBR(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(date.getTime())) return "—";
 
-  return d.toLocaleString("pt-BR", {
+  return date.toLocaleString("pt-BR", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
@@ -75,10 +80,14 @@ function formatDateTimeBR(iso: string) {
   });
 }
 
-function isFutureEvent(iso: string) {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return false;
-  return d.getTime() >= Date.now();
+function isFutureOrTodayEvent(eventDate: string) {
+  const today = new Date();
+  const todayKey = today.toISOString().slice(0, 10);
+  const eventKey = normalizeDateOnly(eventDate);
+
+  if (!eventKey) return false;
+
+  return eventKey >= todayKey;
 }
 
 function MetricCard({
@@ -95,9 +104,11 @@ function MetricCard({
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
         {label}
       </div>
+
       <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
         {value}
       </div>
+
       <div className="mt-2 text-sm leading-6 text-slate-500">{help}</div>
     </div>
   );
@@ -133,25 +144,32 @@ export default function ParentCalendarPage() {
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [events, setEvents] = useState<CalendarEventRow[]>([]);
   const [selectedStudentId, setSelectedStudentId] = useState<string>("all");
+  const [schoolId, setSchoolId] = useState<string | null>(null);
 
   const eventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEventRow[]>();
 
     for (const ev of events) {
-      const date = new Date(ev.starts_at);
-      if (Number.isNaN(date.getTime())) continue;
+      const day = normalizeDateOnly(ev.event_date);
 
-      const day = date.toISOString().slice(0, 10);
+      if (!day) continue;
+
       const arr = map.get(day) ?? [];
       arr.push(ev);
       map.set(day, arr);
     }
 
-    for (const [k, arr] of map.entries()) {
-      arr.sort(
-        (a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime()
-      );
-      map.set(k, arr);
+    for (const [day, arr] of map.entries()) {
+      arr.sort((a, b) => {
+        const aDate = normalizeDateOnly(a.event_date);
+        const bDate = normalizeDateOnly(b.event_date);
+
+        if (aDate !== bDate) return aDate < bDate ? -1 : 1;
+
+        return String(a.title || "").localeCompare(String(b.title || ""), "pt-BR");
+      });
+
+      map.set(day, arr);
     }
 
     return map;
@@ -165,27 +183,35 @@ export default function ParentCalendarPage() {
 
   const studentLabel = useMemo(() => {
     if (selectedStudentId === "all") return "Todos os filhos";
-    const s = students.find((x) => x.id === selectedStudentId);
-    return s ? s.full_name : "Filho selecionado";
+
+    const student = students.find((item) => item.id === selectedStudentId);
+
+    return student ? student.full_name : "Filho selecionado";
   }, [selectedStudentId, students]);
 
-  const totalEvents = useMemo(() => events.length, [events]);
+  const totalEvents = events.length;
 
-  const futureEvents = useMemo(
-    () => events.filter((ev) => isFutureEvent(ev.starts_at)),
-    [events]
-  );
+  const futureEvents = useMemo(() => {
+    return events
+      .filter((ev) => isFutureOrTodayEvent(ev.event_date))
+      .sort((a, b) => {
+        const aDate = normalizeDateOnly(a.event_date);
+        const bDate = normalizeDateOnly(b.event_date);
 
-  const nextEvent = useMemo(() => {
-    return futureEvents[0] || null;
-  }, [futureEvents]);
+        if (aDate !== bDate) return aDate < bDate ? -1 : 1;
+
+        return String(a.title || "").localeCompare(String(b.title || ""), "pt-BR");
+      });
+  }, [events]);
+
+  const nextEvent = futureEvents[0] || null;
 
   const latestPublished = useMemo(() => {
     if (events.length === 0) return null;
 
-    const ordered = [...events].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+    const ordered = [...events].sort((a, b) => {
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
 
     return ordered[0] || null;
   }, [events]);
@@ -197,6 +223,7 @@ export default function ParentCalendarPage() {
 
       const params = new URLSearchParams(window.location.search);
       const urlStudentId = params.get("studentId") || "all";
+
       setSelectedStudentId(urlStudentId);
 
       const { data: sessionData } = await supabase.auth.getSession();
@@ -212,39 +239,53 @@ export default function ParentCalendarPage() {
         cache: "no-store",
       });
 
-      const meText = await meRes.text();
-      const me: any = safeJson(meText);
+      const me = await safeJsonFromResponse(meRes);
 
-      if (!meRes.ok || !me?.ok || !me?.parent?.parentId) {
+      if (!meRes.ok || !me?.ok) {
         router.replace(me?.redirectTo || "/login");
         return;
       }
 
-      const { data: stData, error: stErr } = await supabase
-        .from("students")
-        .select("id, full_name, registration_number")
-        .order("full_name", { ascending: true });
+      const childrenRes = await fetch("/api/parent/children", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
 
-      if (stErr) {
-        setError("Erro ao carregar filhos: " + stErr.message);
+      const childrenJson = await safeJsonFromResponse(childrenRes);
+
+      if (!childrenRes.ok || !childrenJson?.ok) {
+        setError(childrenJson?.error || "Erro ao carregar filhos vinculados.");
         return;
       }
 
-      setStudents((stData ?? []) as StudentRow[]);
+      const children = (childrenJson.children ?? []) as StudentRow[];
+      const sid = String(childrenJson.schoolId || "");
+
+      setStudents(children);
+      setSchoolId(sid || null);
+
+      if (!sid) {
+        setEvents([]);
+        setError("Não foi possível identificar a escola vinculada ao responsável.");
+        return;
+      }
 
       const { data: evData, error: evErr } = await supabase
         .from("calendar_events")
-        .select("id, school_id, title, description, starts_at, ends_at, created_at")
-        .order("starts_at", { ascending: true });
+        .select("id, school_id, title, description, event_date, created_at")
+        .eq("school_id", sid)
+        .order("event_date", { ascending: true })
+        .order("created_at", { ascending: true });
 
       if (evErr) {
         setError("Erro ao carregar agenda: " + evErr.message);
+        setEvents([]);
         return;
       }
 
       setEvents((evData ?? []) as CalendarEventRow[]);
     } catch (e: any) {
-      setError(e?.message || "Erro inesperado");
+      setError(e?.message || "Erro inesperado ao carregar agenda.");
     } finally {
       setLoading(false);
     }
@@ -253,7 +294,7 @@ export default function ParentCalendarPage() {
   useEffect(() => {
     loadPage();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router]);
+  }, []);
 
   if (loading) {
     return (
@@ -261,11 +302,13 @@ export default function ParentCalendarPage() {
         <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
           <div className="animate-pulse space-y-4">
             <div className="h-48 rounded-[32px] bg-slate-200" />
+
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="h-32 rounded-[28px] bg-slate-100" />
               <div className="h-32 rounded-[28px] bg-slate-100" />
               <div className="h-32 rounded-[28px] bg-slate-100" />
             </div>
+
             <div className="h-28 rounded-[28px] bg-slate-100" />
             <div className="h-96 rounded-[28px] bg-slate-100" />
           </div>
@@ -291,7 +334,7 @@ export default function ParentCalendarPage() {
 
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
                   Acompanhe compromissos, eventos e datas importantes da escola em uma
-                  visualização mais clara, organizada e profissional.
+                  visualização clara, organizada e profissional.
                 </p>
 
                 <div className="mt-4 text-sm text-slate-200">
@@ -343,12 +386,10 @@ export default function ParentCalendarPage() {
 
             <MetricCard
               label="Próximo evento"
-              value={nextEvent ? formatTimeBR(nextEvent.starts_at) : "—"}
+              value={nextEvent ? formatShortDateBR(nextEvent.event_date) : "—"}
               help={
                 nextEvent
-                  ? `${nextEvent.title} • ${formatShortDateBR(
-                      new Date(nextEvent.starts_at).toISOString().slice(0, 10)
-                    )}`
+                  ? nextEvent.title
                   : "Nenhum próximo evento futuro identificado."
               }
             />
@@ -362,8 +403,10 @@ export default function ParentCalendarPage() {
                 <h2 className="text-xl font-semibold tracking-tight text-slate-900">
                   Filtro da agenda
                 </h2>
+
                 <p className="mt-1 text-sm text-slate-500">
-                  O filtro é visual e ajuda a navegação do responsável dentro do portal.
+                  A agenda é da escola. O filtro ajuda o responsável a navegar pelo portal
+                  conforme o filho selecionado.
                 </p>
               </div>
 
@@ -371,21 +414,31 @@ export default function ParentCalendarPage() {
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Filho
                 </label>
+
                 <select
                   className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
                   value={selectedStudentId}
                   onChange={(e) => {
-                    const v = e.target.value;
-                    setSelectedStudentId(v);
+                    const value = e.target.value;
 
-                    const qs = v === "all" ? "" : `?studentId=${encodeURIComponent(v)}`;
+                    setSelectedStudentId(value);
+
+                    const qs =
+                      value === "all"
+                        ? ""
+                        : `?studentId=${encodeURIComponent(value)}`;
+
                     router.replace(`/parent/calendar${qs}`);
                   }}
                 >
                   <option value="all">Todos</option>
-                  {students.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.full_name}
+
+                  {students.map((student) => (
+                    <option key={student.id} value={student.id}>
+                      {student.full_name}
+                      {student.registration_number
+                        ? ` • ${student.registration_number}`
+                        : ""}
                     </option>
                   ))}
                 </select>
@@ -395,6 +448,12 @@ export default function ParentCalendarPage() {
             {error ? (
               <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {error}
+              </div>
+            ) : null}
+
+            {!error && schoolId ? (
+              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+                Escola vinculada: <span className="font-mono">{schoolId}</span>
               </div>
             ) : null}
           </div>
@@ -412,18 +471,15 @@ export default function ParentCalendarPage() {
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   <EventTag variant="highlight">
-                    {formatShortDateBR(
-                      new Date(nextEvent.starts_at).toISOString().slice(0, 10)
-                    )}
+                    {formatShortDateBR(nextEvent.event_date)}
                   </EventTag>
-                  <EventTag>Início: {formatTimeBR(nextEvent.starts_at)}</EventTag>
-                  <EventTag>
-                    Término: {nextEvent.ends_at ? formatTimeBR(nextEvent.ends_at) : "—"}
-                  </EventTag>
+
+                  <EventTag>Evento escolar</EventTag>
                 </div>
 
-                <div className="mt-4 text-sm leading-6 text-slate-600">
-                  {nextEvent.description || "Sem descrição adicional para este evento."}
+                <div className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                  {nextEvent.description ||
+                    "Sem descrição adicional para este evento."}
                 </div>
               </div>
             ) : (
@@ -436,6 +492,7 @@ export default function ParentCalendarPage() {
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Última publicação
               </div>
+
               <div className="mt-2 text-sm text-slate-700">
                 {latestPublished ? formatDateTimeBR(latestPublished.created_at) : "—"}
               </div>
@@ -448,8 +505,10 @@ export default function ParentCalendarPage() {
             <h2 className="text-xl font-semibold tracking-tight text-slate-900">
               Eventos da escola
             </h2>
+
             <p className="mt-1 text-sm text-slate-500">
-              Visualização organizada por dia para facilitar o acompanhamento da rotina escolar.
+              Visualização organizada por dia para facilitar o acompanhamento da rotina
+              escolar.
             </p>
           </div>
 
@@ -473,6 +532,7 @@ export default function ParentCalendarPage() {
                           <div className="text-lg font-semibold capitalize text-slate-900">
                             {formatDayBR(day)}
                           </div>
+
                           <div className="mt-1 text-sm text-slate-500">
                             {formatShortDateBR(day)}
                           </div>
@@ -497,11 +557,7 @@ export default function ParentCalendarPage() {
 
                                 <div className="mt-3 flex flex-wrap gap-2">
                                   <EventTag variant="highlight">
-                                    Início: {formatTimeBR(ev.starts_at)}
-                                  </EventTag>
-
-                                  <EventTag>
-                                    Término: {ev.ends_at ? formatTimeBR(ev.ends_at) : "—"}
+                                    Data: {formatShortDateBR(ev.event_date)}
                                   </EventTag>
 
                                   <EventTag>
@@ -516,7 +572,7 @@ export default function ParentCalendarPage() {
                             </div>
 
                             {ev.description ? (
-                              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700 whitespace-pre-wrap">
+                              <div className="mt-4 whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
                                 {ev.description}
                               </div>
                             ) : (
