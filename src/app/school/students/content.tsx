@@ -832,48 +832,6 @@ export default function StudentsPage() {
     }
   }
 
-  async function generateStudentCardPdf() {
-    if (!selectedProfile?.student?.id) return;
-
-    try {
-      setGeneratingCardPdf(true);
-      setProfileError(null);
-
-      const token = await getAccessToken();
-      const url = `/api/school/students/${selectedProfile.student.id}/student-card-pdf`;
-
-      const res = await fetch(url, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        cache: "no-store",
-      });
-
-      if (!res.ok) {
-        const json = await safeJson(res);
-        setProfileError(json?.error || "Erro ao gerar carteirinha do aluno.");
-        return;
-      }
-
-      const blob = await res.blob();
-      const objectUrl = window.URL.createObjectURL(blob);
-
-      window.open(objectUrl, "_blank", "noopener,noreferrer");
-
-      setTimeout(() => {
-        window.URL.revokeObjectURL(objectUrl);
-      }, 60_000);
-    } catch (e: any) {
-      setProfileError(e?.message || "Erro inesperado ao gerar carteirinha do aluno.");
-
-      if (e?.message === "Not authenticated") {
-        router.replace("/login");
-      }
-    } finally {
-      setGeneratingCardPdf(false);
-    }
-  }
   async function generateStudentProfilePdf() {
     if (!selectedProfile?.student?.id) return;
 
@@ -914,7 +872,49 @@ export default function StudentsPage() {
       }
     } finally {
       setGeneratingPdf(false);
-    setGeneratingCardPdf(false);
+    }
+  }
+
+  async function generateStudentCardPdf() {
+    if (!selectedProfile?.student?.id) return;
+
+    try {
+      setGeneratingCardPdf(true);
+      setProfileError(null);
+
+      const token = await getAccessToken();
+      const url = `/api/school/students/${selectedProfile.student.id}/student-card-pdf`;
+
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        const json = await safeJson(res);
+        setProfileError(json?.error || "Erro ao gerar carteirinha do aluno.");
+        return;
+      }
+
+      const blob = await res.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+
+      window.open(objectUrl, "_blank", "noopener,noreferrer");
+
+      setTimeout(() => {
+        window.URL.revokeObjectURL(objectUrl);
+      }, 60_000);
+    } catch (e: any) {
+      setProfileError(e?.message || "Erro inesperado ao gerar carteirinha do aluno.");
+
+      if (e?.message === "Not authenticated") {
+        router.replace("/login");
+      }
+    } finally {
+      setGeneratingCardPdf(false);
     }
   }
 
@@ -1186,7 +1186,7 @@ export default function StudentsPage() {
                   <div>
                     <h3 className="text-lg font-semibold text-slate-900">Foto e documentos</h3>
                     <p className="mt-1 text-sm text-slate-500">
-                      A direção pode atualizar a foto, preencher dados complementares e gerar o PDF oficial.
+                      A direção pode atualizar a foto, preencher dados complementares e gerar documentos oficiais.
                     </p>
                   </div>
 
@@ -1224,6 +1224,15 @@ export default function StudentsPage() {
                       className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:opacity-60"
                     >
                       {generatingPdf ? "Gerando PDF..." : "Gerar PDF da ficha"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={generateStudentCardPdf}
+                      disabled={generatingCardPdf || generatingPdf || uploadingPhoto || savingExtra}
+                      className="rounded-2xl border border-blue-200 bg-blue-50 px-5 py-3 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 disabled:opacity-60"
+                    >
+                      {generatingCardPdf ? "Gerando carteirinha..." : "Gerar carteirinha"}
                     </button>
                   </div>
                 </div>
@@ -1542,4 +1551,3 @@ export default function StudentsPage() {
     </main>
   );
 }
-
