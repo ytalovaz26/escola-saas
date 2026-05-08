@@ -4,6 +4,7 @@ import PDFDocument from "pdfkit";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
@@ -35,15 +36,27 @@ function safeFileName(value: string) {
     .toLowerCase();
 }
 
-function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: string } | null {
-  const u = String(logoUrl || "").trim();
+function initialsFromName(name: string | null | undefined) {
+  const safe = String(name || "").trim();
 
-  if (!u) return null;
+  if (!safe) return "AL";
 
-  const pub = u.split("/storage/v1/object/public/");
+  const parts = safe.split(/\s+/).filter(Boolean);
 
-  if (pub.length === 2) {
-    const rest = pub[1];
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "AL";
+}
+
+function parseSupabaseStorageRef(url: string): { bucket: string; path: string } | null {
+  const clean = String(url || "").trim();
+
+  if (!clean) return null;
+
+  const publicSplit = clean.split("/storage/v1/object/public/");
+
+  if (publicSplit.length === 2) {
+    const rest = publicSplit[1];
     const parts = rest.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
@@ -51,10 +64,10 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
     if (bucket && path) return { bucket, path };
   }
 
-  const sign = u.split("/storage/v1/object/sign/");
+  const signedSplit = clean.split("/storage/v1/object/sign/");
 
-  if (sign.length === 2) {
-    const rest = sign[1].split("?")[0];
+  if (signedSplit.length === 2) {
+    const rest = signedSplit[1].split("?")[0];
     const parts = rest.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
@@ -62,8 +75,8 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
     if (bucket && path) return { bucket, path };
   }
 
-  if (!u.startsWith("http://") && !u.startsWith("https://") && u.includes("/")) {
-    const parts = u.split("/");
+  if (!clean.startsWith("http://") && !clean.startsWith("https://") && clean.includes("/")) {
+    const parts = clean.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
 
@@ -97,6 +110,7 @@ async function getImageBuffer(url: string | null | undefined): Promise<Buffer | 
     if (!res.ok) return null;
 
     const ab = await res.arrayBuffer();
+
     return Buffer.from(ab);
   } catch {
     return null;
@@ -167,26 +181,14 @@ function drawInitials(
     .stroke();
 }
 
-function initialsFromName(name: string | null | undefined) {
-  const safe = String(name || "").trim();
-
-  if (!safe) return "AL";
-
-  const parts = safe.split(/\s+/).filter(Boolean);
-
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-
-  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "AL";
-}
-
-async function getParentFromRequest(req: Request) {
+async function requireParent(req: Request) {
   const auth = req.headers.get("authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
 
   if (!token) {
     return {
       ok: false as const,
-      res: jsonError("Missing Bearer token", 401),
+      res: jsonError("Sessão inválida. Faça login novamente.", 401),
     };
   }
 
@@ -195,16 +197,14 @@ async function getParentFromRequest(req: Request) {
   if (userErr || !userData?.user?.id) {
     return {
       ok: false as const,
-      res: jsonError("Invalid session", 401),
+      res: jsonError("Sessão inválida. Faça login novamente.", 401),
     };
   }
-
-  const userId = userData.user.id;
 
   const { data: parent, error: parentErr } = await supabaseAdmin
     .from("parents")
     .select("id, school_id, user_id, full_name")
-    .eq("user_id", userId)
+    .eq("user_id", userData.user.id)
     .maybeSingle();
 
   if (parentErr) {
@@ -231,7 +231,7 @@ export async function GET(
   req: Request,
   context: { params: Promise<{ studentId: string }> }
 ) {
-  const guard = await getParentFromRequest(req);
+  const guard = await requireParent(req);
 
   if (!guard.ok) return guard.res;
 
@@ -248,7 +248,7 @@ export async function GET(
 
     const { data: link, error: linkErr } = await supabaseAdmin
       .from("student_parents")
-      .select("id, parent_id, student_id, school_id, is_active")
+      .select("id, school_id, parent_id, student_id, is_active")
       .eq("school_id", schoolId)
       .eq("parent_id", parentId)
       .eq("student_id", studentId)
@@ -358,7 +358,6 @@ export async function GET(
 
     doc.roundedRect(cardX, cardY, cardW, 92, 24).fill("#0f172a");
     doc.rect(cardX, cardY + 68, cardW, 32).fill("#0f172a");
-
     doc.rect(cardX, cardY + 92, cardW, 5).fill("#2563eb");
 
     if (schoolLogoBuffer) {
@@ -372,18 +371,21 @@ export async function GET(
     }
 
     doc.font("Helvetica-Bold").fontSize(10).fillColor("#cbd5e1");
+
     doc.text(field(school?.name || "Escola"), cardX + 90, cardY + 22, {
       width: cardW - 120,
       ellipsis: true,
     });
 
     doc.font("Helvetica-Bold").fontSize(20).fillColor("#ffffff");
+
     doc.text("Carteirinha de Estudante", cardX + 90, cardY + 39, {
       width: cardW - 120,
       ellipsis: true,
     });
 
     doc.font("Helvetica").fontSize(8).fillColor("#cbd5e1");
+
     doc.text("Documento escolar de identificação do aluno", cardX + 90, cardY + 66, {
       width: cardW - 120,
     });
@@ -399,30 +401,33 @@ export async function GET(
     }
 
     doc.font("Helvetica-Bold").fontSize(18).fillColor("#0f172a");
+
     doc.text(field(student.full_name), cardX + 145, cardY + 123, {
       width: cardW - 175,
       ellipsis: true,
     });
 
     doc.font("Helvetica").fontSize(9).fillColor("#64748b");
+
     doc.text("Aluno regularmente cadastrado no sistema escolar.", cardX + 145, cardY + 148, {
       width: cardW - 175,
     });
 
     const infoY = cardY + 178;
-    const colW = 150;
     const gap = 10;
 
-    function smallBox(x: number, y: number, label: string, value: string, width = colW) {
+    function smallBox(x: number, y: number, label: string, value: string, width: number) {
       doc.roundedRect(x, y, width, 44, 10).fillAndStroke("#f8fafc", "#e2e8f0");
 
       doc.font("Helvetica-Bold").fontSize(6.5).fillColor("#94a3b8");
+
       doc.text(label.toUpperCase(), x + 10, y + 8, {
         width: width - 20,
         lineBreak: false,
       });
 
       doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a");
+
       doc.text(value, x + 10, y + 23, {
         width: width - 20,
         height: 13,
@@ -447,12 +452,14 @@ export async function GET(
     doc.text(String(new Date().getFullYear()), cardX + 38, cardY + 257);
 
     doc.font("Helvetica").fontSize(7).fillColor("#64748b");
+
     doc.text(`ID: ${student.id}`, cardX + 28, cardY + cardH - 20, {
       width: cardW - 56,
       ellipsis: true,
     });
 
     doc.font("Helvetica").fontSize(8).fillColor("#64748b");
+
     doc.text(`Emitido em ${new Date().toLocaleDateString("pt-BR")}`, cardX, cardY + cardH + 24, {
       width: cardW,
       align: "center",
