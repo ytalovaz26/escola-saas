@@ -248,6 +248,13 @@ export default function SchoolLayout({
         roles: ["diretor", "coordenador", "secretaria", "admin"],
       },
       {
+        label: "Agenda",
+        href: "/school/calendar",
+        icon: "📅",
+        section: "configuracao",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
         label: "Financeiro",
         href: "/school/finance",
         icon: "💳",

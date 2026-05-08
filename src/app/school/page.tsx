@@ -31,7 +31,7 @@ type QuickAction = {
 };
 
 const SUBJECTS_HREF = "/school/subjects";
-const BRANDING_HREF = "/school/branding";
+const BRANDING_HREF = "/school/settings/branding";
 const STAFF_HREF = "/school/staff";
 
 function safeJson(text: string) {
@@ -316,6 +316,14 @@ export default function SchoolDashboardPage() {
       roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
+      label: "Agenda Escolar",
+      href: "/school/calendar",
+      description: "Crie eventos, reuniões e compromissos que aparecem no portal dos responsáveis.",
+      status: "ativo",
+      category: "Relacionamento",
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
+    },
+    {
       label: "Financeiro",
       href: "/school/finance",
       description: "Área preparada para mensalidades, recebimentos, cobranças e visão financeira.",
@@ -326,8 +334,8 @@ export default function SchoolDashboardPage() {
     {
       label: "Comunicados",
       href: "/school/messages",
-      description: "Central de comunicados da direção com pais e responsáveis.",
-      status: "proximo",
+      description: "Central de comunicados da direção com pais, responsáveis e equipe escolar.",
+      status: "ativo",
       category: "Relacionamento",
       roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
@@ -351,24 +359,24 @@ export default function SchoolDashboardPage() {
         "Equipe Escolar",
         "Turmas",
         "Alunos",
-        "Professores",
-        "Responsáveis",
-        "Disciplinas",
+        "Agenda Escolar",
+        "Comunicados",
+        "Pais / Responsáveis",
       ],
       coordenador: [
         "Equipe Escolar",
         "Turmas",
         "Alunos",
-        "Professores",
+        "Agenda Escolar",
+        "Comunicados",
         "Boletins Bimestrais",
-        "Diário de Classe",
       ],
       secretaria: [
         "Alunos",
         "Matrículas",
         "Pais / Responsáveis",
-        "Presença",
-        "Boletins Bimestrais",
+        "Agenda Escolar",
+        "Comunicados",
         "Financeiro",
       ],
       professor: [],
@@ -376,9 +384,9 @@ export default function SchoolDashboardPage() {
         "Equipe Escolar",
         "Turmas",
         "Alunos",
-        "Professores",
-        "Responsáveis",
-        "Disciplinas",
+        "Agenda Escolar",
+        "Comunicados",
+        "Pais / Responsáveis",
       ],
       unknown: [],
     };
@@ -536,9 +544,9 @@ export default function SchoolDashboardPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {currentRole === "diretor" ||
-              currentRole === "coordenador" ||
-              currentRole === "admin" ? (
+              {(currentRole === "diretor" ||
+                currentRole === "coordenador" ||
+                currentRole === "admin") ? (
                 <button
                   type="button"
                   onClick={() => go(STAFF_HREF)}
@@ -548,9 +556,9 @@ export default function SchoolDashboardPage() {
                 </button>
               ) : null}
 
-              {currentRole === "diretor" ||
-              currentRole === "coordenador" ||
-              currentRole === "admin" ? (
+              {(currentRole === "diretor" ||
+                currentRole === "coordenador" ||
+                currentRole === "admin") ? (
                 <button
                   type="button"
                   onClick={() => go(SUBJECTS_HREF)}
@@ -559,6 +567,22 @@ export default function SchoolDashboardPage() {
                   Disciplinas
                 </button>
               ) : null}
+
+              <button
+                type="button"
+                onClick={() => go("/school/calendar")}
+                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Agenda
+              </button>
+
+              <button
+                type="button"
+                onClick={() => go("/school/messages")}
+                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Comunicados
+              </button>
 
               {currentRole === "diretor" || currentRole === "admin" ? (
                 <button
@@ -696,10 +720,10 @@ export default function SchoolDashboardPage() {
 
           <div className="rounded-3xl border border-slate-200 p-5">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Operacional
+              Relacionamento
             </div>
             <div className="mt-2 text-sm leading-6 text-slate-700">
-              Secretaria pode operar alunos, responsáveis, matrículas, financeiro e comunicados.
+              Agenda e comunicados centralizam avisos, eventos e rotina escolar para responsáveis.
             </div>
           </div>
 
