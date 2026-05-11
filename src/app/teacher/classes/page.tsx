@@ -29,10 +29,36 @@ function normRole(role: any) {
 
 function classLabel(c: TeacherClassItem) {
   const parts: string[] = [];
+
   if (c.name) parts.push(c.name);
   if (c.grade) parts.push(`Série: ${c.grade}`);
   if (c.shift) parts.push(`Turno: ${c.shift}`);
+
   return parts.join(" • ") || c.classId;
+}
+
+function MetricCard({
+  label,
+  value,
+  help,
+}: {
+  label: string;
+  value: string;
+  help: string;
+}) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </div>
+
+      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </div>
+
+      <div className="mt-2 text-sm leading-6 text-slate-500">{help}</div>
+    </div>
+  );
 }
 
 export default function TeacherClassesPage() {
@@ -60,13 +86,16 @@ export default function TeacherClassesPage() {
 
   async function getTokenOrRedirect() {
     const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
+
     if (sessErr) throw new Error(sessErr.message);
 
     const token = sessionData.session?.access_token;
+
     if (!token) {
       router.replace("/login");
       return null;
     }
+
     return token;
   }
 
@@ -82,6 +111,7 @@ export default function TeacherClassesPage() {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
+
       const meJson = (await meRes.json().catch(() => null)) as MePayload | null;
 
       if (!meRes.ok || !meJson?.ok) {
@@ -95,6 +125,7 @@ export default function TeacherClassesPage() {
       }
 
       const role = normRole(meJson?.school?.role);
+
       if (!(role === "professor" || role === "teacher")) {
         router.replace(meJson?.redirectTo || "/login");
         return;
@@ -106,6 +137,7 @@ export default function TeacherClassesPage() {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
+
       const bJson = (await bRes.json().catch(() => null)) as BrandingResp | null;
 
       if (bRes.ok && bJson?.ok) {
@@ -142,6 +174,7 @@ export default function TeacherClassesPage() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function logout() {
@@ -149,24 +182,39 @@ export default function TeacherClassesPage() {
     router.replace("/login");
   }
 
-  if (loading) return <main className="p-6">Carregando...</main>;
+  if (loading) {
+    return (
+      <main className="space-y-6">
+        <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
+          <div className="animate-pulse space-y-4">
+            <div className="h-8 w-72 rounded-xl bg-slate-200" />
+            <div className="h-4 w-96 rounded-xl bg-slate-100" />
+            <div className="h-40 rounded-[28px] bg-slate-100" />
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   if (error) {
     return (
-      <main className="min-h-screen flex items-center justify-center p-6">
-        <div className="max-w-lg w-full rounded-2xl border bg-white p-6">
-          <h1 className="text-xl font-semibold">Não foi possível carregar</h1>
-          <p className="text-sm text-slate-600 mt-2">{error}</p>
+      <main className="flex min-h-[70vh] items-center justify-center p-6">
+        <div className="w-full max-w-lg rounded-[28px] border border-red-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">Não foi possível carregar</h1>
+
+          <p className="mt-2 text-sm text-slate-600">{error}</p>
+
           <div className="mt-4 flex gap-2">
             <button
               onClick={() => router.replace("/teacher")}
-              className="flex-1 rounded-xl border p-3 hover:bg-slate-50"
+              className="flex-1 rounded-2xl border border-slate-300 p-3 text-sm hover:bg-slate-50"
             >
               Voltar
             </button>
+
             <button
               onClick={load}
-              className={`flex-1 rounded-xl ${brandBtn} p-3 font-semibold`}
+              className={`flex-1 rounded-2xl ${brandBtn} p-3 text-sm font-semibold`}
             >
               Tentar novamente
             </button>
@@ -178,15 +226,17 @@ export default function TeacherClassesPage() {
 
   if (!canAccess) {
     return (
-      <main className="min-h-screen flex items-center justify-center p-6">
-        <div className="max-w-lg w-full rounded-2xl border bg-white p-6">
-          <h1 className="text-xl font-semibold">Acesso negado</h1>
-          <p className="text-sm text-slate-600 mt-2">
+      <main className="flex min-h-[70vh] items-center justify-center p-6">
+        <div className="w-full max-w-lg rounded-[28px] border border-red-200 bg-white p-6 shadow-sm">
+          <h1 className="text-xl font-semibold text-slate-900">Acesso negado</h1>
+
+          <p className="mt-2 text-sm text-slate-600">
             Esta página é exclusiva para professores.
           </p>
+
           <button
             onClick={() => router.replace("/login")}
-            className={`mt-4 w-full rounded-xl ${brandBtn} p-3 font-semibold`}
+            className={`mt-4 w-full rounded-2xl ${brandBtn} p-3 text-sm font-semibold`}
           >
             Ir para login
           </button>
@@ -196,93 +246,138 @@ export default function TeacherClassesPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
-      <div className="max-w-5xl mx-auto space-y-6">
-        <div className="rounded-2xl border bg-white p-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="h-11 w-11 rounded-xl border bg-white overflow-hidden flex items-center justify-center">
-              {branding?.logoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={branding.logoUrl}
-                  alt="Logo da escola"
-                  className="h-full w-full object-contain"
-                />
-              ) : (
-                <div className="h-full w-full bg-slate-100" />
-              )}
-            </div>
+    <main className="space-y-6">
+      <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+        <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-8 text-white md:px-8">
+          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-3xl border border-white/15 bg-white/10 p-2">
+                {branding?.logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={branding.logoUrl}
+                    alt="Logo da escola"
+                    className="max-h-full max-w-full object-contain"
+                  />
+                ) : (
+                  <div className="h-full w-full rounded-2xl bg-white/10" />
+                )}
+              </div>
 
-            <div className="min-w-0">
-              <div className="text-sm text-slate-500">Portal do Professor</div>
-              <h1 className="text-xl font-semibold truncate">
-                {branding?.name || "Minha escola"}
-              </h1>
-              <div className="text-xs text-slate-500 mt-1">
-                Escola ID:{" "}
-                <span className="font-mono">
-                  {schoolId ?? me?.school?.schoolId ?? "—"}
-                </span>
+              <div className="min-w-0">
+                <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
+                  Portal do professor
+                </div>
+
+                <h1 className="mt-3 truncate text-3xl font-semibold tracking-tight">
+                  {branding?.name || "Minha escola"}
+                </h1>
+
+                <p className="mt-2 text-sm text-slate-200">
+                  Escola ID:{" "}
+                  <span className="font-mono">
+                    {schoolId ?? me?.school?.schoolId ?? "—"}
+                  </span>
+                </p>
               </div>
             </div>
-          </div>
 
-          <div className="flex gap-2">
-            <button
-              onClick={() => router.push("/teacher")}
-              className="rounded-xl border px-4 py-2 text-sm hover:bg-slate-50"
-            >
-              Voltar
-            </button>
-            <button
-              onClick={load}
-              className="rounded-xl border px-4 py-2 text-sm hover:bg-slate-50"
-            >
-              Atualizar
-            </button>
-            <button
-              onClick={logout}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold ${brandBtn}`}
-            >
-              Sair
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => router.push("/teacher")}
+                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Voltar
+              </button>
+
+              <button
+                onClick={() => router.push("/teacher/messages")}
+                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Comunicados
+              </button>
+
+              <button
+                onClick={load}
+                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Atualizar
+              </button>
+
+              <button
+                onClick={logout}
+                className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+              >
+                Sair
+              </button>
+            </div>
           </div>
         </div>
 
-        <section className="rounded-2xl border bg-white p-5">
-          <h2 className="text-2xl font-semibold tracking-tight">Minhas turmas</h2>
-          <p className="text-sm text-slate-600 mt-2">
+        <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-3 md:p-6">
+          <MetricCard
+            label="Turmas vinculadas"
+            value={String(classes.length)}
+            help="Total de turmas disponíveis para este professor."
+          />
+
+          <MetricCard
+            label="Rotina"
+            value="Ativa"
+            help="Acesse chamada, alunos e diário pedagógico."
+          />
+
+          <MetricCard
+            label="Comunicados"
+            value="Disponível"
+            help="Avisos oficiais da escola para professores."
+          />
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-200 px-5 py-4 md:px-6">
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+            Minhas turmas
+          </h2>
+
+          <p className="mt-1 text-sm text-slate-500">
             Acesse os alunos, a chamada e o diário pedagógico da turma.
           </p>
+        </div>
 
+        <div className="p-4 md:p-6">
           {classes.length === 0 ? (
-            <p className="text-sm text-slate-600 mt-4">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-600">
               Nenhuma turma vinculada ao seu usuário.
-            </p>
+            </div>
           ) : (
-            <div className="mt-4 space-y-3">
+            <div className="space-y-3">
               {classes.map((c) => (
                 <div
                   key={c.assignmentId}
-                  className="border rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 hover:bg-slate-50/40 transition"
+                  className="flex flex-col gap-4 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:bg-slate-50/40 md:flex-row md:items-center md:justify-between"
                 >
                   <div className="min-w-0">
-                    <div className="font-medium">{classLabel(c)}</div>
-                    <div className="text-xs text-slate-500 mt-1 font-mono break-all">
+                    <div className="text-base font-semibold text-slate-900">
+                      {classLabel(c)}
+                    </div>
+
+                    <div className="mt-1 break-all font-mono text-xs text-slate-500">
                       {c.classId}
                     </div>
-                    {c.createdAt && (
-                      <div className="text-xs text-slate-500 mt-1">
-                        Vinculado em:{" "}
-                        {new Date(c.createdAt).toLocaleString("pt-BR")}
+
+                    {c.createdAt ? (
+                      <div className="mt-1 text-xs text-slate-500">
+                        Vinculado em: {new Date(c.createdAt).toLocaleString("pt-BR")}
                       </div>
-                    )}
+                    ) : null}
                   </div>
 
                   <div className="flex flex-wrap gap-2">
                     <button
                       onClick={() => router.push(`/teacher/classes/${c.classId}`)}
-                      className="rounded-xl border px-4 py-2 text-sm hover:bg-white"
+                      className="rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-white"
                     >
                       Ver alunos
                     </button>
@@ -291,14 +386,14 @@ export default function TeacherClassesPage() {
                       onClick={() =>
                         router.push(`/teacher/classes/${c.classId}/attendance`)
                       }
-                      className={`rounded-xl px-4 py-2 text-sm font-semibold ${brandBtn}`}
+                      className={`rounded-2xl px-4 py-2 text-sm font-semibold ${brandBtn}`}
                     >
                       Chamada
                     </button>
 
                     <button
                       onClick={() => router.push(`/teacher/classes/${c.classId}/diary`)}
-                      className="rounded-xl border border-slate-300 px-4 py-2 text-sm hover:bg-white"
+                      className="rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-white"
                     >
                       Diário pedagógico
                     </button>
@@ -307,8 +402,8 @@ export default function TeacherClassesPage() {
               ))}
             </div>
           )}
-        </section>
-      </div>
+        </div>
+      </section>
     </main>
   );
 }
