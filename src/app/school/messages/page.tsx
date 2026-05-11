@@ -109,12 +109,15 @@ function formatDateTimeBR(value?: string | null) {
 function audienceLabel(type: AudienceType, selectedClass?: ClassRow | null) {
   if (type === "school") return "Toda escola";
   if (type === "all_parents") return "Todos os pais/responsáveis";
+
   if (type === "class") {
     if (!selectedClass) return "Turma específica";
+
     return `Turma: ${selectedClass.name}${selectedClass.grade ? ` • ${selectedClass.grade}` : ""}${
       selectedClass.shift ? ` • ${selectedClass.shift}` : ""
     }`;
   }
+
   if (type === "teachers") return "Professores";
   if (type === "secretaria") return "Secretaria";
   if (type === "staff") return "Equipe escolar";
@@ -240,6 +243,12 @@ export default function SchoolMessagesPage() {
   const [targetClassId, setTargetClassId] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  const [editingMessage, setEditingMessage] = useState<MessageRow | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editBody, setEditBody] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const selectedClass = useMemo(() => {
     if (!targetClassId) return null;
@@ -452,6 +461,109 @@ export default function SchoolMessagesPage() {
     }
   }
 
+  function openEdit(message: MessageRow) {
+    setEditingMessage(message);
+    setEditTitle(message.title || "");
+    setEditBody(message.body || "");
+    setError(null);
+    setSuccessMessage(null);
+  }
+
+  function closeEdit() {
+    setEditingMessage(null);
+    setEditTitle("");
+    setEditBody("");
+    setSavingEdit(false);
+  }
+
+  async function saveEdit() {
+    if (!editingMessage?.id) return;
+
+    if (!editTitle.trim()) {
+      setError("Informe o título do comunicado.");
+      return;
+    }
+
+    if (!editBody.trim()) {
+      setError("Informe o conteúdo do comunicado.");
+      return;
+    }
+
+    try {
+      setSavingEdit(true);
+      setError(null);
+      setSuccessMessage(null);
+
+      const token = await getAccessToken();
+
+      const res = await fetch(`/api/school/messages/${editingMessage.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+        body: JSON.stringify({
+          title: editTitle.trim(),
+          body: editBody.trim(),
+        }),
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "Erro ao atualizar comunicado.");
+        return;
+      }
+
+      closeEdit();
+      await loadMessages(token);
+      setSuccessMessage("Comunicado atualizado com sucesso.");
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao atualizar comunicado.");
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function deleteMessage(message: MessageRow) {
+    const confirmed = window.confirm(
+      `Tem certeza que deseja excluir o comunicado "${message.title}"?\n\nEssa ação também removerá o histórico de envio, entrega e visualização desse comunicado.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setDeletingId(message.id);
+      setError(null);
+      setSuccessMessage(null);
+
+      const token = await getAccessToken();
+
+      const res = await fetch(`/api/school/messages/${message.id}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "Erro ao excluir comunicado.");
+        return;
+      }
+
+      await loadMessages(token);
+      setSuccessMessage("Comunicado excluído com sucesso.");
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao excluir comunicado.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   if (loading) {
     return (
       <main className="space-y-6">
@@ -493,9 +605,7 @@ export default function SchoolMessagesPage() {
                   Perfil: {roleLabel(role)}
                 </span>
                 {schoolId ? (
-                  <span className="rounded-full bg-white/10 px-3 py-1">
-                    ID: {schoolId}
-                  </span>
+                  <span className="rounded-full bg-white/10 px-3 py-1">ID: {schoolId}</span>
                 ) : null}
               </div>
             </div>
@@ -694,28 +804,28 @@ export default function SchoolMessagesPage() {
           </h2>
 
           <p className="mt-1 text-sm leading-6 text-slate-500">
-            O painel abaixo mostra se o comunicado foi enviado, entregue e visualizado.
+            O painel mostra se o comunicado foi enviado, entregue e visualizado.
           </p>
 
           <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
             <div className="rounded-3xl border border-blue-200 bg-blue-50 p-4">
               <div className="text-sm font-semibold text-blue-800">Enviado</div>
               <p className="mt-2 text-xs leading-5 text-blue-700">
-                O comunicado foi criado e os destinatários foram registrados.
+                Todos os destinatários registrados para aquele comunicado.
               </p>
             </div>
 
             <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
               <div className="text-sm font-semibold text-emerald-800">Entregue</div>
               <p className="mt-2 text-xs leading-5 text-emerald-700">
-                O comunicado está disponível no portal do destinatário.
+                Quem recebeu o comunicado, mas ainda não visualizou.
               </p>
             </div>
 
             <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-sm font-semibold text-slate-800">Visualizado</div>
               <p className="mt-2 text-xs leading-5 text-slate-600">
-                O destinatário abriu o comunicado no portal.
+                Quem abriu o comunicado no portal.
               </p>
             </div>
           </div>
@@ -726,6 +836,7 @@ export default function SchoolMessagesPage() {
             </div>
 
             <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
+              <p>• Lista clicável por status com nomes dos destinatários.</p>
               <p>• Anexos em PDF/imagem.</p>
               <p>• Segmentação por aluno individual.</p>
               <p>• Agendamento de publicação.</p>
@@ -818,6 +929,26 @@ export default function SchoolMessagesPage() {
                         <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700 whitespace-pre-wrap">
                           {message.body}
                         </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(message)}
+                            disabled={deletingId === message.id}
+                            className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            Editar comunicado
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => deleteMessage(message)}
+                            disabled={deletingId === message.id}
+                            className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+                          >
+                            {deletingId === message.id ? "Excluindo..." : "Excluir"}
+                          </button>
+                        </div>
                       </div>
 
                       <div className="w-full xl:w-[360px]">
@@ -844,6 +975,93 @@ export default function SchoolMessagesPage() {
           )}
         </div>
       </section>
+
+      {editingMessage ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-4">
+          <div className="my-8 w-full max-w-3xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
+            <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-6 text-white">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
+                    Editar comunicado
+                  </div>
+
+                  <h2 className="mt-3 text-2xl font-semibold">
+                    {editingMessage.title}
+                  </h2>
+
+                  <p className="mt-1 text-sm text-slate-200">
+                    A edição altera o conteúdo exibido para os destinatários, mas mantém o
+                    histórico de envio, entrega e visualização.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeEdit}
+                  disabled={savingEdit}
+                  className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90 disabled:opacity-60"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-4 p-5 md:p-6">
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Título
+                </span>
+
+                <input
+                  className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  disabled={savingEdit}
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Conteúdo
+                </span>
+
+                <textarea
+                  className="min-h-[220px] w-full resize-y rounded-2xl border border-slate-300 bg-white p-3 text-sm leading-6 text-slate-900 outline-none transition focus:border-slate-500"
+                  value={editBody}
+                  onChange={(e) => setEditBody(e.target.value)}
+                  disabled={savingEdit}
+                />
+              </label>
+
+              <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800">
+                Para preservar auditoria escolar, esta edição não altera o público original do
+                comunicado. Para mudar o público, exclua e publique um novo comunicado.
+              </div>
+
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeEdit}
+                  disabled={savingEdit}
+                  className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="button"
+                  onClick={saveEdit}
+                  disabled={savingEdit}
+                  className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
+                >
+                  {savingEdit ? "Salvando..." : "Salvar alterações"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
