@@ -1,11 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-
-export const dynamic = "force-dynamic";
 
 type MePayload = {
   ok: true;
@@ -30,6 +28,7 @@ type ParentProfilePayload = {
   ok: true;
   parent: {
     id: string;
+    schoolId: string | null;
     fullName: string | null;
     phone: string | null;
     cpf: string | null;
@@ -47,121 +46,135 @@ type ParentProfilePayload = {
   };
 };
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: string;
-  description: string;
-};
+function safeJson(text: string) {
+  if (!text) return null;
 
-function withCacheBuster(url: string) {
-  const hasQuery = url.includes("?");
-  return url + (hasQuery ? "&" : "?") + "v=" + Date.now();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: false, error: text || "Resposta inválida do servidor" };
+  }
 }
 
-function isHttpUrl(url: string) {
-  return url.startsWith("https://") || url.startsWith("http://");
+function isHttpUrl(url?: string | null) {
+  const safe = String(url || "").trim();
+  return safe.startsWith("https://") || safe.startsWith("http://");
 }
 
 function getInitials(name?: string | null) {
   const safe = String(name || "").trim();
-  if (!safe) return "PR";
+
+  if (!safe) return "RP";
 
   const parts = safe.split(/\s+/).filter(Boolean);
+
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
 
-  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "RP";
 }
 
-function isActive(pathname: string, href: string) {
+function navItems() {
+  return [
+    {
+      href: "/parent",
+      icon: "🏠",
+      label: "Início",
+      description: "Visão geral do portal",
+    },
+    {
+      href: "/parent/children",
+      icon: "👨‍👩‍👧",
+      label: "Filhos",
+      description: "Alunos vinculados",
+    },
+    {
+      href: "/parent/calendar",
+      icon: "📅",
+      label: "Agenda",
+      description: "Eventos e compromissos",
+    },
+    {
+      href: "/parent/messages",
+      icon: "📩",
+      label: "Comunicados",
+      description: "Avisos oficiais",
+    },
+    {
+      href: "/parent/invoices",
+      icon: "💳",
+      label: "Mensalidades",
+      description: "Financeiro escolar",
+    },
+    {
+      href: "/parent/complete-profile",
+      icon: "🪪",
+      label: "Meus dados",
+      description: "Atualizar cadastro",
+    },
+  ];
+}
+
+function isActivePath(pathname: string, href: string) {
   if (href === "/parent") return pathname === "/parent";
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-function NavItemButton({
-  item,
-  pathname,
-  onClick,
+function SchoolLogo({
+  logoUrl,
+  iconUrl,
+  schoolName,
 }: {
-  item: NavItem;
-  pathname: string;
-  onClick: (href: string) => void;
-}) {
-  const active = isActive(pathname, item.href);
-
-  return (
-    <button
-      type="button"
-      onClick={() => onClick(item.href)}
-      className={[
-        "group flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition",
-        active
-          ? "bg-slate-900 text-white shadow-sm"
-          : "text-slate-700 hover:bg-slate-100",
-      ].join(" ")}
-    >
-      <span
-        className={[
-          "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-base transition",
-          active
-            ? "bg-white/10 text-white"
-            : "bg-slate-100 text-slate-700 group-hover:bg-slate-200",
-        ].join(" ")}
-      >
-        {item.icon}
-      </span>
-
-      <div className="min-w-0">
-        <div className="truncate text-sm font-semibold">{item.label}</div>
-        <div
-          className={[
-            "truncate text-xs",
-            active ? "text-slate-300" : "text-slate-500",
-          ].join(" ")}
-        >
-          {item.description}
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function Avatar({
-  photoUrl,
-  fallbackText,
-  size = "md",
-}: {
-  photoUrl?: string | null;
-  fallbackText: string;
-  size?: "sm" | "md" | "lg";
+  logoUrl?: string | null;
+  iconUrl?: string | null;
+  schoolName: string;
 }) {
   const [broken, setBroken] = useState(false);
 
-  const sizeClass =
-    size === "sm"
-      ? "h-11 w-11 rounded-2xl text-xs"
-      : size === "lg"
-      ? "h-16 w-16 rounded-3xl text-sm"
-      : "h-12 w-12 rounded-2xl text-xs";
+  const finalUrl = isHttpUrl(logoUrl) ? logoUrl : isHttpUrl(iconUrl) ? iconUrl : null;
 
-  const validPhoto = photoUrl && isHttpUrl(photoUrl) ? withCacheBuster(photoUrl) : null;
-
-  if (validPhoto && !broken) {
+  if (finalUrl && !broken) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={validPhoto}
-        alt="Foto do responsável"
-        className={`${sizeClass} object-cover border border-slate-200 bg-white shadow-sm`}
+        src={finalUrl}
+        alt={`Logo ${schoolName}`}
+        className="h-12 w-12 rounded-2xl border border-slate-200 bg-white object-contain p-1.5 shadow-sm"
         onError={() => setBroken(true)}
       />
     );
   }
 
   return (
-    <div
-      className={`flex ${sizeClass} items-center justify-center bg-slate-900 font-bold text-white shadow-sm`}
-    >
-      {fallbackText}
+    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-white text-xs font-bold text-slate-500 shadow-sm">
+      Logo
+    </div>
+  );
+}
+
+function ParentAvatar({
+  photoUrl,
+  name,
+}: {
+  photoUrl?: string | null;
+  name: string;
+}) {
+  const [broken, setBroken] = useState(false);
+
+  if (isHttpUrl(photoUrl) && !broken) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={String(photoUrl)}
+        alt="Foto do responsável"
+        className="h-12 w-12 rounded-2xl border border-white/10 object-cover"
+        onError={() => setBroken(true)}
+      />
+    );
+  }
+
+  return (
+    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 text-sm font-bold text-white">
+      {getInitials(name)}
     </div>
   );
 }
@@ -170,36 +183,25 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   const router = useRouter();
   const pathname = usePathname();
 
+  const [loading, setLoading] = useState(true);
   const [me, setMe] = useState<MePayload | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [parentFullName, setParentFullName] = useState<string | null>(null);
-  const [parentPhotoUrl, setParentPhotoUrl] = useState<string | null>(null);
+  const [profile, setProfile] = useState<ParentProfilePayload["parent"] | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const brandTitle = useMemo(() => {
-    const name = me?.branding?.brandName?.trim();
-    return name || "Portal do Responsável";
-  }, [me]);
-
-  const rawLogoUrl = me?.branding?.brandLogoUrl?.trim() || "";
-
-  const brandLogoUrl = useMemo(() => {
-    if (!rawLogoUrl) return null;
-    if (!isHttpUrl(rawLogoUrl)) return null;
-    return withCacheBuster(rawLogoUrl);
-  }, [rawLogoUrl]);
+  const schoolName = useMemo(() => {
+    return me?.branding?.brandName?.trim() || "Minha Escola";
+  }, [me?.branding?.brandName]);
 
   const responsibleName = useMemo(() => {
-    return parentFullName?.trim() || me?.user?.email || "Responsável";
-  }, [parentFullName, me?.user?.email]);
+    return profile?.fullName?.trim() || me?.user?.email || "Responsável";
+  }, [profile?.fullName, me?.user?.email]);
 
-  const responsibleInitials = useMemo(() => {
-    return getInitials(parentFullName || me?.user?.email || "Responsável");
-  }, [parentFullName, me?.user?.email]);
+  const items = useMemo(() => navItems(), []);
 
   useEffect(() => {
     let alive = true;
 
-    async function loadLayoutData() {
+    async function boot() {
       try {
         const { data: sessionData } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
@@ -209,44 +211,27 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
           return;
         }
 
-        const res = await fetch("/api/me", {
+        const meRes = await fetch("/api/me", {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
 
-        const text = await res.text();
-        let json: any = null;
+        const meText = await meRes.text();
+        const meJson: any = safeJson(meText);
 
-        try {
-          json = text ? JSON.parse(text) : null;
-        } catch {
-          json = { ok: false, error: text || "Resposta inválida do servidor" };
-        }
+        if (!alive) return;
 
-        if (!res.ok || !json?.ok) {
+        if (!meRes.ok || !meJson?.ok) {
           router.replace("/login");
           return;
         }
 
-        if (!json?.parent?.parentId) {
-          router.replace(json?.redirectTo || "/login");
+        if (!meJson?.parent?.parentId) {
+          router.replace(meJson?.redirectTo || "/login");
           return;
         }
 
-        const firstLoginCompleted = !!json?.parent?.firstLoginCompleted;
-        const isCompleteProfilePage = pathname === "/parent/complete-profile";
-
-        if (!firstLoginCompleted && !isCompleteProfilePage) {
-          router.replace("/parent/complete-profile");
-          return;
-        }
-
-        if (firstLoginCompleted && isCompleteProfilePage) {
-          // segue carregando, porque esse acesso pode ser edição manual
-        }
-
-        if (!alive) return;
-        setMe(json as MePayload);
+        setMe(meJson as MePayload);
 
         const profileRes = await fetch("/api/parent/profile", {
           headers: { Authorization: `Bearer ${token}` },
@@ -254,35 +239,31 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
         });
 
         const profileText = await profileRes.text();
-        let profileJson: ParentProfilePayload | any = null;
-
-        try {
-          profileJson = profileText ? JSON.parse(profileText) : null;
-        } catch {
-          profileJson = null;
-        }
+        const profileJson: any = safeJson(profileText);
 
         if (!alive) return;
 
         if (profileRes.ok && profileJson?.ok) {
-          setParentFullName(profileJson.parent?.fullName || null);
-          setParentPhotoUrl(profileJson.parent?.photoUrl || null);
+          setProfile(profileJson.parent || null);
         }
       } catch {
+        if (!alive) return;
         router.replace("/login");
+      } finally {
+        if (!alive) return;
+        setLoading(false);
       }
     }
 
-    loadLayoutData();
+    boot();
 
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname]);
+  }, [router]);
 
   useEffect(() => {
-    setMenuOpen(false);
+    setMobileMenuOpen(false);
   }, [pathname]);
 
   async function logout() {
@@ -290,248 +271,182 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
     router.replace("/login");
   }
 
-  function go(href: string) {
-    setMenuOpen(false);
-    router.push(href);
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 p-4">
+        <div className="mx-auto max-w-7xl">
+          <div className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
+            <div className="animate-pulse space-y-4">
+              <div className="h-8 w-64 rounded-xl bg-slate-200" />
+              <div className="h-4 w-96 max-w-full rounded-xl bg-slate-100" />
+              <div className="h-96 rounded-3xl bg-slate-100" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  const items: NavItem[] = [
-    {
-      href: "/parent",
-      label: "Início",
-      icon: "🏠",
-      description: "Visão geral do portal",
-    },
-    {
-      href: "/parent/children",
-      label: "Filhos",
-      icon: "🧒",
-      description: "Acompanhar alunos vinculados",
-    },
-    {
-      href: "/parent/calendar",
-      label: "Agenda",
-      icon: "📅",
-      description: "Eventos e compromissos",
-    },
-    {
-      href: "/parent/messages",
-      label: "Mensagens",
-      icon: "📩",
-      description: "Comunicados da escola",
-    },
-    {
-      href: "/parent/invoices",
-      label: "Mensalidades",
-      icon: "💳",
-      description: "Financeiro escolar",
-    },
-    {
-      href: "/parent/complete-profile",
-      label: "Meus dados",
-      icon: "🪪",
-      description: "Atualizar cadastro",
-    },
-  ];
-
-  const hideNavigation = false;
+  if (!me?.parent?.parentId) return null;
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="min-h-screen bg-slate-50 text-slate-900">
       <div className="flex min-h-screen">
-        {!hideNavigation && (
-          <aside className="hidden w-80 shrink-0 border-r border-slate-200 bg-white xl:flex">
-            <div className="flex w-full flex-col">
-              <div className="border-b border-slate-200 px-5 py-5">
-                <div className="flex items-center gap-4">
-                  <Avatar
-                    photoUrl={parentPhotoUrl}
-                    fallbackText={responsibleInitials}
-                    size="lg"
-                  />
+        <aside className="hidden w-[292px] shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
+          <div className="border-b border-slate-200 p-5">
+            <div className="flex items-center gap-3">
+              <SchoolLogo
+                logoUrl={me.branding?.brandLogoUrl}
+                iconUrl={me.branding?.brandIconUrl}
+                schoolName={schoolName}
+              />
 
-                  <div className="min-w-0">
-                    <div className="truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                      Portal do Responsável
-                    </div>
-                    <div className="mt-1 truncate text-base font-semibold text-slate-900">
-                      {brandTitle}
-                    </div>
-                    <div className="mt-1 truncate text-sm text-slate-700">
-                      {responsibleName}
-                    </div>
-                    <div className="mt-1 truncate text-[11px] text-slate-400">
-                      {me?.user?.email ?? "Carregando..."}
-                    </div>
-                  </div>
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+                  Portal do Responsável
                 </div>
-              </div>
 
-              <div className="border-b border-slate-200 px-5 py-4">
-                <div className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                  {brandLogoUrl ? (
-                    <img
-                      src={brandLogoUrl}
-                      alt="Logo da escola"
-                      className="h-12 w-12 rounded-2xl border border-slate-200 bg-white object-contain p-1.5"
-                    />
-                  ) : (
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-200 text-xs font-semibold text-slate-600">
-                      {getInitials(brandTitle)}
-                    </div>
-                  )}
-
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-slate-900">
-                      {brandTitle}
-                    </div>
-                    <div className="truncate text-xs text-slate-500">
-                      Ambiente do responsável
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-4 py-5">
-                <div className="space-y-2">
-                  {items.map((item) => (
-                    <NavItemButton
-                      key={item.href}
-                      item={item}
-                      pathname={pathname}
-                      onClick={go}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div className="border-t border-slate-200 px-4 py-4">
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    Acesso
-                  </div>
-                  <div className="mt-2 text-sm font-medium text-slate-800">
-                    Conta do responsável ativa
-                  </div>
-                  <div className="mt-1 text-xs leading-5 text-slate-500">
-                    Ambiente preparado para acompanhar boletim, presença, agenda,
-                    mensagens, financeiro e atualização cadastral.
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={logout}
-                    className="mt-4 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90"
-                  >
-                    Sair do portal
-                  </button>
+                <div className="mt-1 truncate text-base font-semibold text-slate-900">
+                  {schoolName}
                 </div>
               </div>
             </div>
-          </aside>
-        )}
+          </div>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          {!hideNavigation && (
-            <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
-              <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-6">
-                <div className="flex min-w-0 items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setMenuOpen((v) => !v)}
-                    className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-300 bg-white text-slate-700 shadow-sm xl:hidden"
+          <nav className="flex-1 space-y-1 p-4">
+            {items.map((item) => {
+              const active = isActivePath(pathname, item.href);
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={[
+                    "flex items-center gap-3 rounded-3xl px-4 py-3 transition",
+                    active
+                      ? "bg-slate-900 text-white shadow-sm"
+                      : "text-slate-700 hover:bg-slate-100",
+                  ].join(" ")}
+                >
+                  <span
+                    className={[
+                      "flex h-10 w-10 items-center justify-center rounded-2xl text-lg",
+                      active ? "bg-white/10" : "bg-slate-100",
+                    ].join(" ")}
                   >
-                    ☰
-                  </button>
+                    {item.icon}
+                  </span>
 
-                  <div className="flex min-w-0 items-center gap-3">
-                    <Avatar
-                      photoUrl={parentPhotoUrl}
-                      fallbackText={responsibleInitials}
-                      size="sm"
-                    />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold">{item.label}</span>
+                    <span
+                      className={[
+                        "block truncate text-xs",
+                        active ? "text-slate-200" : "text-slate-500",
+                      ].join(" ")}
+                    >
+                      {item.description}
+                    </span>
+                  </span>
+                </Link>
+              );
+            })}
+          </nav>
 
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                        Portal do Responsável
-                      </div>
-                      <div className="truncate text-sm font-semibold text-slate-900 md:text-base">
-                        {brandTitle}
-                      </div>
-                    </div>
+          <div className="p-4">
+            <div className="rounded-[28px] bg-slate-900 p-4 text-white shadow-sm">
+              <div className="flex items-center gap-3">
+                <ParentAvatar photoUrl={profile?.photoUrl} name={responsibleName} />
+
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold">{responsibleName}</div>
+                  <div className="mt-1 truncate text-xs text-slate-300">
+                    {me.user.email || "Responsável"}
                   </div>
-                </div>
-
-                <div className="hidden items-center gap-2 md:flex">
-                  <Link
-                    href="/parent/children"
-                    className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                  >
-                    Meus filhos
-                  </Link>
-
-                  <Link
-                    href="/parent/complete-profile"
-                    className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                  >
-                    Meus dados
-                  </Link>
-
-                  <button
-                    type="button"
-                    onClick={logout}
-                    className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
-                  >
-                    Sair
-                  </button>
                 </div>
               </div>
 
-              {menuOpen && (
-                <div className="border-t border-slate-200 bg-white px-4 py-4 xl:hidden">
-                  <div className="mb-4 flex items-center gap-3">
-                    <Avatar
-                      photoUrl={parentPhotoUrl}
-                      fallbackText={responsibleInitials}
-                      size="md"
-                    />
+              <button
+                type="button"
+                onClick={logout}
+                className="mt-4 w-full rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+              >
+                Sair do sistema
+              </button>
+            </div>
 
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-slate-900">
-                        {responsibleName}
-                      </div>
-                      <div className="truncate text-xs text-slate-500">
-                        {me?.user?.email ?? "Conta do responsável"}
-                      </div>
-                    </div>
+            <div className="mt-4 text-center text-[11px] text-slate-400">
+              Sistema escolar multi-tenant
+            </div>
+          </div>
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur lg:hidden">
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen((prev) => !prev)}
+                className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-xl"
+                aria-label="Abrir menu"
+              >
+                ☰
+              </button>
+
+              <div className="flex min-w-0 items-center gap-3">
+                <SchoolLogo
+                  logoUrl={me.branding?.brandLogoUrl}
+                  iconUrl={me.branding?.brandIconUrl}
+                  schoolName={schoolName}
+                />
+
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    Portal
                   </div>
-
-                  <div className="space-y-2">
-                    {items.map((item) => (
-                      <NavItemButton
-                        key={item.href}
-                        item={item}
-                        pathname={pathname}
-                        onClick={go}
-                      />
-                    ))}
+                  <div className="truncate text-sm font-semibold text-slate-900">
+                    {schoolName}
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={logout}
-                    className="mt-5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700"
-                  >
-                    Sair do portal
-                  </button>
                 </div>
-              )}
-            </header>
-          )}
+              </div>
 
-          <main className="flex-1">
-            <div className="mx-auto w-full max-w-7xl p-4 md:p-6">{children}</div>
-          </main>
+              <button
+                type="button"
+                onClick={logout}
+                className="rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white"
+              >
+                Sair
+              </button>
+            </div>
+
+            {mobileMenuOpen ? (
+              <div className="border-t border-slate-200 bg-white p-3">
+                <nav className="grid grid-cols-2 gap-2">
+                  {items.map((item) => {
+                    const active = isActivePath(pathname, item.href);
+
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        className={[
+                          "rounded-2xl px-3 py-3 text-sm font-semibold transition",
+                          active
+                            ? "bg-slate-900 text-white"
+                            : "bg-slate-50 text-slate-700 hover:bg-slate-100",
+                        ].join(" ")}
+                      >
+                        <span className="mr-2">{item.icon}</span>
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </nav>
+              </div>
+            ) : null}
+          </header>
+
+          <main className="min-w-0 flex-1">{children}</main>
         </div>
       </div>
     </div>
