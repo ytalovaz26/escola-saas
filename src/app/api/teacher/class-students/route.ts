@@ -78,16 +78,18 @@ export async function GET(req: Request) {
 
     const { data, error } = await supabaseAdmin
       .from("student_classes")
-      .select(`
+      .select(
+        `
         student_id,
         class_id,
         students!inner (
           id,
           full_name,
           registration_number,
-          photo_url
+          student_photo_url
         )
-      `)
+      `
+      )
       .eq("school_id", schoolId)
       .eq("class_id", classId)
       .eq("is_active", true);
@@ -95,18 +97,13 @@ export async function GET(req: Request) {
     if (error) return jsonFail(500, error.message);
 
     const students = (data || [])
-      .map((row: any) => {
-        const student = row.students || {};
-        const photoUrl = String(student?.photo_url || "").trim() || null;
-
-        return {
-          student_id: String(row.student_id || student?.id || "").trim(),
-          full_name: student?.full_name ?? null,
-          registration_number: student?.registration_number ?? null,
-          photo_url: photoUrl,
-          photoUrl,
-        };
-      })
+      .map((row: any) => ({
+        student_id: String(row.student_id || row.students?.id || "").trim(),
+        full_name: row.students?.full_name ?? null,
+        registration_number: row.students?.registration_number ?? null,
+        student_photo_url: row.students?.student_photo_url ?? null,
+        photo_url: row.students?.student_photo_url ?? null,
+      }))
       .filter((row: any) => row.student_id)
       .sort((a: any, b: any) =>
         String(a.full_name || "").localeCompare(String(b.full_name || ""), "pt-BR")

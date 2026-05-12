@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { usePathname, useRouter } from "next/navigation";
 
 type MePayload = {
   ok: true;
@@ -61,121 +60,139 @@ function isHttpUrl(url?: string | null) {
   return safe.startsWith("https://") || safe.startsWith("http://");
 }
 
+function withCacheBuster(url: string) {
+  const hasQuery = url.includes("?");
+  return url + (hasQuery ? "&" : "?") + "v=" + Date.now();
+}
+
 function getInitials(name?: string | null) {
   const safe = String(name || "").trim();
-
   if (!safe) return "RP";
 
   const parts = safe.split(/\s+/).filter(Boolean);
-
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
 
   return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "RP";
 }
 
-function navItems() {
-  return [
-    {
-      href: "/parent",
-      icon: "🏠",
-      label: "Início",
-      description: "Visão geral do portal",
-    },
-    {
-      href: "/parent/children",
-      icon: "👨‍👩‍👧",
-      label: "Filhos",
-      description: "Alunos vinculados",
-    },
-    {
-      href: "/parent/calendar",
-      icon: "📅",
-      label: "Agenda",
-      description: "Eventos e compromissos",
-    },
-    {
-      href: "/parent/messages",
-      icon: "📩",
-      label: "Comunicados",
-      description: "Avisos oficiais",
-    },
-    {
-      href: "/parent/invoices",
-      icon: "💳",
-      label: "Mensalidades",
-      description: "Financeiro escolar",
-    },
-    {
-      href: "/parent/complete-profile",
-      icon: "🪪",
-      label: "Meus dados",
-      description: "Atualizar cadastro",
-    },
-  ];
-}
-
-function isActivePath(pathname: string, href: string) {
+function navIsActive(pathname: string, href: string) {
   if (href === "/parent") return pathname === "/parent";
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 function SchoolLogo({
   logoUrl,
-  iconUrl,
-  schoolName,
+  brandName,
 }: {
   logoUrl?: string | null;
-  iconUrl?: string | null;
-  schoolName: string;
+  brandName: string;
 }) {
   const [broken, setBroken] = useState(false);
 
-  const finalUrl = isHttpUrl(logoUrl) ? logoUrl : isHttpUrl(iconUrl) ? iconUrl : null;
+  const validLogo = logoUrl && isHttpUrl(logoUrl) ? withCacheBuster(logoUrl) : null;
 
-  if (finalUrl && !broken) {
+  if (validLogo && !broken) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={finalUrl}
-        alt={`Logo ${schoolName}`}
-        className="h-12 w-12 rounded-2xl border border-slate-200 bg-white object-contain p-1.5 shadow-sm"
-        onError={() => setBroken(true)}
-      />
+      <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={validLogo}
+          alt={`Logo ${brandName}`}
+          className="h-full w-full object-contain"
+          onError={() => setBroken(true)}
+          draggable={false}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-white text-xs font-bold text-slate-500 shadow-sm">
-      Logo
+    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-900 text-sm font-bold text-white shadow-sm">
+      {getInitials(brandName)}
     </div>
   );
 }
 
 function ParentAvatar({
   photoUrl,
-  name,
+  fallbackText,
 }: {
   photoUrl?: string | null;
-  name: string;
+  fallbackText: string;
 }) {
   const [broken, setBroken] = useState(false);
 
-  if (isHttpUrl(photoUrl) && !broken) {
+  const validPhoto = photoUrl && isHttpUrl(photoUrl) ? withCacheBuster(photoUrl) : null;
+
+  if (validPhoto && !broken) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={String(photoUrl)}
-        alt="Foto do responsável"
-        className="h-12 w-12 rounded-2xl border border-white/10 object-cover"
-        onError={() => setBroken(true)}
-      />
+      <div className="flex h-12 w-12 shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={validPhoto}
+          alt="Foto do responsável"
+          className="h-full w-full object-cover"
+          onError={() => setBroken(true)}
+          draggable={false}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 text-sm font-bold text-white">
-      {getInitials(name)}
+    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-slate-900 text-sm font-bold text-white shadow-sm">
+      {fallbackText}
     </div>
+  );
+}
+
+function NavItem({
+  href,
+  icon,
+  title,
+  description,
+  active,
+  onClick,
+}: {
+  href: string;
+  icon: string;
+  title: string;
+  description: string;
+  active: boolean;
+  onClick: (href: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(href)}
+      className={[
+        "flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left transition",
+        active
+          ? "bg-slate-900 text-white shadow-sm"
+          : "text-slate-700 hover:bg-slate-100",
+      ].join(" ")}
+    >
+      <span
+        className={[
+          "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-base",
+          active ? "bg-white/10" : "bg-slate-100",
+        ].join(" ")}
+      >
+        {icon}
+      </span>
+
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold leading-tight">{title}</span>
+        <span
+          className={[
+            "mt-0.5 block truncate text-xs leading-tight",
+            active ? "text-slate-200" : "text-slate-500",
+          ].join(" ")}
+        >
+          {description}
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -186,22 +203,30 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   const [loading, setLoading] = useState(true);
   const [me, setMe] = useState<MePayload | null>(null);
   const [profile, setProfile] = useState<ParentProfilePayload["parent"] | null>(null);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  const schoolName = useMemo(() => {
-    return me?.branding?.brandName?.trim() || "Minha Escola";
+  const brandName = useMemo(() => {
+    return me?.branding?.brandName?.trim() || "Portal do Responsável";
   }, [me?.branding?.brandName]);
+
+  const brandLogoUrl = useMemo(() => {
+    return me?.branding?.brandLogoUrl || me?.branding?.brandIconUrl || null;
+  }, [me?.branding?.brandLogoUrl, me?.branding?.brandIconUrl]);
 
   const responsibleName = useMemo(() => {
     return profile?.fullName?.trim() || me?.user?.email || "Responsável";
   }, [profile?.fullName, me?.user?.email]);
 
-  const items = useMemo(() => navItems(), []);
+  const responsibleEmail = me?.user?.email || "";
+
+  const responsibleInitials = useMemo(() => {
+    return getInitials(profile?.fullName || me?.user?.email || "Responsável");
+  }, [profile?.fullName, me?.user?.email]);
 
   useEffect(() => {
     let alive = true;
 
-    async function boot() {
+    async function load() {
       try {
         const { data: sessionData } = await supabase.auth.getSession();
         const token = sessionData.session?.access_token;
@@ -246,16 +271,12 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
         if (profileRes.ok && profileJson?.ok) {
           setProfile(profileJson.parent || null);
         }
-      } catch {
-        if (!alive) return;
-        router.replace("/login");
       } finally {
-        if (!alive) return;
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     }
 
-    boot();
+    load();
 
     return () => {
       alive = false;
@@ -263,7 +284,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
   }, [router]);
 
   useEffect(() => {
-    setMobileMenuOpen(false);
+    setMobileOpen(false);
   }, [pathname]);
 
   async function logout() {
@@ -271,183 +292,195 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
     router.replace("/login");
   }
 
+  function goTo(href: string) {
+    router.push(href);
+  }
+
+  const navItems = [
+    {
+      href: "/parent",
+      icon: "🏠",
+      title: "Início",
+      description: "Visão geral do portal",
+    },
+    {
+      href: "/parent/children",
+      icon: "👨‍👩‍👧",
+      title: "Filhos",
+      description: "Alunos vinculados",
+    },
+    {
+      href: "/parent/calendar",
+      icon: "🗓️",
+      title: "Agenda",
+      description: "Eventos e compromissos",
+    },
+    {
+      href: "/parent/messages",
+      icon: "📩",
+      title: "Comunicados",
+      description: "Avisos oficiais",
+    },
+    {
+      href: "/parent/invoices",
+      icon: "💳",
+      title: "Mensalidades",
+      description: "Financeiro escolar",
+    },
+    {
+      href: "/parent/complete-profile",
+      icon: "🪪",
+      title: "Meus dados",
+      description: "Atualizar cadastro",
+    },
+  ];
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 p-4">
-        <div className="mx-auto max-w-7xl">
-          <div className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
-            <div className="animate-pulse space-y-4">
-              <div className="h-8 w-64 rounded-xl bg-slate-200" />
-              <div className="h-4 w-96 max-w-full rounded-xl bg-slate-100" />
-              <div className="h-96 rounded-3xl bg-slate-100" />
-            </div>
+        <div className="mx-auto max-w-7xl animate-pulse space-y-5">
+          <div className="h-24 rounded-[32px] bg-white" />
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[280px_1fr]">
+            <div className="h-[640px] rounded-[32px] bg-white" />
+            <div className="h-[640px] rounded-[32px] bg-white" />
           </div>
         </div>
       </div>
     );
   }
 
-  if (!me?.parent?.parentId) return null;
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="flex min-h-screen">
-        <aside className="hidden w-[292px] shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
-          <div className="border-b border-slate-200 p-5">
-            <div className="flex items-center gap-3">
-              <SchoolLogo
-                logoUrl={me.branding?.brandLogoUrl}
-                iconUrl={me.branding?.brandIconUrl}
-                schoolName={schoolName}
-              />
+      <div className="lg:hidden sticky top-0 z-40 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setMobileOpen((prev) => !prev)}
+            className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-xl shadow-sm"
+            aria-label="Abrir menu"
+          >
+            ☰
+          </button>
+
+          <SchoolLogo logoUrl={brandLogoUrl} brandName={brandName} />
+
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+              Portal do Responsável
+            </div>
+            <div className="truncate text-sm font-semibold text-slate-900">{brandName}</div>
+          </div>
+        </div>
+
+        {mobileOpen ? (
+          <div className="mt-3 rounded-3xl border border-slate-200 bg-white p-3 shadow-lg">
+            <div className="mb-3 flex items-center gap-3 rounded-2xl bg-slate-50 p-3">
+              <ParentAvatar photoUrl={profile?.photoUrl} fallbackText={responsibleInitials} />
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-slate-900">
+                  {responsibleName}
+                </div>
+                <div className="truncate text-xs text-slate-500">{responsibleEmail}</div>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              {navItems.map((item) => (
+                <NavItem
+                  key={item.href}
+                  href={item.href}
+                  icon={item.icon}
+                  title={item.title}
+                  description={item.description}
+                  active={navIsActive(pathname, item.href)}
+                  onClick={goTo}
+                />
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={logout}
+              className="mt-3 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700"
+            >
+              Sair do sistema
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mx-auto grid min-h-screen max-w-[1500px] grid-cols-1 lg:grid-cols-[310px_1fr]">
+        <aside className="hidden border-r border-slate-200 bg-white lg:flex lg:flex-col">
+          <div className="p-6">
+            <div className="flex items-center gap-4">
+              <SchoolLogo logoUrl={brandLogoUrl} brandName={brandName} />
 
               <div className="min-w-0">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">
                   Portal do Responsável
                 </div>
-
                 <div className="mt-1 truncate text-base font-semibold text-slate-900">
-                  {schoolName}
+                  {brandName}
                 </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-3">
+              <ParentAvatar photoUrl={profile?.photoUrl} fallbackText={responsibleInitials} />
+
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-slate-900">
+                  {responsibleName}
+                </div>
+                <div className="mt-0.5 truncate text-xs text-slate-500">{responsibleEmail}</div>
               </div>
             </div>
           </div>
 
-          <nav className="flex-1 space-y-1 p-4">
-            {items.map((item) => {
-              const active = isActivePath(pathname, item.href);
+          <div className="px-4">
+            <div className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+              Navegação
+            </div>
 
-              return (
-                <Link
+            <nav className="space-y-1">
+              {navItems.map((item) => (
+                <NavItem
                   key={item.href}
                   href={item.href}
-                  className={[
-                    "flex items-center gap-3 rounded-3xl px-4 py-3 transition",
-                    active
-                      ? "bg-slate-900 text-white shadow-sm"
-                      : "text-slate-700 hover:bg-slate-100",
-                  ].join(" ")}
-                >
-                  <span
-                    className={[
-                      "flex h-10 w-10 items-center justify-center rounded-2xl text-lg",
-                      active ? "bg-white/10" : "bg-slate-100",
-                    ].join(" ")}
-                  >
-                    {item.icon}
-                  </span>
+                  icon={item.icon}
+                  title={item.title}
+                  description={item.description}
+                  active={navIsActive(pathname, item.href)}
+                  onClick={goTo}
+                />
+              ))}
+            </nav>
+          </div>
 
-                  <span className="min-w-0">
-                    <span className="block text-sm font-semibold">{item.label}</span>
-                    <span
-                      className={[
-                        "block truncate text-xs",
-                        active ? "text-slate-200" : "text-slate-500",
-                      ].join(" ")}
-                    >
-                      {item.description}
-                    </span>
-                  </span>
-                </Link>
-              );
-            })}
-          </nav>
-
-          <div className="p-4">
-            <div className="rounded-[28px] bg-slate-900 p-4 text-white shadow-sm">
-              <div className="flex items-center gap-3">
-                <ParentAvatar photoUrl={profile?.photoUrl} name={responsibleName} />
-
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold">{responsibleName}</div>
-                  <div className="mt-1 truncate text-xs text-slate-300">
-                    {me.user.email || "Responsável"}
-                  </div>
-                </div>
+          <div className="mt-auto p-6">
+            <div className="rounded-[28px] bg-slate-900 p-5 text-white shadow-sm">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">
+                Ambiente
               </div>
+              <div className="mt-2 text-lg font-semibold">Portal familiar</div>
+              <p className="mt-2 text-sm leading-6 text-slate-300">
+                Acompanhe filhos, agenda, comunicados e financeiro em um ambiente seguro.
+              </p>
 
               <button
                 type="button"
                 onClick={logout}
-                className="mt-4 w-full rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+                className="mt-5 w-full rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:opacity-90"
               >
                 Sair do sistema
               </button>
             </div>
 
-            <div className="mt-4 text-center text-[11px] text-slate-400">
-              Sistema escolar multi-tenant
-            </div>
+            <div className="mt-5 text-xs text-slate-400">Sistema escolar multi-tenant</div>
           </div>
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur lg:hidden">
-            <div className="flex items-center justify-between gap-3 px-4 py-3">
-              <button
-                type="button"
-                onClick={() => setMobileMenuOpen((prev) => !prev)}
-                className="flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-xl"
-                aria-label="Abrir menu"
-              >
-                ☰
-              </button>
-
-              <div className="flex min-w-0 items-center gap-3">
-                <SchoolLogo
-                  logoUrl={me.branding?.brandLogoUrl}
-                  iconUrl={me.branding?.brandIconUrl}
-                  schoolName={schoolName}
-                />
-
-                <div className="min-w-0">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-                    Portal
-                  </div>
-                  <div className="truncate text-sm font-semibold text-slate-900">
-                    {schoolName}
-                  </div>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={logout}
-                className="rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white"
-              >
-                Sair
-              </button>
-            </div>
-
-            {mobileMenuOpen ? (
-              <div className="border-t border-slate-200 bg-white p-3">
-                <nav className="grid grid-cols-2 gap-2">
-                  {items.map((item) => {
-                    const active = isActivePath(pathname, item.href);
-
-                    return (
-                      <Link
-                        key={item.href}
-                        href={item.href}
-                        className={[
-                          "rounded-2xl px-3 py-3 text-sm font-semibold transition",
-                          active
-                            ? "bg-slate-900 text-white"
-                            : "bg-slate-50 text-slate-700 hover:bg-slate-100",
-                        ].join(" ")}
-                      >
-                        <span className="mr-2">{item.icon}</span>
-                        {item.label}
-                      </Link>
-                    );
-                  })}
-                </nav>
-              </div>
-            ) : null}
-          </header>
-
-          <main className="min-w-0 flex-1">{children}</main>
-        </div>
+        <main className="min-w-0 p-4 md:p-6 lg:p-8">{children}</main>
       </div>
     </div>
   );
