@@ -380,9 +380,9 @@ export default function SchoolMessagesPage() {
         const userId =
           row.userId ||
           row.user_id ||
-          row.id ||
           row.auth_user_id ||
           row.teacher_user_id ||
+          row.staff_user_id ||
           "";
 
         const fullName =
@@ -560,7 +560,7 @@ export default function SchoolMessagesPage() {
     }
 
     if (audienceType === "teacher_individual" && !targetTeacherUserId) {
-      setError("Selecione o professor para enviar o comunicado.");
+      setError("Selecione o professor para enviar o comunicado individual.");
       return;
     }
 
@@ -570,6 +570,12 @@ export default function SchoolMessagesPage() {
       setSuccessMessage(null);
 
       const token = await getAccessToken();
+
+      const selectedTeacherId =
+        audienceType === "teacher_individual" ? targetTeacherUserId : null;
+
+      const selectedClassId =
+        audienceType === "class" || audienceType === "teachers_class" ? targetClassId : null;
 
       const res = await fetch("/api/school/messages/create", {
         method: "POST",
@@ -582,12 +588,20 @@ export default function SchoolMessagesPage() {
           title: title.trim(),
           body: body.trim(),
           audienceType,
-          targetClassId:
-            audienceType === "class" || audienceType === "teachers_class"
-              ? targetClassId
-              : null,
-          targetTeacherUserId:
-            audienceType === "teacher_individual" ? targetTeacherUserId : null,
+          audience_type: audienceType,
+
+          targetClassId: selectedClassId,
+          target_class_id: selectedClassId,
+
+          targetTeacherUserId: selectedTeacherId,
+          target_teacher_user_id: selectedTeacherId,
+
+          targetUserId: selectedTeacherId,
+          target_user_id: selectedTeacherId,
+
+          targetStaffId: selectedTeacherId,
+          target_staff_id: selectedTeacherId,
+
           status: "published",
         }),
       });
@@ -1094,7 +1108,10 @@ export default function SchoolMessagesPage() {
 
                           <span className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
                             {message.audienceLabel ||
-                              audienceLabel((message.audience_type as AudienceType) || "school", classInfo)}
+                              audienceLabel(
+                                (message.audience_type as AudienceType) || "school",
+                                classInfo
+                              )}
                           </span>
 
                           {classInfo ? (
@@ -1173,9 +1190,7 @@ export default function SchoolMessagesPage() {
                     Editar comunicado
                   </div>
 
-                  <h2 className="mt-3 text-2xl font-semibold">
-                    {editingMessage.title}
-                  </h2>
+                  <h2 className="mt-3 text-2xl font-semibold">{editingMessage.title}</h2>
 
                   <p className="mt-1 text-sm text-slate-200">
                     A edição altera o conteúdo exibido para os destinatários, mas mantém o
