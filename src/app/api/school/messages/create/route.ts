@@ -19,6 +19,18 @@ type AudienceType =
   | "secretaria"
   | "staff";
 
+class HttpError extends Error {
+  status: number;
+  extra?: any;
+
+  constructor(message: string, status = 400, extra?: any) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+    this.extra = extra;
+  }
+}
+
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
 }
@@ -67,15 +79,7 @@ function normalizeRole(role?: string | null) {
   return r;
 }
 
-/**
- * IMPORTANTE:
- * Esta função converte as novas opções da interface para valores seguros no banco.
- *
- * Motivo:
- * O banco provavelmente ainda não aceita audience_type = "teacher_individual",
- * "teachers_class" ou "coordinators".
- */
-function dbAudienceType(audienceType: AudienceType) {
+function getSafeDbAudienceType(audienceType: AudienceType) {
   if (audienceType === "teacher_individual") return "teachers";
   if (audienceType === "teachers_class") return "teachers";
   if (audienceType === "coordinators") return "staff";
@@ -83,13 +87,18 @@ function dbAudienceType(audienceType: AudienceType) {
   return audienceType;
 }
 
-function targetRoleForAudience(audienceType: AudienceType) {
-  if (audienceType === "teachers") return "professor";
-  if (audienceType === "teachers_class") return "professor_class";
-  if (audienceType === "teacher_individual") return "professor_individual";
-  if (audienceType === "coordinators") return "coordenador";
+function getSafeTargetRole(audienceType: AudienceType) {
+  if (
+    audienceType === "teachers" ||
+    audienceType === "teachers_class" ||
+    audienceType === "teacher_individual"
+  ) {
+    return "professor";
+  }
+
   if (audienceType === "secretaria") return "secretaria";
-  if (audienceType === "staff") return "staff";
+
+  if (audienceType === "coordinators" || audienceType === "staff") return "staff";
 
   return null;
 }
@@ -105,7 +114,7 @@ async function getStaffFromToken(token: string) {
 
   const { data: staff, error: staffErr } = await supabaseAdmin
     .from("school_users")
-    .select("school_id, role, is_active")
+    .select("id, school_id, user_id, role, is_active")
     .eq("user_id", userId)
     .eq("is_active", true)
     .order("created_at", { ascending: false })
@@ -154,7 +163,7 @@ async function getAllParentRecipients(schoolId: string): Promise<Recipient[]> {
     .select("id")
     .eq("school_id", schoolId);
 
-  if (error) throw new Error("Erro ao buscar responsáveis: " + error.message);
+  if (error) throw new HttpError("Erro ao buscar responsáveis: " + error.message, 500);
 
   return Array.from(
     new Set((data || []).map((row: any) => String(row.id)).filter(Boolean))
@@ -168,6 +177,16 @@ async function getClassParentRecipients(
   schoolId: string,
   classId: string
 ): Promise<Recipient[]> {
+  const { data: classRow, error: classErr } = await supabaseAdmin
+    .from("classes")
+    .select("id")
+    .eq("id", classId)
+    .eq("school_id", schoolId)
+    .maybeSingle();
+
+  if (classErr) throw new HttpError("Erro ao validar turma: " + classErr.message, 500);
+  if (!classRow?.id) throw new HttpError("Turma não encontrada nesta escola.", 422);
+
   const { data: activeStudents, error: studentsErr } = await supabaseAdmin
     .from("student_classes")
     .select("student_id")
@@ -176,7 +195,7 @@ async function getClassParentRecipients(
     .eq("is_active", true);
 
   if (studentsErr) {
-    throw new Error("Erro ao buscar alunos da turma: " + studentsErr.message);
+    throw new HttpError("Erro ao buscar alunos da turma: " + studentsErr.message, 500);
   }
 
   const studentIds = Array.from(
@@ -193,7 +212,7 @@ async function getClassParentRecipients(
     .in("student_id", studentIds);
 
   if (linksErr) {
-    throw new Error("Erro ao buscar responsáveis da turma: " + linksErr.message);
+    throw new HttpError("Erro ao buscar responsáveis da turma: " + linksErr.message, 500);
   }
 
   return Array.from(
@@ -216,7 +235,7 @@ async function getStaffRecipients(
     .eq("school_id", schoolId)
     .eq("is_active", true);
 
-  if (error) throw new Error("Erro ao buscar equipe escolar: " + error.message);
+  if (error) throw new HttpError("Erro ao buscar equipe escolar: " + error.message, 500);
 
   return Array.from(
     new Set(
@@ -231,6 +250,146 @@ async function getStaffRecipients(
   }));
 }
 
+async function findSchoolUserByUserId({
+  schoolId,
+  userId,
+}: {
+  schoolId: string;
+  userId: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("school_users")
+    .select("id, school_id, user_id, role, is_active")
+    .eq("school_id", schoolId)
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) {
+    throw new HttpError("Erro ao validar usuário por user_id: " + error.message, 500);
+  }
+
+  return data || null;
+}
+
+async function findSchoolUserBySchoolUserId({
+  schoolId,
+  schoolUserId,
+}: {
+  schoolId: string;
+  schoolUserId: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("school_users")
+    .select("id, school_id, user_id, role, is_active")
+    .eq("school_id", schoolId)
+    .eq("id", schoolUserId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) {
+    throw new HttpError("Erro ao validar usuário por school_users.id: " + error.message, 500);
+  }
+
+  return data || null;
+}
+
+async function findSchoolUserByTeacherClassId({
+  schoolId,
+  teacherId,
+}: {
+  schoolId: string;
+  teacherId: string;
+}) {
+  const { data: teacherClass, error: teacherClassErr } = await supabaseAdmin
+    .from("teacher_classes")
+    .select("teacher_user_id, teacher_id")
+    .eq("school_id", schoolId)
+    .eq("teacher_id", teacherId)
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+
+  if (teacherClassErr) {
+    throw new HttpError(
+      "Erro ao procurar professor por teacher_classes.teacher_id: " + teacherClassErr.message,
+      500
+    );
+  }
+
+  const teacherUserId = String((teacherClass as any)?.teacher_user_id || "").trim();
+
+  if (!teacherUserId) return null;
+
+  return findSchoolUserByUserId({
+    schoolId,
+    userId: teacherUserId,
+  });
+}
+
+async function resolveStaffUserId({
+  schoolId,
+  rawTargetId,
+  allowedRoles,
+}: {
+  schoolId: string;
+  rawTargetId: string;
+  allowedRoles: string[];
+}) {
+  const normalizedAllowedRoles = allowedRoles.map(normalizeRole).filter(Boolean);
+
+  let staff: any = null;
+
+  staff = await findSchoolUserByUserId({
+    schoolId,
+    userId: rawTargetId,
+  });
+
+  if (!staff?.user_id) {
+    staff = await findSchoolUserBySchoolUserId({
+      schoolId,
+      schoolUserId: rawTargetId,
+    });
+  }
+
+  if (!staff?.user_id) {
+    staff = await findSchoolUserByTeacherClassId({
+      schoolId,
+      teacherId: rawTargetId,
+    });
+  }
+
+  if (!staff?.user_id) {
+    throw new HttpError(
+      "Destinatário individual não encontrado ou inativo nesta escola.",
+      422,
+      {
+        debug: {
+          stage: "resolve_staff_user_id_not_found",
+          rawTargetId,
+          schoolId,
+        },
+      }
+    );
+  }
+
+  const role = normalizeRole(staff.role);
+
+  if (!normalizedAllowedRoles.includes(role)) {
+    throw new HttpError("O destinatário selecionado não pertence ao perfil esperado.", 422, {
+      debug: {
+        stage: "resolve_staff_user_id_invalid_role",
+        rawTargetId,
+        resolvedUserId: staff.user_id,
+        role,
+        allowedRoles: normalizedAllowedRoles,
+      },
+    });
+  }
+
+  return String(staff.user_id);
+}
+
 async function getTeacherClassRecipients(
   schoolId: string,
   classId: string
@@ -242,98 +401,78 @@ async function getTeacherClassRecipients(
     .eq("school_id", schoolId)
     .maybeSingle();
 
-  if (classErr) throw new Error("Erro ao validar turma: " + classErr.message);
-  if (!classRow?.id) throw new Error("Turma não encontrada nesta escola.");
+  if (classErr) throw new HttpError("Erro ao validar turma: " + classErr.message, 500);
+  if (!classRow?.id) throw new HttpError("Turma não encontrada nesta escola.", 422);
 
   const { data, error } = await supabaseAdmin
     .from("teacher_classes")
-    .select("teacher_user_id, teacher_id, is_active")
+    .select("teacher_user_id, teacher_id")
     .eq("school_id", schoolId)
     .eq("class_id", classId)
     .eq("is_active", true);
 
   if (error) {
-    throw new Error("Erro ao buscar professores da turma: " + error.message);
+    throw new HttpError("Erro ao buscar professores da turma: " + error.message, 500);
   }
 
-  const possibleIds = Array.from(
+  const candidateIds = Array.from(
     new Set(
       (data || [])
         .flatMap((row: any) => [row.teacher_user_id, row.teacher_id])
-        .map((value: any) => String(value || ""))
+        .map((value: any) => String(value || "").trim())
         .filter(Boolean)
     )
   );
 
-  if (possibleIds.length === 0) return [];
+  const recipients: Recipient[] = [];
 
-  const { data: schoolUsers, error: schoolUsersErr } = await supabaseAdmin
-    .from("school_users")
-    .select("user_id, role, is_active")
-    .eq("school_id", schoolId)
-    .eq("is_active", true)
-    .in("user_id", possibleIds);
+  for (const id of candidateIds) {
+    try {
+      const resolvedUserId = await resolveStaffUserId({
+        schoolId,
+        rawTargetId: id,
+        allowedRoles: ["professor"],
+      });
 
-  if (schoolUsersErr) {
-    throw new Error("Erro ao validar professores da turma: " + schoolUsersErr.message);
+      recipients.push({
+        recipient_type: "staff",
+        recipient_id: resolvedUserId,
+      });
+    } catch {
+      // Ignora vínculos antigos/quebrados sem derrubar o envio da turma.
+    }
   }
 
   return Array.from(
-    new Set(
-      (schoolUsers || [])
-        .filter((row: any) => normalizeRole(row.role) === "professor")
-        .map((row: any) => String(row.user_id))
-        .filter(Boolean)
-    )
-  ).map((id) => ({
-    recipient_type: "staff",
-    recipient_id: id,
-  }));
+    new Map(recipients.map((item) => [item.recipient_id, item])).values()
+  );
 }
 
 async function getSingleStaffRecipient({
   schoolId,
   targetStaffId,
   allowedRoles,
-  errorPrefix,
+  missingMessage,
 }: {
   schoolId: string;
   targetStaffId: string | null;
   allowedRoles: string[];
-  errorPrefix: string;
+  missingMessage: string;
 }): Promise<Recipient[]> {
   if (!targetStaffId) {
-    throw new Error(errorPrefix);
+    throw new HttpError(missingMessage, 422);
   }
 
-  const normalizedAllowedRoles = allowedRoles.map(normalizeRole).filter(Boolean);
-
-  const { data, error } = await supabaseAdmin
-    .from("school_users")
-    .select("user_id, role, is_active")
-    .eq("school_id", schoolId)
-    .eq("user_id", targetStaffId)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error("Erro ao validar destinatário: " + error.message);
-  }
-
-  if (!data?.user_id) {
-    throw new Error("Destinatário não encontrado ou inativo nesta escola.");
-  }
-
-  const role = normalizeRole(data.role);
-
-  if (!normalizedAllowedRoles.includes(role)) {
-    throw new Error("O destinatário selecionado não pertence ao perfil esperado.");
-  }
+  const resolvedUserId = await resolveStaffUserId({
+    schoolId,
+    rawTargetId: targetStaffId,
+    allowedRoles,
+  });
 
   return [
     {
       recipient_type: "staff",
-      recipient_id: String(data.user_id),
+      recipient_id: resolvedUserId,
     },
   ];
 }
@@ -348,28 +487,18 @@ async function buildRecipients({
   audienceType: AudienceType;
   targetClassId: string | null;
   targetStaffId: string | null;
-}) {
+}): Promise<Recipient[]> {
   if (audienceType === "class") {
     if (!targetClassId) {
-      throw new Error("Selecione uma turma para enviar comunicado por turma.");
+      throw new HttpError("Selecione uma turma para enviar comunicado aos responsáveis.", 422);
     }
-
-    const { data: classRow, error: classErr } = await supabaseAdmin
-      .from("classes")
-      .select("id")
-      .eq("id", targetClassId)
-      .eq("school_id", schoolId)
-      .maybeSingle();
-
-    if (classErr) throw new Error("Erro ao validar turma: " + classErr.message);
-    if (!classRow?.id) throw new Error("Turma não encontrada nesta escola.");
 
     return getClassParentRecipients(schoolId, targetClassId);
   }
 
   if (audienceType === "teachers_class") {
     if (!targetClassId) {
-      throw new Error("Selecione uma turma para enviar comunicado aos professores da turma.");
+      throw new HttpError("Selecione uma turma para enviar comunicado aos professores da turma.", 422);
     }
 
     return getTeacherClassRecipients(schoolId, targetClassId);
@@ -380,7 +509,7 @@ async function buildRecipients({
       schoolId,
       targetStaffId,
       allowedRoles: ["professor"],
-      errorPrefix: "Selecione um professor para enviar o comunicado individual.",
+      missingMessage: "Selecione um professor para enviar o comunicado individual.",
     });
   }
 
@@ -409,6 +538,64 @@ async function buildRecipients({
   return getAllParentRecipients(schoolId);
 }
 
+async function insertMessageRecipients({
+  schoolId,
+  messageId,
+  recipients,
+}: {
+  schoolId: string;
+  messageId: string;
+  recipients: Recipient[];
+}) {
+  const now = new Date().toISOString();
+
+  const rows = recipients.map((recipient) => ({
+    school_id: schoolId,
+    message_id: messageId,
+    recipient_type: recipient.recipient_type,
+    recipient_id: recipient.recipient_id,
+    delivered_at: now,
+  }));
+
+  const { error: insertErr } = await supabaseAdmin
+    .from("message_recipients")
+    .insert(rows);
+
+  if (!insertErr) return;
+
+  const { error: upsertErr } = await supabaseAdmin
+    .from("message_recipients")
+    .upsert(rows, {
+      onConflict: "message_id,recipient_type,recipient_id",
+    });
+
+  if (upsertErr) {
+    throw new HttpError(
+      "Comunicado criado, mas houve erro ao registrar destinatários: " + upsertErr.message,
+      500,
+      {
+        debug: {
+          stage: "insert_or_upsert_message_recipients",
+          insertError: {
+            message: insertErr.message,
+            code: insertErr.code,
+            details: insertErr.details,
+            hint: insertErr.hint,
+          },
+          upsertError: {
+            message: upsertErr.message,
+            code: upsertErr.code,
+            details: upsertErr.details,
+            hint: upsertErr.hint,
+          },
+          recipientsCount: rows.length,
+          recipientsPreview: rows.slice(0, 3),
+        },
+      }
+    );
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const authHeader = req.headers.get("authorization") || "";
@@ -425,14 +612,20 @@ export async function POST(req: Request) {
     const messageBody = normalizeText(body.body);
     const status = normalizeStatus(body.status);
     const audienceType = normalizeAudienceType(body.audienceType || body.audience_type);
+
     const targetClassId = normalizeText(body.targetClassId || body.target_class_id);
+
     const targetStaffId = normalizeText(
       body.targetStaffId ||
         body.target_staff_id ||
         body.targetTeacherId ||
         body.target_teacher_id ||
         body.teacherUserId ||
-        body.teacher_user_id
+        body.teacher_user_id ||
+        body.staffId ||
+        body.staff_id ||
+        body.userId ||
+        body.user_id
     );
 
     if (!title) return jsonError("Informe o título do comunicado.", 422);
@@ -451,18 +644,27 @@ export async function POST(req: Request) {
         targetStaffId,
       });
 
+      recipients = Array.from(
+        new Map(
+          recipients.map((recipient) => [
+            `${recipient.recipient_type}:${recipient.recipient_id}`,
+            recipient,
+          ])
+        ).values()
+      );
+
       if (recipients.length === 0) {
         return jsonError(
-          "Nenhum destinatário encontrado para este público. Revise a turma, professor ou vínculos cadastrados.",
+          "Nenhum destinatário encontrado para este público. Revise turma, professor ou vínculos cadastrados.",
           422
         );
       }
     }
 
-    const safeAudienceType = dbAudienceType(audienceType);
+    const safeAudienceType = getSafeDbAudienceType(audienceType);
+    const safeTargetRole = getSafeTargetRole(audienceType);
     const safeTargetClassId =
       audienceType === "class" || audienceType === "teachers_class" ? targetClassId : null;
-    const safeTargetRole = targetRoleForAudience(audienceType);
 
     const { data: created, error: insErr } = await supabaseAdmin
       .from("messages")
@@ -484,47 +686,50 @@ export async function POST(req: Request) {
 
     if (insErr) {
       return jsonError("Erro ao criar comunicado: " + insErr.message, 500, {
-        details: {
+        debug: {
+          stage: "insert_messages",
+          code: insErr.code,
+          details: insErr.details,
+          hint: insErr.hint,
           audienceType,
           safeAudienceType,
+          targetRole: safeTargetRole,
           targetClassId: safeTargetClassId,
           targetStaffId,
-          targetRole: safeTargetRole,
+          recipients,
         },
       });
     }
 
     if (status === "published" && recipients.length > 0) {
-      const now = new Date().toISOString();
-
-      const rows = recipients.map((recipient) => ({
-        school_id: schoolId,
-        message_id: created.id,
-        recipient_type: recipient.recipient_type,
-        recipient_id: recipient.recipient_id,
-        delivered_at: now,
-      }));
-
-      const { error: recErr } = await supabaseAdmin
-        .from("message_recipients")
-        .upsert(rows, {
-          onConflict: "message_id,recipient_type,recipient_id",
-        });
-
-      if (recErr) {
-        return jsonError(
-          "Comunicado criado, mas houve erro ao registrar destinatários: " + recErr.message,
-          500,
-          { message: created }
-        );
-      }
+      await insertMessageRecipients({
+        schoolId,
+        messageId: String(created.id),
+        recipients,
+      });
     }
 
     return jsonOk({
       message: created,
       recipientsCreated: recipients.length,
+      debug: {
+        audienceType,
+        safeAudienceType,
+        targetRole: safeTargetRole,
+        targetClassId: safeTargetClassId,
+        targetStaffId,
+        recipients,
+      },
     });
   } catch (e: any) {
-    return jsonError(e?.message || "Erro interno ao criar comunicado.", 500);
+    const status = e instanceof HttpError ? e.status : 500;
+
+    return jsonError(e?.message || "Erro interno ao criar comunicado.", status, {
+      debug: {
+        stage: e?.extra?.debug?.stage || "catch",
+        name: e?.name || null,
+        extra: e?.extra || null,
+      },
+    });
   }
 }
