@@ -9,7 +9,7 @@ type AudienceType =
   | "all_parents"
   | "class"
   | "teachers"
-  | "teacher_class"
+  | "teachers_class"
   | "teacher_individual"
   | "coordinators"
   | "secretaria"
@@ -23,11 +23,10 @@ type ClassRow = {
 };
 
 type StaffRow = {
-  user_id: string;
+  userId: string;
+  fullName: string | null;
+  email: string | null;
   role: string;
-  email?: string | null;
-  full_name?: string | null;
-  name?: string | null;
 };
 
 type MessageStats = {
@@ -52,7 +51,6 @@ type MessageRow = {
   created_at: string;
   audienceLabel?: string;
   targetClass?: ClassRow | null;
-  targetUser?: StaffRow | null;
   stats?: MessageStats;
 };
 
@@ -104,17 +102,6 @@ function roleLabel(role?: string | null) {
   return "Gestão escolar";
 }
 
-function staffLabel(staff?: StaffRow | null) {
-  if (!staff) return "Usuário selecionado";
-
-  const name =
-    String(staff.full_name || staff.name || "").trim() ||
-    String(staff.email || "").trim() ||
-    String(staff.user_id || "").trim();
-
-  return name || "Usuário selecionado";
-}
-
 function formatDateTimeBR(value?: string | null) {
   if (!value) return "—";
 
@@ -128,6 +115,10 @@ function formatDateTimeBR(value?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function staffLabel(staff: StaffRow) {
+  return staff.fullName || staff.email || staff.userId;
 }
 
 function audienceLabel(
@@ -148,7 +139,7 @@ function audienceLabel(
 
   if (type === "teachers") return "Todos os professores";
 
-  if (type === "teacher_class") {
+  if (type === "teachers_class") {
     if (!selectedClass) return "Professores de uma turma";
 
     return `Professores da turma: ${selectedClass.name}${
@@ -157,6 +148,7 @@ function audienceLabel(
   }
 
   if (type === "teacher_individual") {
+    if (!selectedTeacher) return "Professor individual";
     return `Professor: ${staffLabel(selectedTeacher)}`;
   }
 
@@ -251,7 +243,7 @@ function AudienceHelp({ audienceType }: { audienceType: AudienceType }) {
     );
   }
 
-  if (audienceType === "teacher_class") {
+  if (audienceType === "teachers_class") {
     return (
       <p className="mt-2 text-xs leading-5 text-slate-500">
         O comunicado será direcionado apenas aos professores vinculados à turma selecionada.
@@ -301,14 +293,14 @@ export default function SchoolMessagesPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const [classes, setClasses] = useState<ClassRow[]>([]);
-  const [teachers, setTeachers] = useState<StaffRow[]>([]);
+  const [staff, setStaff] = useState<StaffRow[]>([]);
   const [messages, setMessages] = useState<MessageRow[]>([]);
 
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [audienceType, setAudienceType] = useState<AudienceType>("all_parents");
   const [targetClassId, setTargetClassId] = useState("");
-  const [targetTeacherId, setTargetTeacherId] = useState("");
+  const [targetTeacherUserId, setTargetTeacherUserId] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -318,15 +310,19 @@ export default function SchoolMessagesPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  const teachers = useMemo(() => {
+    return staff.filter((item) => normalizeRole(item.role) === "professor");
+  }, [staff]);
+
   const selectedClass = useMemo(() => {
     if (!targetClassId) return null;
     return classes.find((item) => item.id === targetClassId) || null;
   }, [classes, targetClassId]);
 
   const selectedTeacher = useMemo(() => {
-    if (!targetTeacherId) return null;
-    return teachers.find((item) => item.user_id === targetTeacherId) || null;
-  }, [teachers, targetTeacherId]);
+    if (!targetTeacherUserId) return null;
+    return teachers.find((item) => item.userId === targetTeacherUserId) || null;
+  }, [teachers, targetTeacherUserId]);
 
   const totalMessages = useMemo(() => messages.length, [messages]);
 
@@ -368,62 +364,74 @@ export default function SchoolMessagesPage() {
     setClasses((json.classes || []) as ClassRow[]);
   }
 
-  async function loadTeachersFromApi(token: string) {
-    const tryUrls = [
-      "/api/school/teachers",
-      "/api/school/staff",
-      "/api/school/users",
-    ];
+  function normalizeStaffRows(payload: any): StaffRow[] {
+    const rawRows =
+      payload?.staff ||
+      payload?.users ||
+      payload?.teachers ||
+      payload?.items ||
+      payload?.data ||
+      [];
 
-    for (const url of tryUrls) {
+    if (!Array.isArray(rawRows)) return [];
+
+    return rawRows
+      .map((row: any) => {
+        const userId =
+          row.userId ||
+          row.user_id ||
+          row.id ||
+          row.auth_user_id ||
+          row.teacher_user_id ||
+          "";
+
+        const fullName =
+          row.fullName ||
+          row.full_name ||
+          row.name ||
+          row.display_name ||
+          row.teacher_name ||
+          null;
+
+        const email = row.email || row.user_email || row.teacher_email || null;
+
+        const role = normalizeRole(row.role || row.user_role || row.profile || "professor");
+
+        return {
+          userId: String(userId || "").trim(),
+          fullName: fullName ? String(fullName) : null,
+          email: email ? String(email) : null,
+          role,
+        };
+      })
+      .filter((row: StaffRow) => row.userId);
+  }
+
+  async function loadStaff(token: string) {
+    const endpoints = ["/api/school/staff", "/api/school/teachers"];
+
+    for (const endpoint of endpoints) {
       try {
-        const res = await fetch(url, {
+        const res = await fetch(endpoint, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         });
 
         const json = await safeJson(res);
 
-        if (!res.ok || !json?.ok) continue;
-
-        const rawRows =
-          json.teachers ||
-          json.staff ||
-          json.users ||
-          json.schoolUsers ||
-          json.items ||
-          [];
-
-        const rows = (rawRows || [])
-          .map((item: any) => {
-            const userId =
-              item.user_id ||
-              item.userId ||
-              item.id ||
-              item.auth_user_id ||
-              item.teacher_user_id ||
-              null;
-
-            return {
-              user_id: userId ? String(userId) : "",
-              role: String(item.role || item.profile || "professor"),
-              email: item.email || item.user_email || null,
-              full_name: item.full_name || item.fullName || item.name || null,
-              name: item.name || item.full_name || null,
-            } as StaffRow;
-          })
-          .filter((item: StaffRow) => {
-            return item.user_id && normalizeRole(item.role) === "professor";
-          });
-
-        setTeachers(rows);
-        return;
+        if (res.ok && json?.ok) {
+          const rows = normalizeStaffRows(json);
+          if (rows.length > 0) {
+            setStaff(rows);
+            return;
+          }
+        }
       } catch {
-        // tenta a próxima rota
+        // tenta próximo endpoint
       }
     }
 
-    setTeachers([]);
+    setStaff([]);
   }
 
   async function loadMessages(token?: string) {
@@ -492,11 +500,7 @@ export default function SchoolMessagesPage() {
       setRole(normalized);
       setBrandName(me?.branding?.brandName || "Minha Escola");
 
-      await Promise.all([
-        loadClasses(token),
-        loadTeachersFromApi(token),
-        loadMessages(token),
-      ]);
+      await Promise.all([loadClasses(token), loadStaff(token), loadMessages(token)]);
     } catch (e: any) {
       const msg = e?.message || "Erro inesperado ao carregar comunicados.";
       setError(msg);
@@ -521,16 +525,21 @@ export default function SchoolMessagesPage() {
       setSuccessMessage(null);
 
       const token = await getAccessToken();
-
-      await Promise.all([
-        loadClasses(token),
-        loadTeachersFromApi(token),
-        loadMessages(token),
-      ]);
+      await Promise.all([loadClasses(token), loadStaff(token), loadMessages(token)]);
     } catch (e: any) {
       setError(e?.message || "Erro ao atualizar comunicados.");
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  function resetAudienceTargets(next: AudienceType) {
+    if (next !== "class" && next !== "teachers_class") {
+      setTargetClassId("");
+    }
+
+    if (next !== "teacher_individual") {
+      setTargetTeacherUserId("");
     }
   }
 
@@ -545,16 +554,13 @@ export default function SchoolMessagesPage() {
       return;
     }
 
-    if (
-      (audienceType === "class" || audienceType === "teacher_class") &&
-      !targetClassId
-    ) {
+    if ((audienceType === "class" || audienceType === "teachers_class") && !targetClassId) {
       setError("Selecione a turma para enviar o comunicado.");
       return;
     }
 
-    if (audienceType === "teacher_individual" && !targetTeacherId) {
-      setError("Selecione o professor para enviar o comunicado individual.");
+    if (audienceType === "teacher_individual" && !targetTeacherUserId) {
+      setError("Selecione o professor para enviar o comunicado.");
       return;
     }
 
@@ -577,11 +583,11 @@ export default function SchoolMessagesPage() {
           body: body.trim(),
           audienceType,
           targetClassId:
-            audienceType === "class" || audienceType === "teacher_class"
+            audienceType === "class" || audienceType === "teachers_class"
               ? targetClassId
               : null,
-          targetUserId:
-            audienceType === "teacher_individual" ? targetTeacherId : null,
+          targetTeacherUserId:
+            audienceType === "teacher_individual" ? targetTeacherUserId : null,
           status: "published",
         }),
       });
@@ -597,7 +603,7 @@ export default function SchoolMessagesPage() {
       setBody("");
       setAudienceType("all_parents");
       setTargetClassId("");
-      setTargetTeacherId("");
+      setTargetTeacherUserId("");
 
       await loadMessages(token);
 
@@ -747,8 +753,8 @@ export default function SchoolMessagesPage() {
               </h1>
 
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
-                Envie avisos segmentados para responsáveis, turmas, professores,
-                coordenação ou equipe escolar e acompanhe entrega e visualização.
+                Envie avisos segmentados para responsáveis, turmas ou equipe escolar e acompanhe
+                o status de entrega e visualização.
               </p>
 
               <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-200">
@@ -759,9 +765,7 @@ export default function SchoolMessagesPage() {
                   Perfil: {roleLabel(role)}
                 </span>
                 {schoolId ? (
-                  <span className="rounded-full bg-white/10 px-3 py-1">
-                    ID: {schoolId}
-                  </span>
+                  <span className="rounded-full bg-white/10 px-3 py-1">ID: {schoolId}</span>
                 ) : null}
               </div>
             </div>
@@ -858,21 +862,14 @@ export default function SchoolMessagesPage() {
                 onChange={(e) => {
                   const next = e.target.value as AudienceType;
                   setAudienceType(next);
-
-                  if (next !== "class" && next !== "teacher_class") {
-                    setTargetClassId("");
-                  }
-
-                  if (next !== "teacher_individual") {
-                    setTargetTeacherId("");
-                  }
+                  resetAudienceTargets(next);
                 }}
                 disabled={publishing}
               >
                 <option value="all_parents">Todos os pais/responsáveis</option>
                 <option value="class">Responsáveis de uma turma</option>
                 <option value="teachers">Todos os professores</option>
-                <option value="teacher_class">Professores de uma turma</option>
+                <option value="teachers_class">Professores de uma turma</option>
                 <option value="teacher_individual">Professor individual</option>
                 <option value="coordinators">Coordenadores</option>
                 <option value="secretaria">Secretaria</option>
@@ -883,7 +880,7 @@ export default function SchoolMessagesPage() {
               <AudienceHelp audienceType={audienceType} />
             </label>
 
-            {audienceType === "class" || audienceType === "teacher_class" ? (
+            {audienceType === "class" || audienceType === "teachers_class" ? (
               <label className="block">
                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Turma
@@ -915,13 +912,13 @@ export default function SchoolMessagesPage() {
 
                 <select
                   className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
-                  value={targetTeacherId}
-                  onChange={(e) => setTargetTeacherId(e.target.value)}
+                  value={targetTeacherUserId}
+                  onChange={(e) => setTargetTeacherUserId(e.target.value)}
                   disabled={publishing}
                 >
                   <option value="">Selecione um professor</option>
                   {teachers.map((teacher) => (
-                    <option key={teacher.user_id} value={teacher.user_id}>
+                    <option key={teacher.userId} value={teacher.userId}>
                       {staffLabel(teacher)}
                     </option>
                   ))}
@@ -929,10 +926,14 @@ export default function SchoolMessagesPage() {
 
                 {teachers.length === 0 ? (
                   <p className="mt-2 text-xs leading-5 text-amber-700">
-                    Nenhum professor foi carregado para seleção individual. Verifique se existe
-                    uma rota de professores ativa no projeto.
+                    Nenhum professor encontrado. Verifique se os professores estão cadastrados e
+                    ativos em Equipe Escolar / Professores.
                   </p>
-                ) : null}
+                ) : (
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    {teachers.length} professor(es) ativo(s) encontrado(s).
+                  </p>
+                )}
               </label>
             ) : null}
 
@@ -1093,11 +1094,7 @@ export default function SchoolMessagesPage() {
 
                           <span className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
                             {message.audienceLabel ||
-                              audienceLabel(
-                                (message.audience_type as AudienceType) || "school",
-                                classInfo,
-                                message.targetUser || null
-                              )}
+                              audienceLabel((message.audience_type as AudienceType) || "school", classInfo)}
                           </span>
 
                           {classInfo ? (
@@ -1148,11 +1145,7 @@ export default function SchoolMessagesPage() {
                       <div className="w-full xl:w-[360px]">
                         <div className="grid grid-cols-2 gap-3">
                           <StatusPill label="Enviado" value={stats.sent} tone="blue" />
-                          <StatusPill
-                            label="Entregue"
-                            value={stats.delivered}
-                            tone="emerald"
-                          />
+                          <StatusPill label="Entregue" value={stats.delivered} tone="emerald" />
                           <StatusPill label="Visualizado" value={stats.read} tone="slate" />
                           <StatusPill label="Pendente" value={stats.pending} tone="amber" />
                         </div>
