@@ -67,6 +67,33 @@ function normalizeRole(role?: string | null) {
   return r;
 }
 
+/**
+ * IMPORTANTE:
+ * Esta função converte as novas opções da interface para valores seguros no banco.
+ *
+ * Motivo:
+ * O banco provavelmente ainda não aceita audience_type = "teacher_individual",
+ * "teachers_class" ou "coordinators".
+ */
+function dbAudienceType(audienceType: AudienceType) {
+  if (audienceType === "teacher_individual") return "teachers";
+  if (audienceType === "teachers_class") return "teachers";
+  if (audienceType === "coordinators") return "staff";
+
+  return audienceType;
+}
+
+function targetRoleForAudience(audienceType: AudienceType) {
+  if (audienceType === "teachers") return "professor";
+  if (audienceType === "teachers_class") return "professor_class";
+  if (audienceType === "teacher_individual") return "professor_individual";
+  if (audienceType === "coordinators") return "coordenador";
+  if (audienceType === "secretaria") return "secretaria";
+  if (audienceType === "staff") return "staff";
+
+  return null;
+}
+
 async function getStaffFromToken(token: string) {
   const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
 
@@ -229,22 +256,23 @@ async function getTeacherClassRecipients(
     throw new Error("Erro ao buscar professores da turma: " + error.message);
   }
 
-  const userIds = Array.from(
+  const possibleIds = Array.from(
     new Set(
       (data || [])
-        .map((row: any) => String(row.teacher_user_id || row.teacher_id || ""))
+        .flatMap((row: any) => [row.teacher_user_id, row.teacher_id])
+        .map((value: any) => String(value || ""))
         .filter(Boolean)
     )
   );
 
-  if (userIds.length === 0) return [];
+  if (possibleIds.length === 0) return [];
 
   const { data: schoolUsers, error: schoolUsersErr } = await supabaseAdmin
     .from("school_users")
     .select("user_id, role, is_active")
     .eq("school_id", schoolId)
     .eq("is_active", true)
-    .in("user_id", userIds);
+    .in("user_id", possibleIds);
 
   if (schoolUsersErr) {
     throw new Error("Erro ao validar professores da turma: " + schoolUsersErr.message);
@@ -381,17 +409,6 @@ async function buildRecipients({
   return getAllParentRecipients(schoolId);
 }
 
-function targetRoleForAudience(audienceType: AudienceType) {
-  if (audienceType === "teachers") return "professor";
-  if (audienceType === "teachers_class") return "professor";
-  if (audienceType === "teacher_individual") return "professor";
-  if (audienceType === "coordinators") return "coordenador";
-  if (audienceType === "secretaria") return "secretaria";
-  if (audienceType === "staff") return "staff";
-
-  return null;
-}
-
 export async function POST(req: Request) {
   try {
     const authHeader = req.headers.get("authorization") || "";
@@ -442,6 +459,11 @@ export async function POST(req: Request) {
       }
     }
 
+    const safeAudienceType = dbAudienceType(audienceType);
+    const safeTargetClassId =
+      audienceType === "class" || audienceType === "teachers_class" ? targetClassId : null;
+    const safeTargetRole = targetRoleForAudience(audienceType);
+
     const { data: created, error: insErr } = await supabaseAdmin
       .from("messages")
       .insert({
@@ -450,12 +472,9 @@ export async function POST(req: Request) {
         title,
         body: messageBody,
         status,
-        audience_type: audienceType,
-        target_class_id:
-          audienceType === "class" || audienceType === "teachers_class"
-            ? targetClassId
-            : null,
-        target_role: targetRoleForAudience(audienceType),
+        audience_type: safeAudienceType,
+        target_class_id: safeTargetClassId,
+        target_role: safeTargetRole,
         published_at: status === "published" ? new Date().toISOString() : null,
       })
       .select(
@@ -464,7 +483,15 @@ export async function POST(req: Request) {
       .single();
 
     if (insErr) {
-      return jsonError("Erro ao criar comunicado: " + insErr.message, 500);
+      return jsonError("Erro ao criar comunicado: " + insErr.message, 500, {
+        details: {
+          audienceType,
+          safeAudienceType,
+          targetClassId: safeTargetClassId,
+          targetStaffId,
+          targetRole: safeTargetRole,
+        },
+      });
     }
 
     if (status === "published" && recipients.length > 0) {
