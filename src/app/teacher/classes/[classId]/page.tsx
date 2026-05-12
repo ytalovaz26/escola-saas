@@ -17,10 +17,6 @@ type StudentRow = {
   registration_number: string | null;
   photo_url?: string | null;
   photoUrl?: string | null;
-  avatar_url?: string | null;
-  avatarUrl?: string | null;
-  profile_photo_url?: string | null;
-  image_url?: string | null;
 };
 
 async function safeJson(res: Response) {
@@ -56,41 +52,21 @@ function classLabel(c?: ClassMeta | null) {
   return parts.join(" • ") || c.id;
 }
 
-function getStudentPhotoUrl(student: StudentRow) {
-  return (
-    student.photo_url ||
-    student.photoUrl ||
-    student.avatar_url ||
-    student.avatarUrl ||
-    student.profile_photo_url ||
-    student.image_url ||
-    null
-  );
-}
-
 function StudentAvatar({ student }: { student: StudentRow }) {
-  const photoUrl = getStudentPhotoUrl(student);
+  const photoUrl = String(student.photo_url || student.photoUrl || "").trim();
 
   if (photoUrl) {
     return (
-      <div className="h-12 w-12 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-sm">
+      <div className="h-12 w-12 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={photoUrl}
-          alt={`Foto de ${student.full_name || "aluno"}`}
+          alt={student.full_name || "Foto do aluno"}
           className="h-full w-full object-cover"
           loading="lazy"
-          referrerPolicy="no-referrer"
-          onError={(e) => {
-            const img = e.currentTarget;
-            img.style.display = "none";
-
-            const parent = img.parentElement;
-            if (parent) {
-              parent.innerHTML = `<div style="height:100%;width:100%;display:flex;align-items:center;justify-content:center;background:#f1f5f9;color:#334155;font-weight:700;font-size:14px;">${initials(
-                student.full_name
-              )}</div>`;
-            }
+          onError={(event) => {
+            const target = event.currentTarget;
+            target.style.display = "none";
           }}
         />
       </div>
@@ -98,7 +74,7 @@ function StudentAvatar({ student }: { student: StudentRow }) {
   }
 
   return (
-    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-slate-100 text-sm font-semibold text-slate-700 shadow-sm">
+    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-sm font-semibold text-slate-700">
       {initials(student.full_name)}
     </div>
   );
@@ -186,43 +162,28 @@ export default function TeacherClassStudentsPage() {
   }, [classId]);
 
   if (loading) {
-    return (
-      <main className="space-y-6">
-        <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
-          <div className="animate-pulse space-y-4">
-            <div className="h-8 w-72 rounded-xl bg-slate-200" />
-            <div className="h-4 w-96 rounded-xl bg-slate-100" />
-            <div className="h-40 rounded-[28px] bg-slate-100" />
-          </div>
-        </section>
-      </main>
-    );
+    return <main className="p-6">Carregando turma...</main>;
   }
 
   if (error) {
     return (
       <main className="min-h-screen bg-slate-50 p-6">
         <div className="mx-auto max-w-5xl">
-          <div className="rounded-3xl border border-red-200 bg-white p-6 shadow-sm">
-            <h1 className="text-xl font-semibold text-slate-900">
-              Não foi possível carregar
-            </h1>
+          <div className="rounded-2xl border bg-white p-6">
+            <h1 className="text-xl font-semibold">Não foi possível carregar</h1>
+            <p className="mt-2 text-sm text-slate-600">{error}</p>
 
-            <p className="mt-2 text-sm leading-6 text-slate-600">{error}</p>
-
-            <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+            <div className="mt-4 flex gap-2">
               <button
-                type="button"
                 onClick={() => router.push("/teacher/classes")}
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                className="rounded-xl border px-4 py-2 text-sm hover:bg-slate-50"
               >
                 Voltar
               </button>
 
               <button
-                type="button"
                 onClick={load}
-                className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90"
+                className="rounded-xl bg-slate-900 px-4 py-2 text-sm text-white"
               >
                 Tentar novamente
               </button>
@@ -236,61 +197,57 @@ export default function TeacherClassStudentsPage() {
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-6">
       <div className="mx-auto max-w-6xl space-y-5">
-        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-          <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-5 py-7 text-white md:px-7">
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
-              Portal do Professor
-            </div>
+        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+            Portal do Professor
+          </div>
 
-            <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
-              Alunos da Turma
-            </h1>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+            Alunos da Turma
+          </h1>
 
-            <p className="mt-2 text-sm leading-6 text-slate-200">
-              {classLabel(classMeta)}
-            </p>
+          <p className="mt-1 text-sm text-slate-500">{classLabel(classMeta)}</p>
 
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
-                onClick={() => router.push("/teacher/classes")}
-              >
-                Voltar
-              </button>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm"
+              onClick={() => router.push("/teacher/classes")}
+            >
+              Voltar
+            </button>
 
-              <button
-                type="button"
-                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
-                onClick={load}
-              >
-                Recarregar
-              </button>
+            <button
+              type="button"
+              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm"
+              onClick={load}
+            >
+              Recarregar
+            </button>
 
-              <button
-                type="button"
-                className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
-                onClick={() => router.push(`/teacher/classes/${classId}/attendance`)}
-              >
-                Chamada
-              </button>
+            <button
+              type="button"
+              className="rounded-2xl bg-slate-900 px-4 py-2 text-sm text-white"
+              onClick={() => router.push(`/teacher/classes/${classId}/attendance`)}
+            >
+              Chamada
+            </button>
 
-              <button
-                type="button"
-                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
-                onClick={() => router.push(`/teacher/classes/${classId}/diary`)}
-              >
-                Diário pedagógico
-              </button>
+            <button
+              type="button"
+              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm"
+              onClick={() => router.push(`/teacher/classes/${classId}/diary`)}
+            >
+              Diário pedagógico
+            </button>
 
-              <button
-                type="button"
-                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
-                onClick={() => router.push(`/teacher/classes/${classId}/grades`)}
-              >
-                Notas
-              </button>
-            </div>
+            <button
+              type="button"
+              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm"
+              onClick={() => router.push(`/teacher/classes/${classId}/grades`)}
+            >
+              Notas
+            </button>
           </div>
         </section>
 
@@ -299,7 +256,6 @@ export default function TeacherClassStudentsPage() {
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Total de alunos
             </div>
-
             <div className="mt-3 text-3xl font-semibold text-slate-900">
               {totalStudents}
             </div>
@@ -309,7 +265,6 @@ export default function TeacherClassStudentsPage() {
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Série
             </div>
-
             <div className="mt-3 text-sm font-medium text-slate-900">
               {classMeta?.grade || "—"}
             </div>
@@ -319,7 +274,6 @@ export default function TeacherClassStudentsPage() {
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Turno
             </div>
-
             <div className="mt-3 text-sm font-medium text-slate-900">
               {classMeta?.shift || "—"}
             </div>
@@ -328,10 +282,7 @@ export default function TeacherClassStudentsPage() {
 
         <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
-            <h2 className="text-lg font-semibold text-slate-900">
-              Lista de alunos
-            </h2>
-
+            <h2 className="text-lg font-semibold text-slate-900">Lista de alunos</h2>
             <p className="mt-1 text-sm text-slate-500">
               Relação atual de alunos ativos vinculados a esta turma.
             </p>
@@ -350,7 +301,6 @@ export default function TeacherClassStudentsPage() {
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Aluno
                       </th>
-
                       <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Matrícula
                       </th>
@@ -359,25 +309,13 @@ export default function TeacherClassStudentsPage() {
 
                   <tbody>
                     {students.map((student) => (
-                      <tr
-                        key={student.student_id}
-                        className="border-t border-slate-200 transition hover:bg-slate-50/70"
-                      >
+                      <tr key={student.student_id} className="border-t border-slate-200">
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
                             <StudentAvatar student={student} />
 
-                            <div>
-                              <div className="font-medium text-slate-900">
-                                {student.full_name || "—"}
-                              </div>
-
-                              <div className="mt-1 text-xs text-slate-400">
-                                ID:{" "}
-                                <span className="font-mono">
-                                  {student.student_id}
-                                </span>
-                              </div>
+                            <div className="font-medium text-slate-900">
+                              {student.full_name || "—"}
                             </div>
                           </div>
                         </td>
@@ -395,22 +333,18 @@ export default function TeacherClassStudentsPage() {
                 {students.map((student) => (
                   <div
                     key={student.student_id}
-                    className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+                    className="rounded-2xl border border-slate-200 p-4"
                   >
                     <div className="flex items-center gap-3">
                       <StudentAvatar student={student} />
 
-                      <div className="min-w-0">
+                      <div>
                         <div className="font-medium text-slate-900">
                           {student.full_name || "—"}
                         </div>
 
-                        <div className="mt-1 text-sm text-slate-500">
+                        <div className="text-sm text-slate-500">
                           Matrícula: {student.registration_number || "—"}
-                        </div>
-
-                        <div className="mt-1 break-all text-xs text-slate-400">
-                          ID: {student.student_id}
                         </div>
                       </div>
                     </div>

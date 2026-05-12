@@ -21,22 +21,6 @@ function normRole(role: any) {
   return String(role || "").trim().toLowerCase();
 }
 
-function pickStudentPhotoUrl(student: any) {
-  const possible =
-    student?.photo_url ||
-    student?.photoUrl ||
-    student?.avatar_url ||
-    student?.avatarUrl ||
-    student?.image_url ||
-    student?.imageUrl ||
-    student?.profile_photo_url ||
-    student?.profilePhotoUrl ||
-    null;
-
-  const safe = String(possible || "").trim();
-  return safe || null;
-}
-
 export async function GET(req: Request) {
   try {
     const token = getBearerToken(req);
@@ -101,10 +85,7 @@ export async function GET(req: Request) {
           id,
           full_name,
           registration_number,
-          photo_url,
-          avatar_url,
-          image_url,
-          profile_photo_url
+          photo_url
         )
       `)
       .eq("school_id", schoolId)
@@ -116,13 +97,14 @@ export async function GET(req: Request) {
     const students = (data || [])
       .map((row: any) => {
         const student = row.students || {};
+        const photoUrl = String(student?.photo_url || "").trim() || null;
 
         return {
           student_id: String(row.student_id || student?.id || "").trim(),
           full_name: student?.full_name ?? null,
           registration_number: student?.registration_number ?? null,
-          photo_url: pickStudentPhotoUrl(student),
-          photoUrl: pickStudentPhotoUrl(student),
+          photo_url: photoUrl,
+          photoUrl,
         };
       })
       .filter((row: any) => row.student_id)
