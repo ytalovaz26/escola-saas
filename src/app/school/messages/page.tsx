@@ -10,10 +10,14 @@ type AudienceType =
   | "class"
   | "teachers"
   | "teachers_class"
+  | "teacher_class"
   | "teacher_individual"
   | "coordinators"
+  | "coordinator_individual"
   | "secretaria"
   | "staff";
+
+type RecipientStatus = "sent" | "delivered" | "read" | "pending";
 
 type ClassRow = {
   id: string;
@@ -34,6 +38,21 @@ type MessageStats = {
   delivered: number;
   read: number;
   pending: number;
+};
+
+type RecipientRow = {
+  id: string;
+  recipientType: "parent" | "staff" | string;
+  recipientId: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  role: string | null;
+  roleLabel: string;
+  deliveredAt: string | null;
+  readAt: string | null;
+  createdAt: string | null;
+  status: RecipientStatus;
 };
 
 type MessageRow = {
@@ -91,12 +110,34 @@ function normalizeRole(role?: string | null) {
   return r || "unknown";
 }
 
+function normalizeAudienceType(type?: string | null): AudienceType {
+  const safe = String(type || "school").trim().toLowerCase();
+
+  if (safe === "teacher_class") return "teachers_class";
+
+  const allowed = new Set([
+    "school",
+    "all_parents",
+    "class",
+    "teachers",
+    "teachers_class",
+    "teacher_individual",
+    "coordinators",
+    "coordinator_individual",
+    "secretaria",
+    "staff",
+  ]);
+
+  return allowed.has(safe) ? (safe as AudienceType) : "school";
+}
+
 function roleLabel(role?: string | null) {
   const r = normalizeRole(role);
 
   if (r === "diretor") return "Diretor";
   if (r === "coordenador") return "Coordenador";
   if (r === "secretaria") return "Secretaria";
+  if (r === "professor") return "Professor";
   if (r === "admin") return "Administrador";
 
   return "Gestão escolar";
@@ -126,10 +167,12 @@ function audienceLabel(
   selectedClass?: ClassRow | null,
   selectedTeacher?: StaffRow | null
 ) {
-  if (type === "school") return "Toda escola";
-  if (type === "all_parents") return "Todos os pais/responsáveis";
+  const safeType = normalizeAudienceType(type);
 
-  if (type === "class") {
+  if (safeType === "school") return "Toda escola";
+  if (safeType === "all_parents") return "Todos os pais/responsáveis";
+
+  if (safeType === "class") {
     if (!selectedClass) return "Responsáveis de uma turma";
 
     return `Responsáveis da turma: ${selectedClass.name}${
@@ -137,9 +180,9 @@ function audienceLabel(
     }${selectedClass.shift ? ` • ${selectedClass.shift}` : ""}`;
   }
 
-  if (type === "teachers") return "Todos os professores";
+  if (safeType === "teachers") return "Todos os professores";
 
-  if (type === "teachers_class") {
+  if (safeType === "teachers_class") {
     if (!selectedClass) return "Professores de uma turma";
 
     return `Professores da turma: ${selectedClass.name}${
@@ -147,14 +190,15 @@ function audienceLabel(
     }${selectedClass.shift ? ` • ${selectedClass.shift}` : ""}`;
   }
 
-  if (type === "teacher_individual") {
+  if (safeType === "teacher_individual") {
     if (!selectedTeacher) return "Professor individual";
     return `Professor: ${staffLabel(selectedTeacher)}`;
   }
 
-  if (type === "coordinators") return "Coordenadores";
-  if (type === "secretaria") return "Secretaria";
-  if (type === "staff") return "Toda equipe escolar";
+  if (safeType === "coordinators") return "Coordenadores";
+  if (safeType === "coordinator_individual") return "Coordenador individual";
+  if (safeType === "secretaria") return "Secretaria";
+  if (safeType === "staff") return "Toda equipe escolar";
 
   return "Toda escola";
 }
@@ -166,6 +210,24 @@ function statusLabel(status?: string | null) {
   if (safe === "draft") return "Rascunho";
 
   return safe || "—";
+}
+
+function recipientStatusLabel(status: RecipientStatus) {
+  if (status === "sent") return "Enviados";
+  if (status === "delivered") return "Entregues não visualizados";
+  if (status === "read") return "Visualizados";
+  if (status === "pending") return "Pendentes";
+
+  return "Destinatários";
+}
+
+function recipientStatusDescription(status: RecipientStatus) {
+  if (status === "sent") return "Todos os destinatários registrados para este comunicado.";
+  if (status === "delivered") {
+    return "Destinatários que receberam o comunicado, mas ainda não visualizaram.";
+  }
+  if (status === "read") return "Destinatários que já abriram o comunicado no portal.";
+  return "Destinatários que ainda não possuem registro de entrega ou leitura.";
 }
 
 function MetricCard({
@@ -196,30 +258,53 @@ function StatusPill({
   label,
   value,
   tone = "slate",
+  onClick,
 }: {
   label: string;
   value: number;
   tone?: "slate" | "blue" | "emerald" | "amber";
+  onClick?: () => void;
 }) {
   const classes = {
-    slate: "border-slate-200 bg-slate-50 text-slate-700",
-    blue: "border-blue-200 bg-blue-50 text-blue-700",
-    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    amber: "border-amber-200 bg-amber-50 text-amber-700",
+    slate: "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100",
+    blue: "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
+    amber: "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100",
   };
 
-  return (
-    <div className={`rounded-2xl border px-4 py-3 ${classes[tone]}`}>
+  const content = (
+    <>
       <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
         {label}
       </div>
       <div className="mt-1 text-xl font-semibold">{value}</div>
-    </div>
+      {onClick ? (
+        <div className="mt-1 text-[11px] font-medium opacity-70">
+          Clique para ver lista
+        </div>
+      ) : null}
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`rounded-2xl border px-4 py-3 text-left transition ${classes[tone]}`}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return <div className={`rounded-2xl border px-4 py-3 ${classes[tone]}`}>{content}</div>;
 }
 
 function AudienceHelp({ audienceType }: { audienceType: AudienceType }) {
-  if (audienceType === "school" || audienceType === "all_parents") {
+  const safeType = normalizeAudienceType(audienceType);
+
+  if (safeType === "school" || safeType === "all_parents") {
     return (
       <p className="mt-2 text-xs leading-5 text-slate-500">
         O comunicado será entregue para todos os responsáveis cadastrados na escola.
@@ -227,7 +312,7 @@ function AudienceHelp({ audienceType }: { audienceType: AudienceType }) {
     );
   }
 
-  if (audienceType === "class") {
+  if (safeType === "class") {
     return (
       <p className="mt-2 text-xs leading-5 text-slate-500">
         O comunicado será entregue apenas aos responsáveis dos alunos ativos na turma selecionada.
@@ -235,7 +320,7 @@ function AudienceHelp({ audienceType }: { audienceType: AudienceType }) {
     );
   }
 
-  if (audienceType === "teachers") {
+  if (safeType === "teachers") {
     return (
       <p className="mt-2 text-xs leading-5 text-slate-500">
         O comunicado será direcionado para todos os professores ativos da escola.
@@ -243,7 +328,7 @@ function AudienceHelp({ audienceType }: { audienceType: AudienceType }) {
     );
   }
 
-  if (audienceType === "teachers_class") {
+  if (safeType === "teachers_class") {
     return (
       <p className="mt-2 text-xs leading-5 text-slate-500">
         O comunicado será direcionado apenas aos professores vinculados à turma selecionada.
@@ -251,7 +336,7 @@ function AudienceHelp({ audienceType }: { audienceType: AudienceType }) {
     );
   }
 
-  if (audienceType === "teacher_individual") {
+  if (safeType === "teacher_individual") {
     return (
       <p className="mt-2 text-xs leading-5 text-slate-500">
         O comunicado será direcionado para um professor específico.
@@ -259,7 +344,7 @@ function AudienceHelp({ audienceType }: { audienceType: AudienceType }) {
     );
   }
 
-  if (audienceType === "coordinators") {
+  if (safeType === "coordinators") {
     return (
       <p className="mt-2 text-xs leading-5 text-slate-500">
         O comunicado será direcionado aos coordenadores ativos da escola.
@@ -267,7 +352,7 @@ function AudienceHelp({ audienceType }: { audienceType: AudienceType }) {
     );
   }
 
-  if (audienceType === "secretaria") {
+  if (safeType === "secretaria") {
     return (
       <p className="mt-2 text-xs leading-5 text-slate-500">
         O comunicado será direcionado aos usuários com perfil de secretaria.
@@ -309,6 +394,14 @@ export default function SchoolMessagesPage() {
   const [editBody, setEditBody] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const [recipientModalOpen, setRecipientModalOpen] = useState(false);
+  const [recipientModalMessage, setRecipientModalMessage] = useState<MessageRow | null>(null);
+  const [recipientModalStatus, setRecipientModalStatus] = useState<RecipientStatus>("sent");
+  const [recipientRows, setRecipientRows] = useState<RecipientRow[]>([]);
+  const [recipientSummary, setRecipientSummary] = useState<MessageStats | null>(null);
+  const [recipientLoading, setRecipientLoading] = useState(false);
+  const [recipientError, setRecipientError] = useState<string | null>(null);
 
   const teachers = useMemo(() => {
     return staff.filter((item) => normalizeRole(item.role) === "professor");
@@ -366,6 +459,7 @@ export default function SchoolMessagesPage() {
 
   function normalizeStaffRows(payload: any): StaffRow[] {
     const rawRows =
+      payload?.selectableStaff ||
       payload?.staff ||
       payload?.users ||
       payload?.teachers ||
@@ -451,6 +545,11 @@ export default function SchoolMessagesPage() {
     }
 
     setMessages((json.messages || []) as MessageRow[]);
+
+    const rows = normalizeStaffRows(json);
+    if (rows.length > 0) {
+      setStaff(rows);
+    }
   }
 
   async function loadPage() {
@@ -534,11 +633,13 @@ export default function SchoolMessagesPage() {
   }
 
   function resetAudienceTargets(next: AudienceType) {
-    if (next !== "class" && next !== "teachers_class") {
+    const safeNext = normalizeAudienceType(next);
+
+    if (safeNext !== "class" && safeNext !== "teachers_class") {
       setTargetClassId("");
     }
 
-    if (next !== "teacher_individual") {
+    if (safeNext !== "teacher_individual") {
       setTargetTeacherUserId("");
     }
   }
@@ -554,12 +655,14 @@ export default function SchoolMessagesPage() {
       return;
     }
 
-    if ((audienceType === "class" || audienceType === "teachers_class") && !targetClassId) {
+    const safeAudienceType = normalizeAudienceType(audienceType);
+
+    if ((safeAudienceType === "class" || safeAudienceType === "teachers_class") && !targetClassId) {
       setError("Selecione a turma para enviar o comunicado.");
       return;
     }
 
-    if (audienceType === "teacher_individual" && !targetTeacherUserId) {
+    if (safeAudienceType === "teacher_individual" && !targetTeacherUserId) {
       setError("Selecione o professor para enviar o comunicado individual.");
       return;
     }
@@ -572,10 +675,12 @@ export default function SchoolMessagesPage() {
       const token = await getAccessToken();
 
       const selectedTeacherId =
-        audienceType === "teacher_individual" ? targetTeacherUserId : null;
+        safeAudienceType === "teacher_individual" ? targetTeacherUserId : null;
 
       const selectedClassId =
-        audienceType === "class" || audienceType === "teachers_class" ? targetClassId : null;
+        safeAudienceType === "class" || safeAudienceType === "teachers_class"
+          ? targetClassId
+          : null;
 
       const res = await fetch("/api/school/messages/create", {
         method: "POST",
@@ -587,8 +692,8 @@ export default function SchoolMessagesPage() {
         body: JSON.stringify({
           title: title.trim(),
           body: body.trim(),
-          audienceType,
-          audience_type: audienceType,
+          audienceType: safeAudienceType,
+          audience_type: safeAudienceType,
 
           targetClassId: selectedClassId,
           target_class_id: selectedClassId,
@@ -738,6 +843,53 @@ export default function SchoolMessagesPage() {
     }
   }
 
+  async function openRecipients(message: MessageRow, status: RecipientStatus) {
+    try {
+      setRecipientModalOpen(true);
+      setRecipientModalMessage(message);
+      setRecipientModalStatus(status);
+      setRecipientRows([]);
+      setRecipientSummary(null);
+      setRecipientLoading(true);
+      setRecipientError(null);
+
+      const token = await getAccessToken();
+
+      const res = await fetch(`/api/school/messages/${message.id}/recipients?status=${status}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setRecipientError(json?.error || "Erro ao carregar destinatários.");
+        return;
+      }
+
+      setRecipientRows((json.recipients || []) as RecipientRow[]);
+      setRecipientSummary((json.summary || null) as MessageStats | null);
+    } catch (e: any) {
+      setRecipientError(e?.message || "Erro inesperado ao carregar destinatários.");
+    } finally {
+      setRecipientLoading(false);
+    }
+  }
+
+  function closeRecipients() {
+    setRecipientModalOpen(false);
+    setRecipientModalMessage(null);
+    setRecipientRows([]);
+    setRecipientSummary(null);
+    setRecipientLoading(false);
+    setRecipientError(null);
+  }
+
+  async function changeRecipientStatus(status: RecipientStatus) {
+    if (!recipientModalMessage?.id) return;
+    await openRecipients(recipientModalMessage, status);
+  }
+
   if (loading) {
     return (
       <main className="space-y-6">
@@ -874,7 +1026,7 @@ export default function SchoolMessagesPage() {
                 className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
                 value={audienceType}
                 onChange={(e) => {
-                  const next = e.target.value as AudienceType;
+                  const next = normalizeAudienceType(e.target.value);
                   setAudienceType(next);
                   resetAudienceTargets(next);
                 }}
@@ -1011,7 +1163,8 @@ export default function SchoolMessagesPage() {
           </h2>
 
           <p className="mt-1 text-sm leading-6 text-slate-500">
-            O painel mostra se o comunicado foi enviado, entregue e visualizado.
+            O painel mostra se o comunicado foi enviado, entregue e visualizado. Nos comunicados
+            publicados, cada card de status é clicável e mostra a lista nominal.
           </p>
 
           <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -1109,7 +1262,7 @@ export default function SchoolMessagesPage() {
                           <span className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
                             {message.audienceLabel ||
                               audienceLabel(
-                                (message.audience_type as AudienceType) || "school",
+                                normalizeAudienceType(message.audience_type),
                                 classInfo
                               )}
                           </span>
@@ -1161,10 +1314,30 @@ export default function SchoolMessagesPage() {
 
                       <div className="w-full xl:w-[360px]">
                         <div className="grid grid-cols-2 gap-3">
-                          <StatusPill label="Enviado" value={stats.sent} tone="blue" />
-                          <StatusPill label="Entregue" value={stats.delivered} tone="emerald" />
-                          <StatusPill label="Visualizado" value={stats.read} tone="slate" />
-                          <StatusPill label="Pendente" value={stats.pending} tone="amber" />
+                          <StatusPill
+                            label="Enviado"
+                            value={stats.sent}
+                            tone="blue"
+                            onClick={() => openRecipients(message, "sent")}
+                          />
+                          <StatusPill
+                            label="Entregue"
+                            value={stats.delivered}
+                            tone="emerald"
+                            onClick={() => openRecipients(message, "delivered")}
+                          />
+                          <StatusPill
+                            label="Visualizado"
+                            value={stats.read}
+                            tone="slate"
+                            onClick={() => openRecipients(message, "read")}
+                          />
+                          <StatusPill
+                            label="Pendente"
+                            value={stats.pending}
+                            tone="amber"
+                            onClick={() => openRecipients(message, "pending")}
+                          />
                         </div>
 
                         <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-500">
@@ -1260,6 +1433,193 @@ export default function SchoolMessagesPage() {
                   {savingEdit ? "Salvando..." : "Salvar alterações"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {recipientModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-4">
+          <div className="my-8 w-full max-w-5xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
+            <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-6 text-white">
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0">
+                  <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
+                    Lista de destinatários
+                  </div>
+
+                  <h2 className="mt-3 text-2xl font-semibold">
+                    {recipientStatusLabel(recipientModalStatus)}
+                  </h2>
+
+                  <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-200">
+                    {recipientStatusDescription(recipientModalStatus)}
+                  </p>
+
+                  {recipientModalMessage ? (
+                    <div className="mt-3 text-sm text-slate-200">
+                      Comunicado:{" "}
+                      <span className="font-semibold">{recipientModalMessage.title}</span>
+                    </div>
+                  ) : null}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeRecipients}
+                  className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+
+            <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-5">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <button
+                  type="button"
+                  onClick={() => changeRecipientStatus("sent")}
+                  disabled={recipientLoading}
+                  className={[
+                    "rounded-2xl border px-4 py-3 text-left transition",
+                    recipientModalStatus === "sent"
+                      ? "border-blue-300 bg-blue-50 text-blue-700"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
+                    Enviado
+                  </div>
+                  <div className="mt-1 text-xl font-semibold">
+                    {recipientSummary?.sent ?? "—"}
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => changeRecipientStatus("delivered")}
+                  disabled={recipientLoading}
+                  className={[
+                    "rounded-2xl border px-4 py-3 text-left transition",
+                    recipientModalStatus === "delivered"
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
+                    Entregue
+                  </div>
+                  <div className="mt-1 text-xl font-semibold">
+                    {recipientSummary?.delivered ?? "—"}
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => changeRecipientStatus("read")}
+                  disabled={recipientLoading}
+                  className={[
+                    "rounded-2xl border px-4 py-3 text-left transition",
+                    recipientModalStatus === "read"
+                      ? "border-slate-400 bg-slate-100 text-slate-800"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
+                    Visualizado
+                  </div>
+                  <div className="mt-1 text-xl font-semibold">
+                    {recipientSummary?.read ?? "—"}
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => changeRecipientStatus("pending")}
+                  disabled={recipientLoading}
+                  className={[
+                    "rounded-2xl border px-4 py-3 text-left transition",
+                    recipientModalStatus === "pending"
+                      ? "border-amber-300 bg-amber-50 text-amber-700"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                  ].join(" ")}
+                >
+                  <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
+                    Pendente
+                  </div>
+                  <div className="mt-1 text-xl font-semibold">
+                    {recipientSummary?.pending ?? "—"}
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 md:p-6">
+              {recipientError ? (
+                <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  {recipientError}
+                </div>
+              ) : null}
+
+              {recipientLoading ? (
+                <div className="space-y-3">
+                  <div className="h-16 animate-pulse rounded-3xl bg-slate-100" />
+                  <div className="h-16 animate-pulse rounded-3xl bg-slate-100" />
+                  <div className="h-16 animate-pulse rounded-3xl bg-slate-100" />
+                </div>
+              ) : recipientRows.length === 0 ? (
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-600">
+                  Nenhum destinatário encontrado para este status.
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-3xl border border-slate-200">
+                  <div className="hidden grid-cols-[1.2fr_0.7fr_0.8fr_0.8fr] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-400 md:grid">
+                    <div>Destinatário</div>
+                    <div>Tipo</div>
+                    <div>Entregue em</div>
+                    <div>Visualizado em</div>
+                  </div>
+
+                  <div className="divide-y divide-slate-200">
+                    {recipientRows.map((recipient) => (
+                      <div
+                        key={recipient.id}
+                        className="grid grid-cols-1 gap-3 px-4 py-4 text-sm md:grid-cols-[1.2fr_0.7fr_0.8fr_0.8fr]"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-900">
+                            {recipient.name || "Destinatário"}
+                          </div>
+
+                          <div className="mt-1 text-xs text-slate-500">
+                            {recipient.email || recipient.phone || recipient.recipientId}
+                          </div>
+                        </div>
+
+                        <div>
+                          <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+                            {recipient.roleLabel || recipient.recipientType}
+                          </span>
+                        </div>
+
+                        <div className="text-xs leading-5 text-slate-600 md:text-sm">
+                          <span className="font-semibold text-slate-400 md:hidden">
+                            Entregue em:{" "}
+                          </span>
+                          {formatDateTimeBR(recipient.deliveredAt)}
+                        </div>
+
+                        <div className="text-xs leading-5 text-slate-600 md:text-sm">
+                          <span className="font-semibold text-slate-400 md:hidden">
+                            Visualizado em:{" "}
+                          </span>
+                          {formatDateTimeBR(recipient.readAt)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
