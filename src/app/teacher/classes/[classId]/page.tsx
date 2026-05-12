@@ -52,12 +52,27 @@ function classLabel(c?: ClassMeta | null) {
   return parts.join(" • ") || c.id;
 }
 
-function StudentAvatar({ student }: { student: StudentRow }) {
-  const photoUrl = String(student.photo_url || student.photoUrl || "").trim();
+function getStudentPhotoUrl(student: StudentRow) {
+  return String(student.photo_url || student.photoUrl || "").trim();
+}
+
+function StudentAvatar({
+  student,
+  onOpenPhoto,
+}: {
+  student: StudentRow;
+  onOpenPhoto: (student: StudentRow) => void;
+}) {
+  const photoUrl = getStudentPhotoUrl(student);
 
   if (photoUrl) {
     return (
-      <div className="h-12 w-12 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
+      <button
+        type="button"
+        onClick={() => onOpenPhoto(student)}
+        className="group h-12 w-12 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 transition hover:scale-105 hover:ring-4 hover:ring-slate-200"
+        title="Clique para ampliar a foto"
+      >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={photoUrl}
@@ -69,13 +84,66 @@ function StudentAvatar({ student }: { student: StudentRow }) {
             target.style.display = "none";
           }}
         />
-      </div>
+      </button>
     );
   }
 
   return (
     <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-sm font-semibold text-slate-700">
       {initials(student.full_name)}
+    </div>
+  );
+}
+
+function StudentPhotoModal({
+  student,
+  onClose,
+}: {
+  student: StudentRow;
+  onClose: () => void;
+}) {
+  const photoUrl = getStudentPhotoUrl(student);
+
+  if (!photoUrl) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-3xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 p-5">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Foto do aluno
+            </div>
+
+            <h2 className="mt-1 truncate text-xl font-semibold text-slate-900">
+              {student.full_name || "Aluno"}
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-500">
+              Matrícula: {student.registration_number || "—"}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            Fechar
+          </button>
+        </div>
+
+        <div className="bg-slate-100 p-4">
+          <div className="flex max-h-[75vh] items-center justify-center overflow-hidden rounded-[24px] bg-white">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={photoUrl}
+              alt={student.full_name || "Foto do aluno"}
+              className="max-h-[75vh] w-full object-contain"
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -90,6 +158,7 @@ export default function TeacherClassStudentsPage() {
 
   const [classMeta, setClassMeta] = useState<ClassMeta | null>(null);
   const [students, setStudents] = useState<StudentRow[]>([]);
+  const [selectedPhotoStudent, setSelectedPhotoStudent] = useState<StudentRow | null>(null);
 
   const totalStudents = useMemo(() => students.length, [students]);
 
@@ -160,6 +229,20 @@ export default function TeacherClassStudentsPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classId]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSelectedPhotoStudent(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   if (loading) {
     return <main className="p-6">Carregando turma...</main>;
@@ -312,7 +395,10 @@ export default function TeacherClassStudentsPage() {
                       <tr key={student.student_id} className="border-t border-slate-200">
                         <td className="px-5 py-4">
                           <div className="flex items-center gap-3">
-                            <StudentAvatar student={student} />
+                            <StudentAvatar
+                              student={student}
+                              onOpenPhoto={setSelectedPhotoStudent}
+                            />
 
                             <div className="font-medium text-slate-900">
                               {student.full_name || "—"}
@@ -336,7 +422,10 @@ export default function TeacherClassStudentsPage() {
                     className="rounded-2xl border border-slate-200 p-4"
                   >
                     <div className="flex items-center gap-3">
-                      <StudentAvatar student={student} />
+                      <StudentAvatar
+                        student={student}
+                        onOpenPhoto={setSelectedPhotoStudent}
+                      />
 
                       <div>
                         <div className="font-medium text-slate-900">
@@ -355,6 +444,13 @@ export default function TeacherClassStudentsPage() {
           )}
         </section>
       </div>
+
+      {selectedPhotoStudent ? (
+        <StudentPhotoModal
+          student={selectedPhotoStudent}
+          onClose={() => setSelectedPhotoStudent(null)}
+        />
+      ) : null}
     </main>
   );
 }
