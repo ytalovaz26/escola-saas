@@ -273,6 +273,55 @@ function TextAreaInput({
   );
 }
 
+function StudentAvatar({
+  name,
+  photoUrl,
+  size = "md",
+  onOpen,
+}: {
+  name: string;
+  photoUrl?: string | null;
+  size?: "md" | "lg";
+  onOpen?: () => void;
+}) {
+  const sizeClass = size === "lg" ? "h-24 w-24 text-2xl" : "h-14 w-14 text-sm";
+
+  if (photoUrl) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        className={[
+          "group relative shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100 shadow-sm transition hover:scale-[1.03] hover:shadow-md",
+          sizeClass,
+        ].join(" ")}
+        title="Clique para ampliar a foto"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={photoUrl}
+          alt={`Foto de ${name}`}
+          className="h-full w-full object-cover"
+        />
+        <span className="absolute inset-0 hidden items-center justify-center bg-slate-950/35 text-[10px] font-semibold text-white group-hover:flex">
+          Ver
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className={[
+        "flex shrink-0 items-center justify-center rounded-full bg-slate-900 font-bold text-white shadow-sm",
+        sizeClass,
+      ].join(" ")}
+    >
+      {initials(name)}
+    </div>
+  );
+}
+
 export default function StudentsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -308,6 +357,11 @@ export default function StudentsPage() {
   const [extraForm, setExtraForm] = useState<StudentExtraForm>(emptyExtraForm());
   const [savingExtra, setSavingExtra] = useState(false);
   const [extraMessage, setExtraMessage] = useState<string | null>(null);
+
+  const [photoPreview, setPhotoPreview] = useState<{
+    url: string;
+    name: string;
+  } | null>(null);
 
   const activeMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1044,7 +1098,8 @@ export default function StudentsPage() {
         </div>
 
         <div className="mt-4 text-sm text-slate-500">
-          Exibindo <span className="font-semibold text-slate-800">{filtered.length}</span> aluno(s).
+          Exibindo <span className="font-semibold text-slate-800">{filtered.length}</span>{" "}
+          aluno(s).
         </div>
       </section>
 
@@ -1063,26 +1118,26 @@ export default function StudentsPage() {
                   className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between"
                 >
                   <div className="flex items-center gap-4">
-                    {s.student_photo_url ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={s.student_photo_url}
-                        alt="Foto do aluno"
-                        className="h-12 w-12 rounded-full border border-slate-200 object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-900 text-white">
-                        {initials(s.full_name)}
-                      </div>
-                    )}
+                    <StudentAvatar
+                      name={s.full_name}
+                      photoUrl={s.student_photo_url}
+                      onOpen={() => {
+                        if (s.student_photo_url) {
+                          setPhotoPreview({
+                            url: s.student_photo_url,
+                            name: s.full_name,
+                          });
+                        }
+                      }}
+                    />
 
                     <div>
                       <div className="font-semibold">{s.full_name}</div>
                       <div className="text-xs text-slate-500">
-                        {s.registration_number || "Sem matrícula"}
+                        Matrícula: {s.registration_number || "Sem matrícula"}
                       </div>
                       <div className="mt-1 text-xs text-slate-500">
-                        {cls?.name || "Sem turma"}
+                        Turma: {cls?.name || "Sem turma"}
                       </div>
                     </div>
                   </div>
@@ -1144,18 +1199,19 @@ export default function StudentsPage() {
             <div className="bg-gradient-to-r from-slate-900 to-slate-700 px-6 py-6 text-white">
               <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center">
-                  {selectedStudentPhotoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={selectedStudentPhotoUrl}
-                      alt="Foto do aluno"
-                      className="h-24 w-24 rounded-full border border-white/20 object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-24 w-24 items-center justify-center rounded-full border border-white/20 bg-white/10 text-2xl font-bold">
-                      {initials(field(selectedProfile.student.fullName))}
-                    </div>
-                  )}
+                  <StudentAvatar
+                    name={field(selectedProfile.student.fullName)}
+                    photoUrl={selectedStudentPhotoUrl}
+                    size="lg"
+                    onOpen={() => {
+                      if (selectedStudentPhotoUrl) {
+                        setPhotoPreview({
+                          url: selectedStudentPhotoUrl,
+                          name: field(selectedProfile.student.fullName),
+                        });
+                      }
+                    }}
+                  />
 
                   <div>
                     <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
@@ -1186,7 +1242,8 @@ export default function StudentsPage() {
                   <div>
                     <h3 className="text-lg font-semibold text-slate-900">Foto e documentos</h3>
                     <p className="mt-1 text-sm text-slate-500">
-                      A direção pode atualizar a foto, preencher dados complementares e gerar documentos oficiais.
+                      A direção pode atualizar a foto, preencher dados complementares e gerar
+                      documentos oficiais.
                     </p>
                   </div>
 
@@ -1255,8 +1312,14 @@ export default function StudentsPage() {
                 <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                   <InfoBox label="Nome completo" value={selectedProfile.student.fullName} />
                   <InfoBox label="Matrícula" value={selectedProfile.student.registrationNumber} />
-                  <InfoBox label="Nascimento" value={formatDateBR(selectedProfile.student.birthDate)} />
-                  <InfoBox label="Cadastro" value={formatDateTimeBR(selectedProfile.student.createdAt)} />
+                  <InfoBox
+                    label="Nascimento"
+                    value={formatDateBR(selectedProfile.student.birthDate)}
+                  />
+                  <InfoBox
+                    label="Cadastro"
+                    value={formatDateTimeBR(selectedProfile.student.createdAt)}
+                  />
                 </div>
               </section>
 
@@ -1492,14 +1555,29 @@ export default function StudentsPage() {
                       >
                         <div className="flex flex-col gap-4 md:flex-row md:items-start">
                           {parent.photoUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={parent.photoUrl}
-                              alt="Foto do responsável"
-                              className="h-16 w-16 rounded-full border border-slate-200 object-cover"
-                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPhotoPreview({
+                                  url: parent.photoUrl as string,
+                                  name: field(parent.fullName),
+                                })
+                              }
+                              className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100"
+                              title="Clique para ampliar a foto"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={parent.photoUrl}
+                                alt="Foto do responsável"
+                                className="h-full w-full object-cover"
+                              />
+                              <span className="absolute inset-0 hidden items-center justify-center bg-slate-950/35 text-[10px] font-semibold text-white group-hover:flex">
+                                Ver
+                              </span>
+                            </button>
                           ) : (
-                            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">
+                            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">
                               {initialsFromName(parent.fullName)}
                             </div>
                           )}
@@ -1544,6 +1622,40 @@ export default function StudentsPage() {
                   </div>
                 )}
               </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {photoPreview ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 p-4">
+          <div className="w-full max-w-3xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
+            <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Visualização da foto
+                </div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {photoPreview.name}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setPhotoPreview(null)}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="bg-slate-100 p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={photoPreview.url}
+                alt={photoPreview.name}
+                className="max-h-[75vh] w-full rounded-3xl object-contain"
+              />
             </div>
           </div>
         </div>
