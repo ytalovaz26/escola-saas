@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Branding = {
@@ -11,6 +11,34 @@ type Branding = {
   logoUrl: string | null;
   primaryColor: string | null;
 };
+
+type NavItem = {
+  label: string;
+  href: string;
+  icon: string;
+  description: string;
+};
+
+const navItems: NavItem[] = [
+  {
+    label: "Início",
+    href: "/teacher",
+    icon: "🏠",
+    description: "Resumo da rotina docente",
+  },
+  {
+    label: "Turmas",
+    href: "/teacher/classes",
+    icon: "🏫",
+    description: "Alunos, chamada e diário",
+  },
+  {
+    label: "Comunicados",
+    href: "/teacher/messages",
+    icon: "📩",
+    description: "Avisos oficiais da escola",
+  },
+];
 
 function normalizeHexColor(c?: string | null) {
   const s = (c || "").trim();
@@ -24,7 +52,10 @@ function hexToRgbTriplet(hex: string) {
   const h = hex.replace("#", "");
   const full =
     h.length === 3
-      ? h.split("").map((c) => c + c).join("")
+      ? h
+          .split("")
+          .map((c) => c + c)
+          .join("")
       : h.length === 6
         ? h
         : "2563eb";
@@ -36,17 +67,38 @@ function hexToRgbTriplet(hex: string) {
   return `${r} ${g} ${b}`;
 }
 
+function getInitials(name?: string | null) {
+  const safe = String(name || "").trim();
+  if (!safe) return "PE";
+
+  const parts = safe.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+}
+
+function isActive(pathname: string, href: string) {
+  if (href === "/teacher") return pathname === "/teacher";
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 export default function TeacherLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
+
   const [branding, setBranding] = useState<Branding | null>(null);
+  const [loadingBranding, setLoadingBranding] = useState(true);
 
   useEffect(() => {
     let alive = true;
 
     async function loadBranding() {
       try {
+        setLoadingBranding(true);
+
         const { data } = await supabase.auth.getSession();
         const token = data.session?.access_token;
+
         if (!token) return;
 
         const res = await fetch("/api/branding", {
@@ -55,28 +107,40 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
         });
 
         const json = (await res.json().catch(() => null)) as any;
+
         if (!alive) return;
 
-        if (res.ok && json?.ok) setBranding(json);
+        if (res.ok && json?.ok) {
+          setBranding(json);
+        }
       } catch {
-        // não quebra o app
+        // não quebra o portal do professor
+      } finally {
+        if (alive) setLoadingBranding(false);
       }
     }
 
     loadBranding();
+
     return () => {
       alive = false;
     };
   }, [pathname]);
 
-  const schoolLabel = branding?.name || (branding?.schoolId ? `Escola ${branding.schoolId}` : "—");
+  const schoolLabel = branding?.name || (branding?.schoolId ? `Escola ${branding.schoolId}` : "Portal do Professor");
+  const logoUrl = branding?.logoUrl || null;
 
   const primary = useMemo(() => normalizeHexColor(branding?.primaryColor), [branding?.primaryColor]);
   const brandRgb = useMemo(() => hexToRgbTriplet(primary), [primary]);
 
+  async function logout() {
+    await supabase.auth.signOut();
+    router.replace("/login");
+  }
+
   return (
     <div
-      className="min-h-screen bg-slate-50 text-slate-900"
+      className="min-h-screen bg-[#f3f6fb] text-slate-900"
       style={
         {
           ["--brand-rgb" as any]: brandRgb,
@@ -84,41 +148,213 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
         } as React.CSSProperties
       }
     >
-      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
-          <div className="brand-logo-wrap">
-            {branding?.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={branding.logoUrl}
-                alt="Logo"
-                className="brand-logo-img"
-                draggable={false}
-              />
-            ) : (
-              <div className="h-full w-full bg-slate-100" />
-            )}
-          </div>
-
-          <div className="min-w-0">
-            <div className="text-sm font-semibold leading-tight">Portal do Professor</div>
-            <div className="text-xs text-slate-600 truncate">{schoolLabel}</div>
-          </div>
-
-          <div className="ml-auto hidden sm:flex items-center gap-2">
-            <span className="text-xs text-slate-500">Agenda & Financeiro Escolar</span>
-          </div>
-        </div>
-
+      <div className="fixed inset-0 -z-10 overflow-hidden">
         <div
-          className="h-[3px] w-full"
-          style={{
-            background: "linear-gradient(90deg, rgb(var(--brand-rgb)) 0%, rgba(0,0,0,0) 80%)",
-          }}
+          className="absolute -left-32 -top-32 h-96 w-96 rounded-full opacity-20 blur-3xl"
+          style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
         />
-      </header>
+        <div className="absolute right-0 top-40 h-[420px] w-[420px] rounded-full bg-slate-300/30 blur-3xl" />
+        <div className="absolute bottom-0 left-1/3 h-96 w-96 rounded-full bg-white blur-3xl" />
+      </div>
 
-      <main className="max-w-6xl mx-auto px-4 py-5">{children}</main>
+      <div className="flex min-h-screen">
+        <aside className="hidden w-[310px] shrink-0 border-r border-white/70 bg-white/80 backdrop-blur-xl xl:flex">
+          <div className="flex w-full flex-col">
+            <div className="p-5">
+              <button
+                type="button"
+                onClick={() => router.push("/teacher")}
+                className="flex w-full items-center gap-3 rounded-[28px] border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:shadow-md"
+              >
+                {logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={logoUrl}
+                    alt={schoolLabel}
+                    className="h-16 w-16 rounded-3xl border border-slate-200 bg-white object-contain p-2"
+                    draggable={false}
+                  />
+                ) : (
+                  <div
+                    className="flex h-16 w-16 items-center justify-center rounded-3xl text-base font-bold text-white shadow-sm"
+                    style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
+                  >
+                    {getInitials(schoolLabel)}
+                  </div>
+                )}
+
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                    Portal docente
+                  </div>
+                  <div className="mt-1 truncate text-base font-semibold text-slate-900">
+                    {schoolLabel}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-slate-500">
+                    Área do Professor
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            <div className="flex-1 px-4 pb-4">
+              <div className="rounded-[32px] border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Navegação
+                </div>
+
+                <nav className="space-y-1">
+                  {navItems.map((item) => {
+                    const active = isActive(pathname, item.href);
+
+                    return (
+                      <button
+                        key={item.href}
+                        type="button"
+                        onClick={() => router.push(item.href)}
+                        className={[
+                          "group flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition",
+                          active
+                            ? "bg-slate-950 text-white shadow-sm"
+                            : "text-slate-700 hover:bg-slate-100",
+                        ].join(" ")}
+                      >
+                        <span
+                          className={[
+                            "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-lg transition",
+                            active
+                              ? "bg-white/10 text-white"
+                              : "bg-slate-100 text-slate-700 group-hover:bg-white",
+                          ].join(" ")}
+                        >
+                          {item.icon}
+                        </span>
+
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-semibold">
+                            {item.label}
+                          </span>
+                          <span
+                            className={[
+                              "mt-0.5 block truncate text-xs",
+                              active ? "text-slate-300" : "text-slate-500",
+                            ].join(" ")}
+                          >
+                            {item.description}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
+
+              <div className="mt-4 rounded-[32px] border border-slate-200 bg-slate-950 p-5 text-white shadow-sm">
+                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                  Ambiente
+                </div>
+
+                <div className="mt-3 text-lg font-semibold">Rotina docente ativa</div>
+
+                <p className="mt-2 text-sm leading-6 text-slate-300">
+                  Acesse chamadas, diário pedagógico e comunicados em um painel centralizado.
+                </p>
+
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="mt-5 w-full rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-950 transition hover:opacity-90"
+                >
+                  Sair do sistema
+                </button>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-200 p-5">
+              <div className="text-xs leading-5 text-slate-500">
+                {loadingBranding ? "Carregando identidade..." : "Sistema escolar multi-tenant"}
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-40 border-b border-white/70 bg-white/80 backdrop-blur-xl xl:hidden">
+            <div className="flex items-center gap-3 px-4 py-3">
+              {logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={logoUrl}
+                  alt={schoolLabel}
+                  className="h-12 w-12 rounded-2xl border border-slate-200 bg-white object-contain p-1.5"
+                  draggable={false}
+                />
+              ) : (
+                <div
+                  className="flex h-12 w-12 items-center justify-center rounded-2xl text-xs font-bold text-white"
+                  style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
+                >
+                  {getInitials(schoolLabel)}
+                </div>
+              )}
+
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  Portal do Professor
+                </div>
+                <div className="truncate text-sm font-semibold text-slate-900">
+                  {schoolLabel}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={logout}
+                className="ml-auto rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm"
+              >
+                Sair
+              </button>
+            </div>
+
+            <div
+              className="h-[3px] w-full"
+              style={{
+                background:
+                  "linear-gradient(90deg, rgb(var(--brand-rgb)) 0%, rgba(15,23,42,0.15) 80%)",
+              }}
+            />
+          </header>
+
+          <main className="flex-1 px-4 pb-24 pt-5 md:px-6 xl:px-8 xl:pb-8">
+            <div className="mx-auto w-full max-w-[1500px]">{children}</div>
+          </main>
+
+          <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 py-2 backdrop-blur-xl xl:hidden">
+            <div className="grid grid-cols-3 gap-2">
+              {navItems.map((item) => {
+                const active = isActive(pathname, item.href);
+
+                return (
+                  <button
+                    key={item.href}
+                    type="button"
+                    onClick={() => router.push(item.href)}
+                    className={[
+                      "flex flex-col items-center justify-center rounded-2xl px-2 py-2 text-xs transition",
+                      active
+                        ? "bg-slate-950 text-white"
+                        : "text-slate-500 hover:bg-slate-100",
+                    ].join(" ")}
+                  >
+                    <span className="text-lg">{item.icon}</span>
+                    <span className="mt-1 font-semibold">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+        </div>
+      </div>
     </div>
   );
 }

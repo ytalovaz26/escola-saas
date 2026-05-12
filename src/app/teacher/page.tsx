@@ -21,6 +21,12 @@ type MeOk = {
 
 type MeResp = MeOk | { ok: false; error?: string };
 
+type MessagesSummary = {
+  total: number;
+  unread: number;
+  read: number;
+};
+
 async function fetchMeWithToken(accessToken: string): Promise<MeResp> {
   const res = await fetch("/api/me", {
     method: "GET",
@@ -31,84 +37,232 @@ async function fetchMeWithToken(accessToken: string): Promise<MeResp> {
   return res.json();
 }
 
-function SummaryCard({
+function formatTodayBR() {
+  return new Date().toLocaleDateString("pt-BR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+  });
+}
+
+function getPeriodGreeting() {
+  const hour = new Date().getHours();
+
+  if (hour < 12) return "Bom dia";
+  if (hour < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
+function firstNameFromEmailOrId(value?: string | null) {
+  const safe = String(value || "").trim();
+  if (!safe) return "professor";
+
+  const beforeAt = safe.split("@")[0] || safe;
+  const first = beforeAt.split(/[.\-_ ]+/).filter(Boolean)[0] || beforeAt;
+
+  return first.charAt(0).toUpperCase() + first.slice(1);
+}
+
+function getInitials(name?: string | null) {
+  const safe = String(name || "").trim();
+  if (!safe) return "PR";
+
+  const parts = safe.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+}
+
+function StatCard({
   label,
   value,
   help,
+  icon,
+  tone = "default",
 }: {
   label: string;
   value: string;
   help: string;
+  icon: string;
+  tone?: "default" | "brand" | "blue" | "emerald" | "amber";
 }) {
+  const toneClass =
+    tone === "brand"
+      ? "border-slate-900 bg-slate-950 text-white"
+      : tone === "blue"
+        ? "border-blue-200 bg-blue-50 text-slate-900"
+        : tone === "emerald"
+          ? "border-emerald-200 bg-emerald-50 text-slate-900"
+          : tone === "amber"
+            ? "border-amber-200 bg-amber-50 text-slate-900"
+            : "border-slate-200 bg-white text-slate-900";
+
   return (
-    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-        {label}
-      </div>
-
-      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
-        {value}
-      </div>
-
-      <div className="mt-2 text-sm leading-6 text-slate-500">{help}</div>
-    </div>
-  );
-}
-
-function QuickLink({
-  href,
-  title,
-  description,
-  primary = false,
-}: {
-  href: string;
-  title: string;
-  description: string;
-  primary?: boolean;
-}) {
-  return (
-    <Link
-      href={href}
-      className={[
-        "group rounded-[28px] border p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
-        primary
-          ? "border-slate-900 bg-slate-900 text-white"
-          : "border-slate-200 bg-white text-slate-900",
-      ].join(" ")}
-    >
+    <div className={`rounded-[32px] border p-5 shadow-sm ${toneClass}`}>
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className={primary ? "text-lg font-semibold text-white" : "text-lg font-semibold"}>
-            {title}
-          </h2>
-
-          <p
-            className={[
-              "mt-2 text-sm leading-6",
-              primary ? "text-slate-200" : "text-slate-500",
-            ].join(" ")}
-          >
-            {description}
-          </p>
+        <div
+          className={[
+            "flex h-12 w-12 items-center justify-center rounded-2xl text-xl",
+            tone === "brand" ? "bg-white/10 text-white" : "bg-white text-slate-700 shadow-sm",
+          ].join(" ")}
+        >
+          {icon}
         </div>
 
         <div
           className={[
-            "rounded-2xl px-3 py-2 text-sm",
-            primary ? "bg-white/10 text-white" : "bg-slate-100 text-slate-600",
+            "rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide",
+            tone === "brand" ? "bg-white/10 text-slate-200" : "bg-white text-slate-500 shadow-sm",
           ].join(" ")}
         >
-          →
+          {label}
         </div>
       </div>
 
       <div
         className={[
-          "mt-5 text-sm font-semibold",
-          primary ? "text-white" : "text-slate-700 group-hover:text-slate-900",
+          "mt-5 text-3xl font-semibold tracking-tight",
+          tone === "brand" ? "text-white" : "text-slate-900",
         ].join(" ")}
       >
-        Abrir agora
+        {value}
+      </div>
+
+      <div
+        className={[
+          "mt-2 text-sm leading-6",
+          tone === "brand" ? "text-slate-300" : "text-slate-500",
+        ].join(" ")}
+      >
+        {help}
+      </div>
+    </div>
+  );
+}
+
+function FeatureCard({
+  href,
+  title,
+  description,
+  icon,
+  primary = false,
+  badge,
+}: {
+  href: string;
+  title: string;
+  description: string;
+  icon: string;
+  primary?: boolean;
+  badge?: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className={[
+        "group relative overflow-hidden rounded-[34px] border p-6 shadow-sm transition hover:-translate-y-1 hover:shadow-xl",
+        primary
+          ? "border-slate-900 bg-slate-950 text-white"
+          : "border-slate-200 bg-white text-slate-900",
+      ].join(" ")}
+    >
+      {primary ? (
+        <div
+          className="absolute -right-20 -top-20 h-48 w-48 rounded-full opacity-30 blur-2xl"
+          style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
+        />
+      ) : null}
+
+      <div className="relative">
+        <div className="flex items-start justify-between gap-4">
+          <div
+            className={[
+              "flex h-14 w-14 items-center justify-center rounded-3xl text-2xl",
+              primary ? "bg-white/10 text-white" : "bg-slate-100 text-slate-700",
+            ].join(" ")}
+          >
+            {icon}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {badge ? (
+              <span
+                className={[
+                  "rounded-full px-3 py-1 text-xs font-semibold",
+                  primary ? "bg-white/10 text-white" : "bg-blue-50 text-blue-700",
+                ].join(" ")}
+              >
+                {badge}
+              </span>
+            ) : null}
+
+            <span
+              className={[
+                "rounded-2xl px-3 py-2 text-sm transition group-hover:translate-x-1",
+                primary ? "bg-white/10 text-white" : "bg-slate-100 text-slate-600",
+              ].join(" ")}
+            >
+              →
+            </span>
+          </div>
+        </div>
+
+        <h2
+          className={[
+            "mt-6 text-2xl font-semibold tracking-tight",
+            primary ? "text-white" : "text-slate-900",
+          ].join(" ")}
+        >
+          {title}
+        </h2>
+
+        <p
+          className={[
+            "mt-3 text-sm leading-7",
+            primary ? "text-slate-300" : "text-slate-500",
+          ].join(" ")}
+        >
+          {description}
+        </p>
+
+        <div
+          className={[
+            "mt-6 text-sm font-semibold",
+            primary ? "text-white" : "text-slate-800",
+          ].join(" ")}
+        >
+          Abrir módulo
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function RoutineStep({
+  number,
+  title,
+  description,
+  href,
+}: {
+  number: string;
+  title: string;
+  description: string;
+  href: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group flex gap-4 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+    >
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-sm font-semibold text-white">
+        {number}
+      </div>
+
+      <div className="min-w-0">
+        <div className="text-base font-semibold text-slate-900">{title}</div>
+        <div className="mt-1 text-sm leading-6 text-slate-500">{description}</div>
+        <div className="mt-3 text-sm font-semibold text-slate-700 group-hover:text-slate-950">
+          Acessar →
+        </div>
       </div>
     </Link>
   );
@@ -120,11 +274,7 @@ export default function TeacherHomePage() {
   const [loading, setLoading] = useState(true);
   const [me, setMe] = useState<MeOk | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [messagesSummary, setMessagesSummary] = useState<{
-    total: number;
-    unread: number;
-    read: number;
-  }>({
+  const [messagesSummary, setMessagesSummary] = useState<MessagesSummary>({
     total: 0,
     unread: 0,
     read: 0,
@@ -133,6 +283,8 @@ export default function TeacherHomePage() {
   const schoolId = me?.school?.schoolId || "";
   const schoolName = me?.branding?.brandName || "Portal do Professor";
   const logoUrl = me?.branding?.brandLogoUrl || null;
+  const userLabel = me?.user.email || me?.user.id || "Professor";
+  const professorName = firstNameFromEmailOrId(userLabel);
 
   const unreadMessagesLabel = useMemo(() => {
     if (messagesSummary.unread > 0) return `${messagesSummary.unread} novo(s)`;
@@ -225,11 +377,17 @@ export default function TeacherHomePage() {
   if (loading) {
     return (
       <main className="space-y-6">
-        <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
-          <div className="animate-pulse space-y-4">
-            <div className="h-8 w-72 rounded-xl bg-slate-200" />
-            <div className="h-4 w-96 rounded-xl bg-slate-100" />
-            <div className="h-40 rounded-[28px] bg-slate-100" />
+        <section className="overflow-hidden rounded-[36px] border border-slate-200 bg-white p-8 shadow-sm">
+          <div className="animate-pulse space-y-5">
+            <div className="h-10 w-80 rounded-2xl bg-slate-200" />
+            <div className="h-4 w-[520px] max-w-full rounded-2xl bg-slate-100" />
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+              <div className="h-36 rounded-[32px] bg-slate-100" />
+              <div className="h-36 rounded-[32px] bg-slate-100" />
+              <div className="h-36 rounded-[32px] bg-slate-100" />
+              <div className="h-36 rounded-[32px] bg-slate-100" />
+            </div>
+            <div className="h-80 rounded-[34px] bg-slate-100" />
           </div>
         </section>
       </main>
@@ -239,7 +397,7 @@ export default function TeacherHomePage() {
   if (!me) {
     return (
       <main className="flex min-h-[70vh] items-center justify-center">
-        <div className="w-full max-w-xl rounded-[28px] border border-red-200 bg-white p-8 shadow-sm">
+        <div className="w-full max-w-xl rounded-[32px] border border-red-200 bg-white p-8 shadow-sm">
           <h1 className="text-xl font-semibold text-slate-900">Portal do Professor</h1>
 
           {error ? (
@@ -263,110 +421,295 @@ export default function TeacherHomePage() {
 
   return (
     <main className="space-y-6">
-      <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-        <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-8 text-white md:px-8">
-          <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+      <section className="relative overflow-hidden rounded-[40px] border border-slate-200 bg-slate-950 p-5 text-white shadow-xl md:p-8">
+        <div
+          className="absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-30 blur-3xl"
+          style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
+        />
+        <div className="absolute -bottom-32 left-1/3 h-80 w-80 rounded-full bg-white/10 blur-3xl" />
+
+        <div className="relative grid grid-cols-1 gap-8 xl:grid-cols-[1.1fr_0.9fr] xl:items-center">
+          <div>
             <div className="flex flex-col gap-5 md:flex-row md:items-center">
               {logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={logoUrl}
                   alt="Logo da escola"
-                  className="h-24 w-24 rounded-3xl border border-white/15 bg-white/10 object-contain p-2"
+                  className="h-24 w-24 rounded-[30px] border border-white/15 bg-white/10 object-contain p-2"
                 />
               ) : (
-                <div className="flex h-24 w-24 items-center justify-center rounded-3xl border border-white/15 bg-white/10 text-sm text-slate-200">
-                  Logo
+                <div className="flex h-24 w-24 items-center justify-center rounded-[30px] border border-white/15 bg-white/10 text-2xl font-bold text-white">
+                  {getInitials(schoolName)}
                 </div>
               )}
 
               <div className="min-w-0">
                 <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
-                  Área do professor
+                  {formatTodayBR()}
                 </div>
 
-                <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
-                  Portal do Professor
+                <h1 className="mt-4 text-4xl font-semibold tracking-tight md:text-5xl">
+                  {getPeriodGreeting()}, {professorName}
                 </h1>
 
-                <p className="mt-2 text-sm text-slate-200 md:text-base">
-                  {schoolName} · {me.user.email || me.user.id}
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300 md:text-base">
+                  Este é seu painel de rotina docente. Acesse turmas, chamada, diário pedagógico
+                  e comunicados oficiais da escola em poucos cliques.
                 </p>
 
-                <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
-                  Acesse suas turmas, realize chamadas, lance diário pedagógico e acompanhe
-                  comunicados oficiais da escola.
-                </p>
-
-                <div className="mt-4 text-xs text-slate-300">
-                  Escola ID: <span className="font-mono">{schoolId || "—"}</span>
+                <div className="mt-5 flex flex-wrap gap-2 text-xs text-slate-300">
+                  <span className="rounded-full bg-white/10 px-3 py-1">{schoolName}</span>
+                  <span className="rounded-full bg-white/10 px-3 py-1">
+                    Usuário: {userLabel}
+                  </span>
+                  <span className="rounded-full bg-white/10 px-3 py-1">
+                    Escola ID: <span className="font-mono">{schoolId || "—"}</span>
+                  </span>
                 </div>
               </div>
             </div>
 
-            <button
-              onClick={async () => {
-                await supabase.auth.signOut();
-                router.replace("/login");
-              }}
-              className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
-            >
-              Sair
-            </button>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => router.push("/teacher/classes")}
+                className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:opacity-90"
+              >
+                Abrir minhas turmas
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/teacher/messages")}
+                className="rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Ver comunicados
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-[36px] border border-white/10 bg-white/10 p-5 backdrop-blur">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">
+              Central de comunicados
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-3">
+              <div className="rounded-3xl bg-white/10 p-4 text-center">
+                <div className="text-3xl font-semibold">{messagesSummary.total}</div>
+                <div className="mt-1 text-xs text-slate-300">Total</div>
+              </div>
+
+              <div className="rounded-3xl bg-blue-500/20 p-4 text-center">
+                <div className="text-3xl font-semibold text-blue-100">
+                  {messagesSummary.unread}
+                </div>
+                <div className="mt-1 text-xs text-blue-100">Novos</div>
+              </div>
+
+              <div className="rounded-3xl bg-emerald-500/20 p-4 text-center">
+                <div className="text-3xl font-semibold text-emerald-100">
+                  {messagesSummary.read}
+                </div>
+                <div className="mt-1 text-xs text-emerald-100">Lidos</div>
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-3xl bg-white p-4 text-slate-900">
+              <div className="text-sm font-semibold">
+                {messagesSummary.unread > 0
+                  ? "Você tem comunicados novos"
+                  : "Comunicados em dia"}
+              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Ao abrir os comunicados, o sistema confirma a visualização para a escola.
+              </p>
+
+              <button
+                type="button"
+                onClick={() => router.push("/teacher/messages")}
+                className="mt-4 w-full rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:opacity-90"
+              >
+                Abrir comunicados
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <StatCard
+          label="Turmas"
+          value="Minhas turmas"
+          help="Acesse os vínculos ativos e entre na chamada ou diário."
+          icon="🏫"
+          tone="brand"
+        />
+
+        <StatCard
+          label="Comunicados"
+          value={unreadMessagesLabel}
+          help="Avisos oficiais enviados pela gestão escolar."
+          icon="📩"
+          tone={messagesSummary.unread > 0 ? "blue" : "default"}
+        />
+
+        <StatCard
+          label="Chamada"
+          value="Disponível"
+          help="Registro de presença, ausência e atraso por turma."
+          icon="✅"
+          tone="emerald"
+        />
+
+        <StatCard
+          label="Diário"
+          value="Pedagógico"
+          help="Registro de conteúdos e observações do dia."
+          icon="📘"
+          tone="amber"
+        />
+      </section>
+
+      <section>
+        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-900">
+              Módulos principais
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-500">
+              Seu trabalho docente organizado em módulos rápidos.
+            </p>
+          </div>
+
+          <div className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-slate-500 shadow-sm">
+            Portal premium do professor
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-3 md:p-6">
-          <SummaryCard
-            label="Turmas"
-            value="Acessar"
-            help="Entre nas turmas vinculadas ao seu usuário."
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <FeatureCard
+            href="/teacher/classes"
+            title="Minhas turmas"
+            description="Entre nas turmas vinculadas, visualize alunos e acesse as ações principais do professor."
+            icon="🏫"
+            primary
           />
 
-          <SummaryCard
-            label="Comunicados"
-            value={unreadMessagesLabel}
-            help="Avisos enviados pela direção, coordenação ou secretaria."
+          <FeatureCard
+            href="/teacher/classes"
+            title="Chamada"
+            description="Acesse a turma desejada e registre frequência dos alunos com controle diário."
+            icon="✅"
           />
 
-          <SummaryCard
-            label="Rotina docente"
-            value="Ativa"
-            help="Chamada e diário pedagógico disponíveis no painel."
+          <FeatureCard
+            href="/teacher/messages"
+            title="Comunicados"
+            description="Leia avisos oficiais enviados pela direção, coordenação ou secretaria."
+            icon="📩"
+            badge={messagesSummary.unread > 0 ? `${messagesSummary.unread} novo(s)` : undefined}
           />
         </div>
       </section>
 
-      <section>
-        <div className="mb-4">
-          <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-            Ações rápidas
-          </h2>
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="rounded-[36px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                Fluxo sugerido
+              </div>
 
-          <p className="mt-1 text-sm text-slate-500">
-            Acesse rapidamente os principais módulos do professor.
-          </p>
+              <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">
+                Rotina do dia
+              </h2>
+
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Um caminho simples para executar as principais tarefas docentes.
+              </p>
+            </div>
+
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+              Hoje
+            </span>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            <RoutineStep
+              number="01"
+              title="Abrir turmas"
+              description="Confira as turmas vinculadas ao seu usuário professor."
+              href="/teacher/classes"
+            />
+
+            <RoutineStep
+              number="02"
+              title="Realizar chamada"
+              description="Entre na turma desejada e registre a presença dos alunos."
+              href="/teacher/classes"
+            />
+
+            <RoutineStep
+              number="03"
+              title="Lançar diário pedagógico"
+              description="Registre conteúdos trabalhados e observações importantes."
+              href="/teacher/classes"
+            />
+
+            <RoutineStep
+              number="04"
+              title="Conferir comunicados"
+              description="Veja avisos oficiais e confirme leitura automaticamente."
+              href="/teacher/messages"
+            />
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <QuickLink
-            href="/teacher/classes"
-            title="Minhas turmas"
-            description="Acesse alunos, chamada e diário pedagógico das turmas vinculadas."
-            primary
-          />
+        <div className="rounded-[36px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+            Visão rápida
+          </div>
 
-          <QuickLink
-            href="/teacher/messages"
-            title="Comunicados"
-            description="Veja avisos oficiais enviados pela escola para professores e equipe."
-          />
+          <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">
+            Seu painel está pronto para uso
+          </h2>
 
-          <QuickLink
-            href="/teacher/classes"
-            title="Diário pedagógico"
-            description="Entre na turma desejada para lançar ou consultar o diário."
-          />
+          <p className="mt-2 text-sm leading-7 text-slate-500">
+            O professor não precisa navegar por áreas administrativas. O painel foi desenhado
+            para abrir a rotina de sala de aula rapidamente e manter a comunicação escolar clara.
+          </p>
+
+          <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Foco na aula</div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                Chamada e diário ficam centralizados nas turmas.
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Comunicação</div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                Avisos da gestão aparecem no painel do professor.
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Multi-tenant</div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                Cada professor opera dentro da escola vinculada.
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Mobile first</div>
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                A navegação inferior facilita o uso pelo celular.
+              </p>
+            </div>
+          </div>
         </div>
       </section>
     </main>
