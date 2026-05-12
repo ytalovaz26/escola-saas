@@ -21,12 +21,29 @@ function normRole(role: any) {
   return String(role || "").trim().toLowerCase();
 }
 
+function pickStudentPhotoUrl(student: any) {
+  const possible =
+    student?.photo_url ||
+    student?.photoUrl ||
+    student?.avatar_url ||
+    student?.avatarUrl ||
+    student?.image_url ||
+    student?.imageUrl ||
+    student?.profile_photo_url ||
+    student?.profilePhotoUrl ||
+    null;
+
+  const safe = String(possible || "").trim();
+  return safe || null;
+}
+
 export async function GET(req: Request) {
   try {
     const token = getBearerToken(req);
     if (!token) return jsonFail(401, "Missing Authorization Bearer token.");
 
     const { data: authData, error: authErr } = await supabaseAdmin.auth.getUser(token);
+
     if (authErr || !authData?.user) {
       return jsonFail(401, authErr?.message || "Invalid token/session.");
     }
@@ -47,11 +64,13 @@ export async function GET(req: Request) {
       .maybeSingle();
 
     if (schoolErr) return jsonFail(500, schoolErr.message);
+
     if (!schoolLink?.school_id) {
       return jsonFail(403, "Professor não vinculado a nenhuma escola.");
     }
 
     const role = normRole(schoolLink.role);
+
     if (!(role === "professor" || role === "teacher")) {
       return jsonFail(403, "Acesso permitido apenas para professor.");
     }
@@ -68,6 +87,7 @@ export async function GET(req: Request) {
       .maybeSingle();
 
     if (tcErr) return jsonFail(500, tcErr.message);
+
     if (!teacherClass?.id) {
       return jsonFail(403, "Professor não está vinculado a esta turma.");
     }
@@ -80,7 +100,11 @@ export async function GET(req: Request) {
         students!inner (
           id,
           full_name,
-          registration_number
+          registration_number,
+          photo_url,
+          avatar_url,
+          image_url,
+          profile_photo_url
         )
       `)
       .eq("school_id", schoolId)
@@ -90,11 +114,17 @@ export async function GET(req: Request) {
     if (error) return jsonFail(500, error.message);
 
     const students = (data || [])
-      .map((row: any) => ({
-        student_id: String(row.student_id || row.students?.id || "").trim(),
-        full_name: row.students?.full_name ?? null,
-        registration_number: row.students?.registration_number ?? null,
-      }))
+      .map((row: any) => {
+        const student = row.students || {};
+
+        return {
+          student_id: String(row.student_id || student?.id || "").trim(),
+          full_name: student?.full_name ?? null,
+          registration_number: student?.registration_number ?? null,
+          photo_url: pickStudentPhotoUrl(student),
+          photoUrl: pickStudentPhotoUrl(student),
+        };
+      })
       .filter((row: any) => row.student_id)
       .sort((a: any, b: any) =>
         String(a.full_name || "").localeCompare(String(b.full_name || ""), "pt-BR")
