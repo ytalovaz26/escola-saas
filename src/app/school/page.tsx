@@ -351,7 +351,7 @@ export default function SchoolDashboardPage() {
 
   const actions = useMemo(() => {
     return allActions.filter((item) => canAccess(currentRole, item));
-  }, [allActions, currentRole]);
+  }, [currentRole]);
 
   const highlightActions = useMemo(() => {
     const preferredByRole: Record<RoleKey, string[]> = {
@@ -509,12 +509,12 @@ export default function SchoolDashboardPage() {
           <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex flex-col gap-5 md:flex-row md:items-center">
               {logoUrl ? (
-                <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-3xl border border-white/15 bg-white/10 p-2 backdrop-blur">
+                <div className="h-24 w-24 shrink-0 overflow-hidden rounded-3xl border border-white/10 bg-white shadow-sm">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={logoUrl}
                     alt={brandName}
-                    className="max-h-full max-w-full object-contain"
+                    className="h-full w-full object-cover"
                   />
                 </div>
               ) : (
@@ -544,9 +544,9 @@ export default function SchoolDashboardPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {(currentRole === "diretor" ||
-                currentRole === "coordenador" ||
-                currentRole === "admin") ? (
+              {currentRole === "diretor" ||
+              currentRole === "coordenador" ||
+              currentRole === "admin" ? (
                 <button
                   type="button"
                   onClick={() => go(STAFF_HREF)}
@@ -556,9 +556,9 @@ export default function SchoolDashboardPage() {
                 </button>
               ) : null}
 
-              {(currentRole === "diretor" ||
-                currentRole === "coordenador" ||
-                currentRole === "admin") ? (
+              {currentRole === "diretor" ||
+              currentRole === "coordenador" ||
+              currentRole === "admin" ? (
                 <button
                   type="button"
                   onClick={() => go(SUBJECTS_HREF)}
