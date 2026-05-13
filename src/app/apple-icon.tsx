@@ -19,74 +19,55 @@ export default function AppleIcon() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background:
-            "linear-gradient(135deg, #0f172a 0%, #1e293b 48%, #020617 100%)",
+          background: "#ffffff",
         }}
       >
         <div
           style={{
-            position: "absolute",
-            inset: 0,
-            background:
-              "radial-gradient(circle at 30% 20%, rgba(255,255,255,0.20) 0%, rgba(255,255,255,0) 40%), radial-gradient(circle at 70% 80%, rgba(59,130,246,0.30) 0%, rgba(59,130,246,0) 38%)",
-          }}
-        />
-
-        <div
-          style={{
-            width: "126px",
-            height: "126px",
-            borderRadius: "42px",
+            width: "146px",
+            height: "146px",
+            borderRadius: "38px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "rgba(255,255,255,0.96)",
-            boxShadow: "0 12px 30px rgba(0,0,0,0.35)",
+            background: "#ffffff",
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.18)",
+            border: "1px solid rgba(226, 232, 240, 0.9)",
           }}
         >
           <div
             style={{
-              width: "92px",
-              height: "92px",
+              width: "108px",
+              height: "108px",
               borderRadius: "30px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              background: "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)",
+              background: "#f8fafc",
             }}
           >
             <div
               style={{
+                width: "72px",
+                height: "72px",
+                borderRadius: "22px",
                 display: "flex",
-                alignItems: "flex-end",
+                alignItems: "center",
                 justifyContent: "center",
-                gap: "5px",
+                background: "#0f172a",
               }}
             >
               <div
                 style={{
-                  width: "15px",
-                  height: "45px",
-                  borderRadius: "10px",
-                  background: "#0f172a",
+                  fontSize: "34px",
+                  fontWeight: 900,
+                  color: "#ffffff",
+                  letterSpacing: "-4px",
+                  lineHeight: 1,
                 }}
-              />
-              <div
-                style={{
-                  width: "15px",
-                  height: "60px",
-                  borderRadius: "10px",
-                  background: "#2563eb",
-                }}
-              />
-              <div
-                style={{
-                  width: "15px",
-                  height: "35px",
-                  borderRadius: "10px",
-                  background: "#0f172a",
-                }}
-              />
+              >
+                AE
+              </div>
             </div>
           </div>
         </div>
