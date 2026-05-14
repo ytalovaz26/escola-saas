@@ -26,6 +26,17 @@ function normalizeSlug(value: unknown) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizeSize(value: unknown) {
+  const n = Number(value || 512);
+
+  if (n === 180) return 180;
+  if (n === 192) return 192;
+  if (n === 384) return 384;
+  if (n === 512) return 512;
+
+  return 512;
+}
+
 function getInitials(name?: string | null) {
   const safe = String(name || "").trim();
 
@@ -114,7 +125,6 @@ async function fetchImageBuffer(imageUrl: string): Promise<Buffer | null> {
       if (!res.ok) return null;
 
       const arrayBuffer = await res.arrayBuffer();
-
       return Buffer.from(arrayBuffer);
     }
 
@@ -129,80 +139,73 @@ function fallbackSvg(appName: string, slug: string) {
 
   return `
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#0f172a"/>
-  <rect x="54" y="54" width="404" height="404" rx="92" fill="#ffffff" opacity="0.08"/>
+  <rect width="512" height="512" fill="#0f172a"/>
   <text x="256" y="296" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="132" font-weight="800" fill="#ffffff">${initials}</text>
 </svg>
 `.trim();
 }
 
-async function makePngIcon(input: Buffer, appName: string, slug: string) {
+async function makePngIcon(input: Buffer, appName: string, slug: string, size: number) {
   try {
-    const normalizedLogo = await sharp(input, {
+    const metadata = await sharp(input, {
+      failOn: "none",
+      animated: false,
+    }).metadata();
+
+    const hasAlpha = Boolean(metadata.hasAlpha);
+
+    const icon = await sharp(input, {
       failOn: "none",
       animated: false,
     })
+      .rotate()
       .resize({
-        width: 380,
-        height: 380,
-        fit: "contain",
+        width: size,
+        height: size,
+        fit: hasAlpha ? "contain" : "cover",
+        position: "center",
         background: {
           r: 255,
           g: 255,
           b: 255,
-          alpha: 0,
-        },
-      })
-      .png()
-      .toBuffer();
-
-    const icon = await sharp({
-      create: {
-        width: 512,
-        height: 512,
-        channels: 4,
-        background: {
-          r: 15,
-          g: 23,
-          b: 42,
           alpha: 1,
         },
-      },
-    })
-      .composite([
-        {
-          input: Buffer.from(
-            `
-              <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-                <rect x="52" y="52" width="408" height="408" rx="98" fill="white"/>
-              </svg>
-            `.trim()
-          ),
-          top: 0,
-          left: 0,
+      })
+      .flatten({
+        background: {
+          r: 255,
+          g: 255,
+          b: 255,
         },
-        {
-          input: normalizedLogo,
-          top: 66,
-          left: 66,
-        },
-      ])
+      })
       .png()
       .toBuffer();
 
     return icon;
   } catch {
     return sharp(Buffer.from(fallbackSvg(appName, slug)))
-      .resize(512, 512)
+      .resize(size, size)
       .png()
       .toBuffer();
   }
 }
 
-export async function GET(_req: Request, context: RouteContext) {
+function responseHeaders(length: number) {
+  return {
+    "Content-Type": "image/png",
+    "Content-Length": String(length),
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+  };
+}
+
+export async function GET(req: Request, context: RouteContext) {
   try {
     const { schoolSlug } = await context.params;
     const slug = normalizeSlug(schoolSlug);
+    const url = new URL(req.url);
+    const size = normalizeSize(url.searchParams.get("size"));
 
     if (!slug) {
       return new NextResponse("Slug inválido.", {
@@ -252,22 +255,17 @@ export async function GET(_req: Request, context: RouteContext) {
     const imageBuffer = await fetchImageBuffer(sourceUrl);
 
     const pngIcon = imageBuffer
-      ? await makePngIcon(imageBuffer, appName, slug)
-      : await sharp(Buffer.from(fallbackSvg(appName, slug))).resize(512, 512).png().toBuffer();
+      ? await makePngIcon(imageBuffer, appName, slug, size)
+      : await sharp(Buffer.from(fallbackSvg(appName, slug)))
+          .resize(size, size)
+          .png()
+          .toBuffer();
 
     return new NextResponse(new Uint8Array(pngIcon), {
-      headers: {
-        "Content-Type": "image/png",
-        "Content-Length": String(pngIcon.length),
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-        Pragma: "no-cache",
-        Expires: "0",
-      },
+      headers: responseHeaders(pngIcon.length),
     });
   } catch (e: any) {
-    const fallback = await sharp(
-      Buffer.from(fallbackSvg("Minha Escola", "escola"))
-    )
+    const fallback = await sharp(Buffer.from(fallbackSvg("Minha Escola", "escola")))
       .resize(512, 512)
       .png()
       .toBuffer();
@@ -275,11 +273,7 @@ export async function GET(_req: Request, context: RouteContext) {
     return new NextResponse(new Uint8Array(fallback), {
       status: 200,
       headers: {
-        "Content-Type": "image/png",
-        "Content-Length": String(fallback.length),
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-        Pragma: "no-cache",
-        Expires: "0",
+        ...responseHeaders(fallback.length),
         "X-Icon-Fallback-Reason": e?.message || "unknown",
       },
     });
