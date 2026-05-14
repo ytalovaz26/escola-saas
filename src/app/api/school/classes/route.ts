@@ -3,8 +3,26 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
 import { jsonFail, jsonOk, logRouteError, readJsonBody } from "@/lib/http";
 
+const CAN_READ_CLASSES = [
+  "director",
+  "coordinator",
+  "secretary",
+  "diretor",
+  "coordenador",
+  "secretaria",
+  "admin",
+];
+
+const CAN_CREATE_CLASSES = [
+  "director",
+  "coordinator",
+  "diretor",
+  "coordenador",
+  "admin",
+];
+
 export async function GET(req: Request) {
-  const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
+  const guard = await requireStaff(req, CAN_READ_CLASSES);
   if (!guard.ok) return guard.res;
 
   try {
@@ -24,11 +42,12 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
+  const guard = await requireStaff(req, CAN_CREATE_CLASSES);
   if (!guard.ok) return guard.res;
 
   try {
     const { json } = await readJsonBody(req);
+
     const name = String(json?.name || "").trim();
     const grade = json?.grade != null ? String(json.grade).trim() : null;
     const shift = json?.shift != null ? String(json.shift).trim() : null;

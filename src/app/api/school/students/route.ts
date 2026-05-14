@@ -3,14 +3,28 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
 import { jsonFail, jsonOk, logRouteError, readJsonBody } from "@/lib/http";
 
-export async function GET(req: Request) {
-  const guard = await requireStaff(req, [
-    "director",
-    "coordinator",
-    "diretor",
-    "coordenador",
-  ]);
+const CAN_READ_STUDENTS = [
+  "director",
+  "coordinator",
+  "secretary",
+  "diretor",
+  "coordenador",
+  "secretaria",
+  "admin",
+];
 
+const CAN_CREATE_STUDENTS = [
+  "director",
+  "coordinator",
+  "secretary",
+  "diretor",
+  "coordenador",
+  "secretaria",
+  "admin",
+];
+
+export async function GET(req: Request) {
+  const guard = await requireStaff(req, CAN_READ_STUDENTS);
   if (!guard.ok) return guard.res;
 
   try {
@@ -63,13 +77,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const guard = await requireStaff(req, [
-    "director",
-    "coordinator",
-    "diretor",
-    "coordenador",
-  ]);
-
+  const guard = await requireStaff(req, CAN_CREATE_STUDENTS);
   if (!guard.ok) return guard.res;
 
   try {

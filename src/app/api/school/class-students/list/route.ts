@@ -1,9 +1,20 @@
+// src/app/api/school/class-students/list/route.ts
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
 import { jsonFail, jsonOk, logRouteError } from "@/lib/http";
 
+const CAN_READ_CLASS_STUDENTS = [
+  "director",
+  "coordinator",
+  "secretary",
+  "diretor",
+  "coordenador",
+  "secretaria",
+  "admin",
+];
+
 export async function GET(req: Request) {
-  const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
+  const guard = await requireStaff(req, CAN_READ_CLASS_STUDENTS);
   if (!guard.ok) return guard.res;
 
   try {
@@ -22,6 +33,7 @@ export async function GET(req: Request) {
     logRouteError("GET /api/school/class-students/list", err, {
       schoolId: guard.schoolId,
     });
+
     return jsonFail(500, "Internal error");
   }
 }

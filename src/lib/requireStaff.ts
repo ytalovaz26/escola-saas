@@ -3,7 +3,18 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 function normRole(role: any) {
-  return String(role || "").trim().toLowerCase();
+  const r = String(role || "").trim().toLowerCase();
+
+  if (r === "director") return "diretor";
+  if (r === "coordinator") return "coordenador";
+  if (r === "teacher") return "professor";
+  if (r === "secretary") return "secretaria";
+
+  return r;
+}
+
+function jsonFail(status: number, error: string) {
+  return NextResponse.json({ ok: false, error }, { status });
 }
 
 export async function requireStaff(req: Request, allowedRoles: string[]) {
@@ -11,40 +22,60 @@ export async function requireStaff(req: Request, allowedRoles: string[]) {
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
 
   if (!token) {
-    return { ok: false as const, res: NextResponse.json({ ok: false, error: "Missing Bearer token" }, { status: 401 }) };
+    return {
+      ok: false as const,
+      res: jsonFail(401, "Missing Bearer token"),
+    };
   }
 
   const { data: u, error: uErr } = await supabaseAdmin.auth.getUser(token);
+
   if (uErr || !u?.user) {
-    return { ok: false as const, res: NextResponse.json({ ok: false, error: "Invalid session" }, { status: 401 }) };
+    return {
+      ok: false as const,
+      res: jsonFail(401, "Invalid session"),
+    };
   }
 
   const userId = u.user.id;
 
-  // pega vínculo na school_users
   const { data: su, error: suErr } = await supabaseAdmin
     .from("school_users")
-    .select("school_id, role")
+    .select("school_id, role, is_active, created_at")
     .eq("user_id", userId)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (suErr) {
-    return { ok: false as const, res: NextResponse.json({ ok: false, error: suErr.message }, { status: 500 }) };
-  }
-
-  if (!su?.school_id) {
-    return { ok: false as const, res: NextResponse.json({ ok: false, error: "Perfil não encontrado (sem vínculo na escola)." }, { status: 404 }) };
-  }
-
-  const role = normRole(su.role);
-
-  const allowed = allowedRoles.map(normRole);
-  if (!allowed.includes(role)) {
     return {
       ok: false as const,
-      res: NextResponse.json({ ok: false, error: `Forbidden: role=${role}` }, { status: 403 }),
+      res: jsonFail(500, suErr.message),
     };
   }
 
-  return { ok: true as const, userId, schoolId: su.school_id as string, role };
+  if (!su?.school_id) {
+    return {
+      ok: false as const,
+      res: jsonFail(404, "Perfil não encontrado ou vínculo escolar inativo."),
+    };
+  }
+
+  const role = normRole(su.role);
+  const allowed = allowedRoles.map(normRole);
+
+  if (!allowed.includes(role)) {
+    return {
+      ok: false as const,
+      res: jsonFail(403, `Forbidden: role=${role}`),
+    };
+  }
+
+  return {
+    ok: true as const,
+    userId,
+    schoolId: String(su.school_id),
+    role,
+  };
 }
