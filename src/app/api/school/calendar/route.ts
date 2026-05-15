@@ -41,6 +41,8 @@ async function getGuard(req: Request) {
     "coordinator",
     "diretor",
     "coordenador",
+    "secretaria",
+    "secretary",
     "admin",
   ]);
 }

@@ -1,3 +1,4 @@
+// src/app/school/parents/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -37,6 +38,28 @@ type LinkRow = {
   created_at: string;
 };
 
+function normalizeRole(role: string | null | undefined) {
+  return String(role || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function canManageParents(role: string | null | undefined) {
+  const r = normalizeRole(role);
+
+  return (
+    r === "diretor" ||
+    r === "director" ||
+    r === "coordenador" ||
+    r === "coordinator" ||
+    r === "secretaria" ||
+    r === "secretary" ||
+    r === "admin"
+  );
+}
+
 function initialsFromName(name: string) {
   const safe = String(name || "").trim();
   if (!safe) return "RP";
@@ -47,12 +70,18 @@ function initialsFromName(name: string) {
   return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
 }
 
+function isHttpUrl(url: string) {
+  return url.startsWith("https://") || url.startsWith("http://");
+}
+
 function ParentAvatar({
   parent,
   size = "md",
+  onOpen,
 }: {
   parent: ParentRow;
   size?: "sm" | "md" | "lg";
+  onOpen?: () => void;
 }) {
   const photoUrl = String(parent.photo_url || "").trim();
 
@@ -63,14 +92,25 @@ function ParentAvatar({
         ? "h-11 w-11 text-xs"
         : "h-12 w-12 text-xs";
 
-  if (photoUrl) {
+  if (photoUrl && isHttpUrl(photoUrl)) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={photoUrl}
-        alt={`Foto de ${parent.full_name}`}
-        className={`${sizeClasses} shrink-0 rounded-full border border-slate-200 object-cover shadow-sm`}
-      />
+      <button
+        type="button"
+        onClick={onOpen}
+        className={`${sizeClasses} group relative shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100 shadow-sm transition hover:scale-[1.03] hover:shadow-md`}
+        title="Clique para ampliar a foto"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={photoUrl}
+          alt={`Foto de ${parent.full_name}`}
+          className="h-full w-full object-cover"
+        />
+
+        <span className="absolute inset-0 hidden items-center justify-center bg-slate-950/35 text-[10px] font-semibold text-white group-hover:flex">
+          Ver
+        </span>
+      </button>
     );
   }
 
@@ -106,6 +146,11 @@ export default function ParentsPage() {
   const [linking, setLinking] = useState(false);
 
   const [unlinkingKey, setUnlinkingKey] = useState<string | null>(null);
+
+  const [photoPreview, setPhotoPreview] = useState<{
+    url: string;
+    name: string;
+  } | null>(null);
 
   const parentById = useMemo(() => {
     const map = new Map<string, ParentRow>();
@@ -148,74 +193,16 @@ export default function ParentsPage() {
       lower.includes("unique") ||
       lower.includes("conflict")
     ) {
-      return "Esse responsável já está vinculado a esse aluno (ou existe um vínculo antigo que precisa ser reativado).";
+      return "Esse responsável já está vinculado a esse aluno ou existe um vínculo antigo que precisa ser reativado.";
     }
 
     return msg;
   }
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData.session?.access_token;
-
-        if (!token) {
-          router.replace("/login");
-          return;
-        }
-
-        const res = await fetch("/api/me", {
-          method: "GET",
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
-
-        const text = await res.text();
-
-        let json: any = null;
-
-        try {
-          json = text ? JSON.parse(text) : null;
-        } catch {
-          json = { ok: false, error: text || "Resposta inválida do servidor" };
-        }
-
-        if (!res.ok || !json?.ok) {
-          setError(json?.error || "Falha ao validar sessão/perfil.");
-          return;
-        }
-
-        const payload = json as MePayload;
-
-        if (payload.isPlatformAdmin) {
-          router.replace("/admin-master");
-          return;
-        }
-
-        const r = payload.school?.role;
-        setRole(r || null);
-
-        if (r !== "diretor" && r !== "coordenador") {
-          router.replace("/school");
-          return;
-        }
-
-        const sid = payload.school?.schoolId;
-
-        if (!sid) {
-          setError("Usuário sem escola vinculada.");
-          return;
-        }
-
-        setSchoolId(sid);
-
-        await Promise.all([loadParents(sid), loadStudents(sid), loadLinks(sid)]);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [router]);
+  async function getAccessToken() {
+    const { data: sessionData } = await supabase.auth.getSession();
+    return sessionData.session?.access_token || null;
+  }
 
   async function loadParents(sid: string) {
     const { data, error } = await supabase
@@ -225,7 +212,7 @@ export default function ParentsPage() {
       .order("created_at", { ascending: false });
 
     if (error) {
-      setError("Erro ao carregar pais: " + error.message);
+      setError("Erro ao carregar responsáveis: " + error.message);
       return;
     }
 
@@ -271,8 +258,76 @@ export default function ParentsPage() {
   async function refreshAll() {
     if (!schoolId) return;
 
+    setError(null);
     await Promise.all([loadParents(schoolId), loadStudents(schoolId), loadLinks(schoolId)]);
   }
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setError(null);
+
+        const token = await getAccessToken();
+
+        if (!token) {
+          router.replace("/login");
+          return;
+        }
+
+        const res = await fetch("/api/me", {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+
+        const text = await res.text();
+
+        let json: any = null;
+
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          json = { ok: false, error: text || "Resposta inválida do servidor" };
+        }
+
+        if (!res.ok || !json?.ok) {
+          setError(json?.error || "Falha ao validar sessão/perfil.");
+          return;
+        }
+
+        const payload = json as MePayload;
+
+        if (payload.isPlatformAdmin) {
+          router.replace("/admin-master");
+          return;
+        }
+
+        const r = payload.school?.role || null;
+        const sid = payload.school?.schoolId || null;
+
+        setRole(r);
+
+        if (!canManageParents(r)) {
+          router.replace(payload.redirectTo || "/school");
+          return;
+        }
+
+        if (!sid) {
+          setError("Usuário sem escola vinculada.");
+          return;
+        }
+
+        setSchoolId(sid);
+
+        await Promise.all([loadParents(sid), loadStudents(sid), loadLinks(sid)]);
+      } catch (e: any) {
+        setError(e?.message || "Erro inesperado ao carregar responsáveis.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router]);
 
   async function createParent() {
     if (!schoolId) return;
@@ -286,9 +341,9 @@ export default function ParentsPage() {
 
     try {
       setCreating(true);
+      setError(null);
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
+      const token = await getAccessToken();
 
       if (!token) {
         alert("Sessão inválida. Faça login novamente.");
@@ -335,7 +390,7 @@ export default function ParentsPage() {
       setParentEmail("");
       setTempPassword("");
 
-      await loadParents(schoolId);
+      await refreshAll();
     } finally {
       setCreating(false);
     }
@@ -348,6 +403,7 @@ export default function ParentsPage() {
 
     try {
       setLinking(true);
+      setError(null);
 
       const { error } = await supabase.from("student_parents").upsert(
         {
@@ -390,9 +446,9 @@ export default function ParentsPage() {
     try {
       const key = `${parentId}:${studentId}`;
       setUnlinkingKey(key);
+      setError(null);
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
+      const token = await getAccessToken();
 
       if (!token) {
         alert("Sessão inválida. Faça login novamente.");
@@ -471,12 +527,21 @@ export default function ParentsPage() {
 
           <p className="mt-3 text-sm leading-6 text-slate-600">{error}</p>
 
-          <button
-            onClick={() => router.push("/school")}
-            className="mt-6 inline-flex rounded-2xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:opacity-90"
-          >
-            Voltar ao painel
-          </button>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <button
+              onClick={() => router.push("/school")}
+              className="inline-flex justify-center rounded-2xl bg-slate-900 px-5 py-3 text-sm font-medium text-white hover:opacity-90"
+            >
+              Voltar ao painel
+            </button>
+
+            <button
+              onClick={refreshAll}
+              className="inline-flex justify-center rounded-2xl border border-slate-300 px-5 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Tentar novamente
+            </button>
+          </div>
         </div>
       </main>
     );
@@ -752,7 +817,17 @@ export default function ParentsPage() {
                     className="rounded-3xl border border-slate-200 bg-slate-50 p-5"
                   >
                     <div className="flex items-start gap-3">
-                      <ParentAvatar parent={p} />
+                      <ParentAvatar
+                        parent={p}
+                        onOpen={() => {
+                          if (p.photo_url) {
+                            setPhotoPreview({
+                              url: p.photo_url,
+                              name: p.full_name,
+                            });
+                          }
+                        }}
+                      />
 
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-slate-900">
@@ -865,7 +940,18 @@ export default function ParentsPage() {
                         >
                           <td className="px-5 py-4">
                             <div className="flex items-start gap-3">
-                              <ParentAvatar parent={p} size="sm" />
+                              <ParentAvatar
+                                parent={p}
+                                size="sm"
+                                onOpen={() => {
+                                  if (p.photo_url) {
+                                    setPhotoPreview({
+                                      url: p.photo_url,
+                                      name: p.full_name,
+                                    });
+                                  }
+                                }}
+                              />
 
                               <div className="min-w-0">
                                 <div className="text-sm font-semibold text-slate-900">
@@ -949,6 +1035,40 @@ export default function ParentsPage() {
           </>
         )}
       </section>
+
+      {photoPreview ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 p-4">
+          <div className="w-full max-w-3xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
+            <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Visualização da foto
+                </div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {photoPreview.name}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setPhotoPreview(null)}
+                className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="bg-slate-100 p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={photoPreview.url}
+                alt={photoPreview.name}
+                className="max-h-[75vh] w-full rounded-3xl object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

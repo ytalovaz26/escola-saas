@@ -3,18 +3,32 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 function normRole(role: any) {
-  const r = String(role || "").trim().toLowerCase();
-
-  if (r === "director") return "diretor";
-  if (r === "coordinator") return "coordenador";
-  if (r === "teacher") return "professor";
-  if (r === "secretary") return "secretaria";
-
-  return r;
+  return String(role || "").trim().toLowerCase();
 }
 
-function jsonFail(status: number, error: string) {
-  return NextResponse.json({ ok: false, error }, { status });
+function normalizeAllowedRoles(roles: string[]) {
+  const set = new Set<string>();
+
+  for (const role of roles || []) {
+    const r = normRole(role);
+    if (!r) continue;
+
+    set.add(r);
+
+    if (r === "diretor") set.add("director");
+    if (r === "director") set.add("diretor");
+
+    if (r === "coordenador") set.add("coordinator");
+    if (r === "coordinator") set.add("coordenador");
+
+    if (r === "professor") set.add("teacher");
+    if (r === "teacher") set.add("professor");
+
+    if (r === "secretaria") set.add("secretary");
+    if (r === "secretary") set.add("secretaria");
+  }
+
+  return Array.from(set);
 }
 
 export async function requireStaff(req: Request, allowedRoles: string[]) {
@@ -24,7 +38,10 @@ export async function requireStaff(req: Request, allowedRoles: string[]) {
   if (!token) {
     return {
       ok: false as const,
-      res: jsonFail(401, "Missing Bearer token"),
+      res: NextResponse.json(
+        { ok: false, error: "Missing Bearer token" },
+        { status: 401 }
+      ),
     };
   }
 
@@ -33,7 +50,10 @@ export async function requireStaff(req: Request, allowedRoles: string[]) {
   if (uErr || !u?.user) {
     return {
       ok: false as const,
-      res: jsonFail(401, "Invalid session"),
+      res: NextResponse.json(
+        { ok: false, error: "Invalid session" },
+        { status: 401 }
+      ),
     };
   }
 
@@ -51,24 +71,33 @@ export async function requireStaff(req: Request, allowedRoles: string[]) {
   if (suErr) {
     return {
       ok: false as const,
-      res: jsonFail(500, suErr.message),
+      res: NextResponse.json(
+        { ok: false, error: suErr.message },
+        { status: 500 }
+      ),
     };
   }
 
   if (!su?.school_id) {
     return {
       ok: false as const,
-      res: jsonFail(404, "Perfil não encontrado ou vínculo escolar inativo."),
+      res: NextResponse.json(
+        { ok: false, error: "Perfil não encontrado ou usuário sem vínculo ativo com a escola." },
+        { status: 404 }
+      ),
     };
   }
 
   const role = normRole(su.role);
-  const allowed = allowedRoles.map(normRole);
+  const allowed = normalizeAllowedRoles(allowedRoles);
 
   if (!allowed.includes(role)) {
     return {
       ok: false as const,
-      res: jsonFail(403, `Forbidden: role=${role}`),
+      res: NextResponse.json(
+        { ok: false, error: `Forbidden: role=${role}` },
+        { status: 403 }
+      ),
     };
   }
 

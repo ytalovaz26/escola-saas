@@ -1,3 +1,4 @@
+// src/app/api/school/attendance/report-month/route.ts
 import { NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -37,7 +38,7 @@ function jsonError(message: string, status = 400, extra?: any) {
 }
 
 function safeText(v: any) {
-  return typeof v === "string" ? v : "";
+  return typeof v === "string" ? v.trim() : "";
 }
 
 function brDateFromISO(iso: string) {
@@ -124,7 +125,7 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
 
   const pub = u.split("/storage/v1/object/public/");
   if (pub.length === 2) {
-    const rest = pub[1];
+    const rest = pub[1].split("?")[0];
     const parts = rest.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
@@ -133,8 +134,7 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
 
   const sign = u.split("/storage/v1/object/sign/");
   if (sign.length === 2) {
-    const restWithQuery = sign[1];
-    const rest = restWithQuery.split("?")[0];
+    const rest = sign[1].split("?")[0];
     const parts = rest.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
@@ -142,7 +142,8 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
   }
 
   if (!u.startsWith("http://") && !u.startsWith("https://") && u.includes("/")) {
-    const parts = u.split("/");
+    const clean = u.split("?")[0];
+    const parts = clean.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
     if (bucket && path) return { bucket, path };
@@ -181,11 +182,14 @@ async function getLogoBuffer(logoUrl: string | null): Promise<Buffer | null> {
       }
     }
 
-    const res = await fetch(u);
-    if (!res.ok) return null;
+    if (u.startsWith("http://") || u.startsWith("https://")) {
+      const res = await fetch(u, { cache: "no-store" });
+      if (!res.ok) return null;
+      const arr = await res.arrayBuffer();
+      return Buffer.from(arr);
+    }
 
-    const arr = await res.arrayBuffer();
-    return Buffer.from(arr);
+    return null;
   } catch {
     return null;
   }
@@ -215,22 +219,20 @@ function drawHeaderDateVerticalCentered(
   doc.restore();
 }
 
-async function tryGetClassName(classId: string) {
+async function tryGetClassName(params: { schoolId: string; classId: string }) {
+  const { schoolId, classId } = params;
+
   try {
-    const { data } = await supabaseAdmin.from("classes").select("*").eq("id", classId).single();
+    const { data } = await supabaseAdmin
+      .from("classes")
+      .select("id, name, grade, shift")
+      .eq("id", classId)
+      .eq("school_id", schoolId)
+      .maybeSingle();
 
-    const candidates = [
-      data?.name,
-      data?.title,
-      data?.nome,
-      data?.class_name,
-      data?.descricao,
-      data?.description,
-      data?.series,
-      data?.ano,
-    ];
-
+    const candidates = [data?.name, data?.grade, data?.shift];
     const found = candidates.map(safeText).find((x) => x.trim().length > 0);
+
     return found || "";
   } catch {
     return "";
@@ -238,11 +240,12 @@ async function tryGetClassName(classId: string) {
 }
 
 async function getRosterAcrossPeriod(params: {
+  schoolId: string;
   classId: string;
   startISO: string;
   endISO: string;
 }) {
-  const { classId, startISO, endISO } = params;
+  const { schoolId, classId, startISO, endISO } = params;
 
   const dates = datesBetweenInclusive(startISO, endISO);
   const all = new Set<string>();
@@ -261,16 +264,31 @@ async function getRosterAcrossPeriod(params: {
     } catch {}
   }
 
+  try {
+    const { data } = await supabaseAdmin
+      .from("student_classes")
+      .select("student_id")
+      .eq("school_id", schoolId)
+      .eq("class_id", classId)
+      .eq("is_active", true);
+
+    for (const row of data || []) {
+      const id = String((row as any)?.student_id || "").trim();
+      if (id) all.add(id);
+    }
+  } catch {}
+
   return Array.from(all);
 }
 
-async function fetchStudentsByIds(studentIds: string[]): Promise<StudentRow[]> {
+async function fetchStudentsByIds(schoolId: string, studentIds: string[]): Promise<StudentRow[]> {
   if (studentIds.length === 0) return [];
 
   try {
     const { data } = await supabaseAdmin
       .from("students")
       .select("id, full_name, registration_number")
+      .eq("school_id", schoolId)
       .in("id", studentIds);
 
     return (data || []) as StudentRow[];
@@ -328,16 +346,26 @@ function drawReportHeader(params: {
   const dateEnd = dateChunk[dateChunk.length - 1] || endISO;
 
   doc.fillColor("#000");
-  doc.font("Helvetica-Bold").fontSize(15).text(schoolName || "Chamada Escolar", 135, headerTop + 2);
+  doc.font("Helvetica-Bold").fontSize(15).text(schoolName || "Chamada Escolar", 135, headerTop + 2, {
+    width: doc.page.width - 160,
+    ellipsis: true,
+  });
 
   doc.font("Helvetica").fontSize(9).fillColor("#333");
-  doc.text(`Turma: ${className}`, 135, headerTop + 23);
+  doc.text(`Turma: ${className}`, 135, headerTop + 23, {
+    width: doc.page.width - 160,
+    ellipsis: true,
+  });
   doc.text(`Período geral: ${brDateFromISO(startISO)} até ${brDateFromISO(endISO)}`, 135, headerTop + 37);
   doc.text(`Bloco exibido: ${brDateFromISO(dateStart)} até ${brDateFromISO(dateEnd)}`, 135, headerTop + 51);
   doc.text(
     `Legenda: • = Presente | F = Falta | T = Atraso | Datas ${datePage}/${datePages} | Alunos ${studentPage}/${studentPages}`,
     135,
-    headerTop + 65
+    headerTop + 65,
+    {
+      width: doc.page.width - 160,
+      ellipsis: true,
+    }
   );
 }
 
@@ -382,10 +410,7 @@ function drawAttendanceTable(params: {
   doc.rect(tableX, tableY, tableW, headerRowH).stroke();
 
   doc.moveTo(tableX + colNumW, tableY).lineTo(tableX + colNumW, tableY + tableH).stroke();
-  doc
-    .moveTo(tableX + colNumW + colNameW, tableY)
-    .lineTo(tableX + colNumW + colNameW, tableY + tableH)
-    .stroke();
+  doc.moveTo(tableX + colNumW + colNameW, tableY).lineTo(tableX + colNumW + colNameW, tableY + tableH).stroke();
   doc.moveTo(tableX + fixedW, tableY).lineTo(tableX + fixedW, tableY + tableH).stroke();
 
   doc.fillColor("#000").font("Helvetica-Bold").fontSize(8);
@@ -469,12 +494,14 @@ export async function GET(req: Request) {
     "director",
     "coordenador",
     "coordinator",
+    "secretaria",
+    "secretary",
     "admin",
   ]);
 
   if (!guard.ok) return guard.res;
 
-  const schoolId = (guard as any).schoolId as string;
+  const schoolId = guard.schoolId;
 
   const url = new URL(req.url);
   const classId = (url.searchParams.get("classId") || "").trim();
@@ -506,21 +533,21 @@ export async function GET(req: Request) {
     return jsonError("Período inválido.", 400);
   }
 
-  let schoolName = "";
+  let schoolName = "Chamada Escolar";
   let brandLogoUrl = "";
 
   try {
     const { data: sch } = await supabaseAdmin
       .from("schools")
-      .select("name, brand_logo_url, logo_url")
+      .select("name, brand_name, brand_logo_url, logo_url")
       .eq("id", schoolId)
-      .single();
+      .maybeSingle();
 
-    schoolName = safeText((sch as any)?.name);
+    schoolName = safeText((sch as any)?.brand_name) || safeText((sch as any)?.name) || schoolName;
     brandLogoUrl = safeText((sch as any)?.brand_logo_url || (sch as any)?.logo_url);
   } catch {}
 
-  const className = (await tryGetClassName(classId)) || classId;
+  const className = (await tryGetClassName({ schoolId, classId })) || classId;
 
   const { data: sessions, error: sessErr } = await supabaseAdmin
     .from("attendance_sessions")
@@ -559,7 +586,12 @@ export async function GET(req: Request) {
     recList = (recs || []) as RecordRow[];
   }
 
-  const rosterIdsFromPeriod = await getRosterAcrossPeriod({ classId, startISO, endISO });
+  const rosterIdsFromPeriod = await getRosterAcrossPeriod({
+    schoolId,
+    classId,
+    startISO,
+    endISO,
+  });
 
   const rosterIdsFromRecords = Array.from(
     new Set(recList.map((r) => String(r.student_id || "").trim()).filter(Boolean))
@@ -567,7 +599,7 @@ export async function GET(req: Request) {
 
   const allStudentIds = Array.from(new Set([...rosterIdsFromPeriod, ...rosterIdsFromRecords]));
 
-  const students = await fetchStudentsByIds(allStudentIds);
+  const students = await fetchStudentsByIds(schoolId, allStudentIds);
 
   const stuMap = new Map<string, StudentRow>();
   for (const s of students) {

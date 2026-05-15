@@ -1,3 +1,4 @@
+// src/app/api/school/attendance/report/route.ts
 import { NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -29,7 +30,7 @@ function normalizeStatus(raw: any): AttendanceStatus | null {
 
   if (!s) return null;
   if (s === "present" || s === "presente" || s === "p") return "present";
-  if (s === "absent" || s === "ausente" || s === "f") return "absent";
+  if (s === "absent" || s === "ausente" || s === "f" || s === "falta") return "absent";
   if (s === "late" || s === "tarde" || s === "atraso" || s === "t") return "late";
 
   return null;
@@ -48,7 +49,7 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
 
   const pub = u.split("/storage/v1/object/public/");
   if (pub.length === 2) {
-    const rest = pub[1];
+    const rest = pub[1].split("?")[0];
     const parts = rest.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
@@ -57,8 +58,7 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
 
   const sign = u.split("/storage/v1/object/sign/");
   if (sign.length === 2) {
-    const restWithQuery = sign[1];
-    const rest = restWithQuery.split("?")[0];
+    const rest = sign[1].split("?")[0];
     const parts = rest.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
@@ -66,7 +66,8 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
   }
 
   if (!u.startsWith("http://") && !u.startsWith("https://") && u.includes("/")) {
-    const parts = u.split("/");
+    const clean = u.split("?")[0];
+    const parts = clean.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
     if (bucket && path) return { bucket, path };
@@ -105,11 +106,14 @@ async function getLogoBuffer(logoUrl: string | null): Promise<Buffer | null> {
       }
     }
 
-    const res = await fetch(u);
-    if (!res.ok) return null;
+    if (u.startsWith("http://") || u.startsWith("https://")) {
+      const res = await fetch(u, { cache: "no-store" });
+      if (!res.ok) return null;
+      const arr = await res.arrayBuffer();
+      return Buffer.from(arr);
+    }
 
-    const arr = await res.arrayBuffer();
-    return Buffer.from(arr);
+    return null;
   } catch {
     return null;
   }
@@ -143,6 +147,7 @@ function drawCellText(
     width,
     align,
     lineBreak: false,
+    ellipsis: true,
   });
 }
 
@@ -211,31 +216,27 @@ async function getRosterFromEnrollmentTables(params: {
   classId: string;
 }): Promise<RosterStudent[]> {
   const { schoolId, classId } = params;
-
   const foundIds = new Set<string>();
 
   const tableConfigs = [
-    { table: "class_students", classCol: "class_id", studentCol: "student_id" },
     { table: "student_classes", classCol: "class_id", studentCol: "student_id" },
+    { table: "class_students", classCol: "class_id", studentCol: "student_id" },
     { table: "enrollments", classCol: "class_id", studentCol: "student_id" },
     { table: "matriculas", classCol: "class_id", studentCol: "student_id" },
   ];
 
   for (const cfg of tableConfigs) {
     try {
-      let query = supabaseAdmin
+      const { data, error } = await supabaseAdmin
         .from(cfg.table as any)
-        .select(`${cfg.studentCol}, is_active, active, status, end_date, left_at`)
+        .select(`${cfg.studentCol}, school_id, is_active, active, status, end_date, left_at`)
         .eq(cfg.classCol, classId);
 
-      try {
-        query = query.eq("school_id", schoolId);
-      } catch {}
-
-      const { data, error } = await query;
       if (error) continue;
 
       for (const row of data || []) {
+        if ((row as any).school_id && String((row as any).school_id) !== schoolId) continue;
+
         const studentId = String((row as any)?.[cfg.studentCol] || "").trim();
         if (!studentId) continue;
 
@@ -245,9 +246,7 @@ async function getRosterFromEnrollmentTables(params: {
           (row as any)?.status === "active" ||
           ((row as any)?.end_date == null && (row as any)?.left_at == null);
 
-        if (isActive) {
-          foundIds.add(studentId);
-        }
+        if (isActive) foundIds.add(studentId);
       }
     } catch {}
   }
@@ -258,6 +257,7 @@ async function getRosterFromEnrollmentTables(params: {
     const { data: students } = await supabaseAdmin
       .from("students")
       .select("id, full_name, registration_number")
+      .eq("school_id", schoolId)
       .in("id", Array.from(foundIds));
 
     return (students || []).map((s: any) => ({
@@ -274,13 +274,14 @@ async function getRosterFromEnrollmentTables(params: {
   }
 }
 
-async function enrichStudentsByIds(studentIds: string[]): Promise<RosterStudent[]> {
+async function enrichStudentsByIds(schoolId: string, studentIds: string[]): Promise<RosterStudent[]> {
   if (studentIds.length === 0) return [];
 
   try {
     const { data } = await supabaseAdmin
       .from("students")
       .select("id, full_name, registration_number")
+      .eq("school_id", schoolId)
       .in("id", studentIds);
 
     return (data || []).map((s: any) => ({
@@ -303,12 +304,14 @@ export async function GET(req: Request) {
     "director",
     "coordenador",
     "coordinator",
+    "secretaria",
+    "secretary",
     "admin",
   ]);
 
   if (!guard.ok) return guard.res;
 
-  const schoolId = (guard as any).schoolId as string;
+  const schoolId = guard.schoolId;
 
   const url = new URL(req.url);
   const classId = (url.searchParams.get("classId") || "").trim();
@@ -319,9 +322,9 @@ export async function GET(req: Request) {
 
   const { data: school, error: schoolErr } = await supabaseAdmin
     .from("schools")
-    .select("name, brand_logo_url")
+    .select("name, brand_name, brand_logo_url, logo_url")
     .eq("id", schoolId)
-    .single();
+    .maybeSingle();
 
   if (schoolErr) {
     return jsonError("Falha ao buscar dados da escola.", 500, {
@@ -329,14 +332,23 @@ export async function GET(req: Request) {
     });
   }
 
-  const schoolName = school?.name || "Escola";
-  const logoUrl = school?.brand_logo_url || null;
+  const schoolName = school?.brand_name || school?.name || "Escola";
+  const logoUrl = school?.brand_logo_url || school?.logo_url || null;
 
-  const { data: classData } = await supabaseAdmin
+  const { data: classData, error: classErr } = await supabaseAdmin
     .from("classes")
-    .select("name")
+    .select("id, name")
     .eq("id", classId)
-    .single();
+    .eq("school_id", schoolId)
+    .maybeSingle();
+
+  if (classErr) {
+    return jsonError("Falha ao buscar turma.", 500, { details: classErr.message });
+  }
+
+  if (!classData?.id) {
+    return jsonError("Turma não encontrada nesta escola.", 404);
+  }
 
   const className = classData?.name || classId;
   const teacherName = await tryGetTeacherForDate({ schoolId, classId, date });
@@ -358,6 +370,7 @@ export async function GET(req: Request) {
   const sessionIds = (sessions || []).map((s: any) => String(s.id)).filter(Boolean);
 
   let records: any[] = [];
+
   if (sessionIds.length > 0) {
     const { data, error } = await supabaseAdmin
       .from("attendance_records")
@@ -409,7 +422,8 @@ export async function GET(req: Request) {
     .map((s) => s.id);
 
   if (missingIds.length > 0) {
-    const enriched = await enrichStudentsByIds(missingIds);
+    const enriched = await enrichStudentsByIds(schoolId, missingIds);
+
     for (const s of enriched) {
       const prev = rosterMap.get(s.id);
       rosterMap.set(s.id, {
@@ -450,7 +464,9 @@ export async function GET(req: Request) {
   const headerTop = 38;
 
   if (logoBuffer) {
-    doc.image(logoBuffer, margin, headerTop, { fit: [90, 90] });
+    try {
+      doc.image(logoBuffer, margin, headerTop, { fit: [90, 90] });
+    } catch {}
   }
 
   const titleX = margin + 100;
@@ -459,7 +475,10 @@ export async function GET(req: Request) {
     .font("Helvetica-Bold")
     .fontSize(23)
     .fillColor("#0f172a")
-    .text(schoolName, titleX, headerTop + 4);
+    .text(schoolName, titleX, headerTop + 4, {
+      width: pageW - titleX - margin,
+      ellipsis: true,
+    });
 
   doc.font("Helvetica").fontSize(11).fillColor("#334155");
   doc.text(`Turma: ${className}`, titleX, headerTop + 38);
@@ -476,6 +495,7 @@ export async function GET(req: Request) {
     });
 
   const lineY = headerTop + 108;
+
   doc
     .moveTo(margin, lineY)
     .lineTo(pageW - margin, lineY)
@@ -488,77 +508,22 @@ export async function GET(req: Request) {
 
   const totalWidth = pageW - margin * 2;
   const colN = 34;
-  const colNome = 430;
   const colMat = 70;
   const colSit = 120;
   const colP = 34;
   const colF = 34;
   const colT = 34;
-
-  const used = colN + colNome + colMat + colSit + colP + colF + colT;
-  const extra = totalWidth - used;
-  const colNomeFinal = colNome + (extra > 0 ? extra : 0);
+  const colNomeFinal = totalWidth - colN - colMat - colSit - colP - colF - colT;
 
   doc.roundedRect(startX, y - 6, totalWidth, 28, 8).fill("#f8fafc");
-  doc.fillColor("#0f172a");
 
   drawCellText(doc, "Nº", startX, y, colN, "center", "#0f172a", 10, "Helvetica-Bold");
   drawCellText(doc, "Nome", startX + colN, y, colNomeFinal, "left", "#0f172a", 10, "Helvetica-Bold");
-  drawCellText(
-    doc,
-    "Mat.",
-    startX + colN + colNomeFinal,
-    y,
-    colMat,
-    "center",
-    "#0f172a",
-    10,
-    "Helvetica-Bold"
-  );
-  drawCellText(
-    doc,
-    "Situação",
-    startX + colN + colNomeFinal + colMat,
-    y,
-    colSit,
-    "center",
-    "#0f172a",
-    10,
-    "Helvetica-Bold"
-  );
-  drawCellText(
-    doc,
-    "P",
-    startX + colN + colNomeFinal + colMat + colSit,
-    y,
-    colP,
-    "center",
-    "#0f172a",
-    10,
-    "Helvetica-Bold"
-  );
-  drawCellText(
-    doc,
-    "F",
-    startX + colN + colNomeFinal + colMat + colSit + colP,
-    y,
-    colF,
-    "center",
-    "#0f172a",
-    10,
-    "Helvetica-Bold"
-  );
-  drawCellText(
-    doc,
-    "T",
-    startX + colN + colNomeFinal + colMat + colSit + colP + colF,
-    y,
-    colT,
-    "center",
-    "#0f172a",
-    10,
-    "Helvetica-Bold"
-  );
+  drawCellText(doc, "Mat.", startX + colN + colNomeFinal, y, colMat, "center", "#0f172a", 10, "Helvetica-Bold");
+  drawCellText(doc, "Situação", startX + colN + colNomeFinal + colMat, y, colSit, "center", "#0f172a", 10, "Helvetica-Bold");
+  drawCellText(doc, "P", startX + colN + colNomeFinal + colMat + colSit, y, colP, "center", "#0f172a", 10, "Helvetica-Bold");
+  drawCellText(doc, "F", startX + colN + colNomeFinal + colMat + colSit + colP, y, colF, "center", "#0f172a", 10, "Helvetica-Bold");
+  drawCellText(doc, "T", startX + colN + colNomeFinal + colMat + colSit + colP + colF, y, colT, "center", "#0f172a", 10, "Helvetica-Bold");
 
   y += 34;
 
@@ -584,23 +549,16 @@ export async function GET(req: Request) {
 
     drawCellText(doc, String(idx), startX, y, colN, "center");
     drawCellText(doc, String(s.full_name || "—"), startX + colN, y, colNomeFinal, "left");
-    drawCellText(
-      doc,
-      String(s.registration_number || "—"),
-      startX + colN + colNomeFinal,
-      y,
-      colMat,
-      "center"
-    );
+    drawCellText(doc, String(s.registration_number || "—"), startX + colN + colNomeFinal, y, colMat, "center");
 
     const sitColor =
       status === "present"
         ? "#166534"
         : status === "absent"
-        ? "#b91c1c"
-        : status === "late"
-        ? "#92400e"
-        : "#64748b";
+          ? "#b91c1c"
+          : status === "late"
+            ? "#92400e"
+            : "#64748b";
 
     drawCellText(
       doc,
@@ -614,47 +572,16 @@ export async function GET(req: Request) {
       "Helvetica-Bold"
     );
 
-    drawCellText(
-      doc,
-      status === "present" ? "X" : "",
-      startX + colN + colNomeFinal + colMat + colSit,
-      y,
-      colP,
-      "center",
-      "#166534",
-      10,
-      "Helvetica-Bold"
-    );
-
-    drawCellText(
-      doc,
-      status === "absent" ? "X" : "",
-      startX + colN + colNomeFinal + colMat + colSit + colP,
-      y,
-      colF,
-      "center",
-      "#dc2626",
-      10,
-      "Helvetica-Bold"
-    );
-
-    drawCellText(
-      doc,
-      status === "late" ? "X" : "",
-      startX + colN + colNomeFinal + colMat + colSit + colP + colF,
-      y,
-      colT,
-      "center",
-      "#92400e",
-      10,
-      "Helvetica-Bold"
-    );
+    drawCellText(doc, status === "present" ? "X" : "", startX + colN + colNomeFinal + colMat + colSit, y, colP, "center", "#166534", 10, "Helvetica-Bold");
+    drawCellText(doc, status === "absent" ? "X" : "", startX + colN + colNomeFinal + colMat + colSit + colP, y, colF, "center", "#dc2626", 10, "Helvetica-Bold");
+    drawCellText(doc, status === "late" ? "X" : "", startX + colN + colNomeFinal + colMat + colSit + colP + colF, y, colT, "center", "#92400e", 10, "Helvetica-Bold");
 
     y += 30;
     idx += 1;
   }
 
   y += 10;
+
   doc
     .font("Helvetica")
     .fontSize(10)
@@ -667,7 +594,7 @@ export async function GET(req: Request) {
 
   const pdfBuffer = await pdfToBuffer(doc);
 
-  return new NextResponse(pdfBuffer as any, {
+  return new NextResponse(new Uint8Array(pdfBuffer), {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="chamada-${date}.pdf"`,
