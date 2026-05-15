@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaff } from "@/lib/requireStaff";
 
 export const runtime = "nodejs";
-
-type RecipientStatus = "sent" | "delivered" | "read" | "pending";
+export const dynamic = "force-dynamic";
 
 type RouteContext = {
   params: Promise<{
@@ -11,363 +11,504 @@ type RouteContext = {
   }>;
 };
 
+type RecipientStatus = "sent" | "delivered" | "viewed" | "pending";
+
+type RecipientRow = {
+  id: string;
+  message_id: string;
+  school_id: string | null;
+  recipient_type: string | null;
+  recipient_id: string | null;
+  user_id: string | null;
+  delivered_at: string | null;
+  viewed_at: string | null;
+  created_at: string | null;
+};
+
+type ResolvedRecipient = RecipientRow & {
+  recipientName: string;
+  recipientEmail: string | null;
+  recipientPhone: string | null;
+  recipientPhotoUrl: string | null;
+  status: RecipientStatus;
+};
+
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
 }
 
-function jsonOk(body: any, status = 200) {
-  return NextResponse.json({ ok: true, ...body }, { status });
+function clean(value: unknown) {
+  return String(value || "").trim();
 }
 
-function normalizeRole(role?: string | null) {
-  const r = String(role || "").trim().toLowerCase();
+function normalizeType(value: unknown) {
+  const raw = clean(value).toLowerCase();
 
-  if (r === "diretor" || r === "director") return "diretor";
-  if (r === "coordenador" || r === "coordinator") return "coordenador";
-  if (r === "secretaria" || r === "secretary") return "secretaria";
-  if (r === "professor" || r === "teacher") return "professor";
-  if (r === "admin") return "admin";
+  if (raw === "parent" || raw === "parents" || raw === "responsavel" || raw === "responsável") {
+    return "parent";
+  }
 
-  return r;
+  if (raw === "teacher" || raw === "professor" || raw === "professores") {
+    return "teacher";
+  }
+
+  if (
+    raw === "staff" ||
+    raw === "equipe" ||
+    raw === "secretaria" ||
+    raw === "coordenador" ||
+    raw === "diretor" ||
+    raw === "admin"
+  ) {
+    return "staff";
+  }
+
+  if (raw === "student" || raw === "aluno") {
+    return "student";
+  }
+
+  return raw || "recipient";
 }
 
-function roleLabel(role?: string | null) {
-  const r = normalizeRole(role);
-
-  if (r === "diretor") return "Diretor";
-  if (r === "coordenador") return "Coordenador";
-  if (r === "secretaria") return "Secretaria";
-  if (r === "professor") return "Professor";
-  if (r === "admin") return "Administrador";
-
-  return "Equipe escolar";
-}
-
-function recipientComputedStatus(row: any): RecipientStatus {
-  if (row?.read_at) return "read";
-  if (row?.delivered_at) return "delivered";
+function getStatus(row: RecipientRow): RecipientStatus {
+  if (row.viewed_at) return "viewed";
+  if (row.delivered_at) return "delivered";
+  if (row.created_at) return "sent";
   return "pending";
 }
 
-function staffNameFromUser(user: any, fallback?: string | null) {
-  const meta = user?.raw_user_meta_data || user?.user_metadata || {};
-
-  const name =
-    meta.full_name ||
-    meta.fullName ||
-    meta.name ||
-    meta.nome ||
-    user?.email ||
-    fallback ||
-    "Usuário escolar";
-
-  return String(name);
+function isUuidLike(value: unknown) {
+  const s = clean(value);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
-function parentDisplayName(parent: any, fallback?: string | null) {
-  return (
-    parent?.full_name ||
-    parent?.name ||
-    parent?.responsible_name ||
-    parent?.email ||
-    fallback ||
-    "Responsável"
-  );
-}
-
-async function getStaffFromToken(token: string) {
-  const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
-
-  if (userErr || !userData?.user) {
-    return { ok: false as const, status: 401, error: "Sessão inválida." };
+function pickName(...values: unknown[]) {
+  for (const value of values) {
+    const text = clean(value);
+    if (text && !isUuidLike(text)) return text;
   }
 
-  const userId = userData.user.id;
+  return "";
+}
 
-  const { data: staff, error: staffErr } = await supabaseAdmin
-    .from("school_users")
-    .select("school_id, role, is_active, created_at")
-    .eq("user_id", userId)
-    .eq("is_active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
+async function getMessageSchoolId(messageId: string, guardSchoolId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("school_messages")
+    .select("id, school_id")
+    .eq("id", messageId)
+    .eq("school_id", guardSchoolId)
     .maybeSingle();
 
-  if (staffErr) {
-    return {
-      ok: false as const,
-      status: 500,
-      error: "Erro ao validar usuário escolar: " + staffErr.message,
-    };
+  if (error) {
+    throw new Error(error.message);
   }
 
-  if (!staff?.school_id) {
-    return { ok: false as const, status: 403, error: "Usuário sem escola ativa." };
+  if (!data?.id) {
+    return null;
   }
 
-  const role = normalizeRole(staff.role);
-
-  const canRead =
-    role === "diretor" ||
-    role === "coordenador" ||
-    role === "secretaria" ||
-    role === "admin";
-
-  if (!canRead) {
-    return {
-      ok: false as const,
-      status: 403,
-      error: "Sem permissão para visualizar destinatários dos comunicados.",
-    };
-  }
-
-  return {
-    ok: true as const,
-    userId,
-    schoolId: String(staff.school_id),
-    role,
-  };
+  return String(data.school_id || guardSchoolId);
 }
 
-async function loadAuthUsersById(userIds: string[]) {
-  const ids = Array.from(new Set(userIds.map(String).filter(Boolean)));
+async function loadRecipients(messageId: string, schoolId: string): Promise<RecipientRow[]> {
+  const primary = await supabaseAdmin
+    .from("school_message_recipients")
+    .select(
+      `
+        id,
+        message_id,
+        school_id,
+        recipient_type,
+        recipient_id,
+        user_id,
+        delivered_at,
+        viewed_at,
+        created_at
+      `
+    )
+    .eq("message_id", messageId)
+    .eq("school_id", schoolId)
+    .order("created_at", { ascending: true });
 
-  if (ids.length === 0) return new Map<string, any>();
+  if (!primary.error) {
+    return (primary.data || []) as RecipientRow[];
+  }
 
-  const result = await supabaseAdmin.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
+  const fallback = await supabaseAdmin
+    .from("message_recipients")
+    .select(
+      `
+        id,
+        message_id,
+        school_id,
+        recipient_type,
+        recipient_id,
+        user_id,
+        delivered_at,
+        viewed_at,
+        created_at
+      `
+    )
+    .eq("message_id", messageId)
+    .eq("school_id", schoolId)
+    .order("created_at", { ascending: true });
 
-  if (result.error) return new Map<string, any>();
+  if (fallback.error) {
+    throw new Error(fallback.error.message || primary.error.message);
+  }
 
-  return new Map(
-    (result.data.users || [])
-      .filter((user: any) => ids.includes(String(user.id)))
-      .map((user: any) => [String(user.id), user])
+  return (fallback.data || []) as RecipientRow[];
+}
+
+async function resolveParentNames(rows: RecipientRow[], schoolId: string) {
+  const ids = Array.from(
+    new Set(
+      rows
+        .filter((row) => normalizeType(row.recipient_type) === "parent")
+        .map((row) => clean(row.recipient_id || row.user_id))
+        .filter(Boolean)
+    )
   );
+
+  const map = new Map<
+    string,
+    {
+      name: string;
+      phone: string | null;
+      photoUrl: string | null;
+      userId: string | null;
+    }
+  >();
+
+  if (ids.length === 0) return map;
+
+  const { data } = await supabaseAdmin
+    .from("parents")
+    .select("id, user_id, full_name, name, phone, photo_url")
+    .eq("school_id", schoolId)
+    .or(`id.in.(${ids.join(",")}),user_id.in.(${ids.join(",")})`);
+
+  for (const item of data || []) {
+    const name = pickName((item as any).full_name, (item as any).name);
+    const phone = clean((item as any).phone) || null;
+    const photoUrl = clean((item as any).photo_url) || null;
+    const userId = clean((item as any).user_id) || null;
+
+    if ((item as any).id) {
+      map.set(String((item as any).id), {
+        name,
+        phone,
+        photoUrl,
+        userId,
+      });
+    }
+
+    if (userId) {
+      map.set(userId, {
+        name,
+        phone,
+        photoUrl,
+        userId,
+      });
+    }
+  }
+
+  return map;
 }
 
-function getRequestedStatus(req: Request): RecipientStatus {
-  const url = new URL(req.url);
+async function resolveTeacherNames(rows: RecipientRow[], schoolId: string) {
+  const ids = Array.from(
+    new Set(
+      rows
+        .filter((row) => normalizeType(row.recipient_type) === "teacher")
+        .map((row) => clean(row.recipient_id || row.user_id))
+        .filter(Boolean)
+    )
+  );
 
-  const raw =
-    String(url.searchParams.get("filter") || "").trim().toLowerCase() ||
-    String(url.searchParams.get("status") || "").trim().toLowerCase() ||
-    "sent";
+  const map = new Map<
+    string,
+    {
+      name: string;
+      phone: string | null;
+      photoUrl: string | null;
+      userId: string | null;
+    }
+  >();
 
-  const allowedStatus = new Set(["sent", "delivered", "read", "pending"]);
+  if (ids.length === 0) return map;
 
-  return allowedStatus.has(raw) ? (raw as RecipientStatus) : "sent";
+  const { data } = await supabaseAdmin
+    .from("teachers")
+    .select("id, user_id, full_name, name, phone, photo_url")
+    .eq("school_id", schoolId)
+    .or(`id.in.(${ids.join(",")}),user_id.in.(${ids.join(",")})`);
+
+  for (const item of data || []) {
+    const name = pickName((item as any).full_name, (item as any).name);
+    const phone = clean((item as any).phone) || null;
+    const photoUrl = clean((item as any).photo_url) || null;
+    const userId = clean((item as any).user_id) || null;
+
+    if ((item as any).id) {
+      map.set(String((item as any).id), {
+        name,
+        phone,
+        photoUrl,
+        userId,
+      });
+    }
+
+    if (userId) {
+      map.set(userId, {
+        name,
+        phone,
+        photoUrl,
+        userId,
+      });
+    }
+  }
+
+  return map;
+}
+
+async function resolveStaffNames(rows: RecipientRow[], schoolId: string) {
+  const ids = Array.from(
+    new Set(
+      rows
+        .filter((row) => normalizeType(row.recipient_type) === "staff")
+        .map((row) => clean(row.recipient_id || row.user_id))
+        .filter(Boolean)
+    )
+  );
+
+  const map = new Map<
+    string,
+    {
+      name: string;
+      phone: string | null;
+      photoUrl: string | null;
+      userId: string | null;
+    }
+  >();
+
+  if (ids.length === 0) return map;
+
+  const { data } = await supabaseAdmin
+    .from("school_users")
+    .select("id, user_id, full_name, name, role")
+    .eq("school_id", schoolId)
+    .or(`id.in.(${ids.join(",")}),user_id.in.(${ids.join(",")})`);
+
+  for (const item of data || []) {
+    const role = clean((item as any).role);
+    const name = pickName((item as any).full_name, (item as any).name) || role || "Equipe escolar";
+    const userId = clean((item as any).user_id) || null;
+
+    if ((item as any).id) {
+      map.set(String((item as any).id), {
+        name,
+        phone: null,
+        photoUrl: null,
+        userId,
+      });
+    }
+
+    if (userId) {
+      map.set(userId, {
+        name,
+        phone: null,
+        photoUrl: null,
+        userId,
+      });
+    }
+  }
+
+  return map;
+}
+
+async function resolveStudentNames(rows: RecipientRow[], schoolId: string) {
+  const ids = Array.from(
+    new Set(
+      rows
+        .filter((row) => normalizeType(row.recipient_type) === "student")
+        .map((row) => clean(row.recipient_id || row.user_id))
+        .filter(Boolean)
+    )
+  );
+
+  const map = new Map<
+    string,
+    {
+      name: string;
+      phone: string | null;
+      photoUrl: string | null;
+      userId: string | null;
+    }
+  >();
+
+  if (ids.length === 0) return map;
+
+  const { data } = await supabaseAdmin
+    .from("students")
+    .select("id, full_name, name, student_photo_url")
+    .eq("school_id", schoolId)
+    .in("id", ids);
+
+  for (const item of data || []) {
+    const name = pickName((item as any).full_name, (item as any).name);
+    const photoUrl = clean((item as any).student_photo_url) || null;
+
+    if ((item as any).id) {
+      map.set(String((item as any).id), {
+        name,
+        phone: null,
+        photoUrl,
+        userId: null,
+      });
+    }
+  }
+
+  return map;
+}
+
+async function resolveAuthEmails(rows: RecipientRow[]) {
+  const userIds = Array.from(
+    new Set(
+      rows
+        .map((row) => clean(row.user_id))
+        .filter(Boolean)
+    )
+  );
+
+  const map = new Map<string, string>();
+
+  for (const userId of userIds) {
+    try {
+      const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
+
+      const email = clean(data?.user?.email);
+      if (email) {
+        map.set(userId, email);
+      }
+    } catch {
+      // Não quebra a rota se não conseguir buscar e-mail.
+    }
+  }
+
+  return map;
 }
 
 export async function GET(req: Request, context: RouteContext) {
+  const guard = await requireStaff(req, [
+    "admin",
+    "diretor",
+    "director",
+    "coordenador",
+    "coordinator",
+    "secretaria",
+    "secretary",
+  ]);
+
+  if (!guard.ok) return guard.res;
+
   try {
     const params = await context.params;
-    const messageId = String(params?.id || "").trim();
+    const messageId = clean(params?.id);
 
-    if (!messageId) return jsonError("ID do comunicado não informado.", 422);
-
-    const authHeader = req.headers.get("authorization") || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-
-    if (!token) return jsonError("Sessão não enviada.", 401);
-
-    const staffCheck = await getStaffFromToken(token);
-    if (!staffCheck.ok) return jsonError(staffCheck.error, staffCheck.status);
-
-    const schoolId = staffCheck.schoolId;
-
-    const { data: message, error: msgErr } = await supabaseAdmin
-      .from("messages")
-      .select(
-        `
-        id,
-        school_id,
-        title,
-        body,
-        status,
-        audience_type,
-        target_class_id,
-        target_role,
-        published_at,
-        created_at
-      `
-      )
-      .eq("id", messageId)
-      .eq("school_id", schoolId)
-      .maybeSingle();
-
-    if (msgErr) {
-      return jsonError("Erro ao carregar comunicado: " + msgErr.message, 500);
+    if (!messageId) {
+      return jsonError("ID do comunicado é obrigatório.", 400);
     }
 
-    if (!message?.id) {
-      return jsonError("Comunicado não encontrado nesta escola.", 404);
+    const schoolId = clean((guard as any).schoolId);
+
+    if (!schoolId) {
+      return jsonError("Escola não identificada.", 401);
     }
 
-    const requestedStatus = getRequestedStatus(req);
+    const messageSchoolId = await getMessageSchoolId(messageId, schoolId);
 
-    const { data: recipients, error: recErr } = await supabaseAdmin
-      .from("message_recipients")
-      .select(
-        `
-        id,
-        school_id,
-        message_id,
-        recipient_type,
-        recipient_id,
-        delivered_at,
-        read_at,
-        created_at
-      `
-      )
-      .eq("school_id", schoolId)
-      .eq("message_id", messageId)
-      .order("created_at", { ascending: true });
-
-    if (recErr) {
-      return jsonError("Erro ao carregar destinatários: " + recErr.message, 500);
+    if (!messageSchoolId) {
+      return jsonError("Comunicado não encontrado.", 404);
     }
 
-    const allRecipients = recipients || [];
+    const recipients = await loadRecipients(messageId, messageSchoolId);
 
-    const parentIds = Array.from(
-      new Set(
-        allRecipients
-          .filter((row: any) => String(row.recipient_type) === "parent")
-          .map((row: any) => String(row.recipient_id))
-          .filter(Boolean)
-      )
-    );
+    const [parentsMap, teachersMap, staffMap, studentsMap, emailsMap] = await Promise.all([
+      resolveParentNames(recipients, messageSchoolId),
+      resolveTeacherNames(recipients, messageSchoolId),
+      resolveStaffNames(recipients, messageSchoolId),
+      resolveStudentNames(recipients, messageSchoolId),
+      resolveAuthEmails(recipients),
+    ]);
 
-    const staffUserIds = Array.from(
-      new Set(
-        allRecipients
-          .filter((row: any) => String(row.recipient_type) === "staff")
-          .map((row: any) => String(row.recipient_id))
-          .filter(Boolean)
-      )
-    );
+    const resolved: ResolvedRecipient[] = recipients.map((row) => {
+      const type = normalizeType(row.recipient_type);
+      const mainId = clean(row.recipient_id);
+      const userId = clean(row.user_id);
+      const lookupKey = mainId || userId;
 
-    let parentsById = new Map<string, any>();
-
-    if (parentIds.length > 0) {
-      const { data: parents, error: parentErr } = await supabaseAdmin
-        .from("parents")
-        .select("id, full_name, name, email, phone, whatsapp, user_id")
-        .eq("school_id", schoolId)
-        .in("id", parentIds);
-
-      if (!parentErr) {
-        parentsById = new Map(
-          (parents || []).map((parent: any) => [String(parent.id), parent])
-        );
-      }
-    }
-
-    let schoolUsersByUserId = new Map<string, any>();
-
-    if (staffUserIds.length > 0) {
-      const { data: staffRows, error: staffErr } = await supabaseAdmin
-        .from("school_users")
-        .select("user_id, role")
-        .eq("school_id", schoolId)
-        .in("user_id", staffUserIds);
-
-      if (!staffErr) {
-        schoolUsersByUserId = new Map(
-          (staffRows || []).map((staffRow: any) => [
-            String(staffRow.user_id),
-            staffRow,
-          ])
-        );
-      }
-    }
-
-    const authUsersById = await loadAuthUsersById(staffUserIds);
-
-    const rows = allRecipients.map((row: any) => {
-      const type = String(row.recipient_type || "");
-      const recipientId = String(row.recipient_id || "");
-      const computedStatus = recipientComputedStatus(row);
+      let found:
+        | {
+            name: string;
+            phone: string | null;
+            photoUrl: string | null;
+            userId: string | null;
+          }
+        | undefined;
 
       if (type === "parent") {
-        const parent = parentsById.get(recipientId) || null;
-        const name = parentDisplayName(parent, recipientId);
-
-        return {
-          id: String(row.id),
-          recipientType: "parent",
-          recipient_type: "parent",
-          recipientId,
-          recipient_id: recipientId,
-          name,
-          fullName: name,
-          full_name: name,
-          email: parent?.email || null,
-          phone: parent?.phone || parent?.whatsapp || null,
-          role: "responsavel",
-          roleLabel: "Responsável",
-          deliveredAt: row.delivered_at || null,
-          delivered_at: row.delivered_at || null,
-          readAt: row.read_at || null,
-          read_at: row.read_at || null,
-          createdAt: row.created_at || null,
-          created_at: row.created_at || null,
-          status: computedStatus,
-        };
+        found = parentsMap.get(lookupKey) || parentsMap.get(userId) || parentsMap.get(mainId);
+      } else if (type === "teacher") {
+        found = teachersMap.get(lookupKey) || teachersMap.get(userId) || teachersMap.get(mainId);
+      } else if (type === "staff") {
+        found = staffMap.get(lookupKey) || staffMap.get(userId) || staffMap.get(mainId);
+      } else if (type === "student") {
+        found = studentsMap.get(lookupKey) || studentsMap.get(mainId);
       }
 
-      const authUser = authUsersById.get(recipientId) || null;
-      const staffRow = schoolUsersByUserId.get(recipientId) || null;
-      const role = normalizeRole(staffRow?.role);
-      const name = staffNameFromUser(authUser, recipientId);
+      const email = userId ? emailsMap.get(userId) || null : null;
+
+      const fallbackName =
+        type === "parent"
+          ? "Responsável"
+          : type === "teacher"
+            ? "Professor(a)"
+            : type === "staff"
+              ? "Equipe escolar"
+              : type === "student"
+                ? "Aluno(a)"
+                : "Destinatário";
 
       return {
-        id: String(row.id),
-        recipientType: "staff",
-        recipient_type: "staff",
-        recipientId,
-        recipient_id: recipientId,
-        name,
-        fullName: name,
-        full_name: name,
-        email: authUser?.email || null,
-        phone: null,
-        role,
-        roleLabel: roleLabel(role),
-        deliveredAt: row.delivered_at || null,
-        delivered_at: row.delivered_at || null,
-        readAt: row.read_at || null,
-        read_at: row.read_at || null,
-        createdAt: row.created_at || null,
-        created_at: row.created_at || null,
-        status: computedStatus,
+        ...row,
+        recipient_type: type,
+        recipientName: pickName(found?.name) || email || fallbackName,
+        recipientEmail: email,
+        recipientPhone: found?.phone || null,
+        recipientPhotoUrl: found?.photoUrl || null,
+        status: getStatus(row),
       };
     });
 
-    const filteredRows =
-      requestedStatus === "sent"
-        ? rows
-        : rows.filter((row: any) => row.status === requestedStatus);
+    const sentCount = resolved.length;
+    const deliveredCount = resolved.filter((item) => item.delivered_at).length;
+    const viewedCount = resolved.filter((item) => item.viewed_at).length;
+    const pendingCount = resolved.filter((item) => !item.delivered_at && !item.viewed_at).length;
 
-    const stats = {
-      sent: rows.length,
-      delivered: rows.filter((row: any) => row.status === "delivered").length,
-      read: rows.filter((row: any) => row.status === "read").length,
-      pending: rows.filter((row: any) => row.status === "pending").length,
-    };
-
-    return jsonOk({
-      message,
-      status: requestedStatus,
-      filter: requestedStatus,
-      recipients: filteredRows,
-      stats,
-      summary: stats,
+    return NextResponse.json({
+      ok: true,
+      recipients: resolved,
+      stats: {
+        sent: sentCount,
+        delivered: deliveredCount,
+        viewed: viewedCount,
+        pending: pendingCount,
+      },
     });
   } catch (e: any) {
+    console.error("[GET /api/school/messages/[id]/recipients]", e);
+
     return jsonError(e?.message || "Erro interno ao carregar destinatários.", 500);
   }
 }
