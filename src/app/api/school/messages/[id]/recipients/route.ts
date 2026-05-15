@@ -49,7 +49,7 @@ function recipientComputedStatus(row: any): RecipientStatus {
   return "pending";
 }
 
-function staffNameFromUser(user: any) {
+function staffNameFromUser(user: any, fallback?: string | null) {
   const meta = user?.raw_user_meta_data || user?.user_metadata || {};
 
   const name =
@@ -58,17 +58,19 @@ function staffNameFromUser(user: any) {
     meta.name ||
     meta.nome ||
     user?.email ||
+    fallback ||
     "Usuário escolar";
 
   return String(name);
 }
 
-function parentDisplayName(parent: any) {
+function parentDisplayName(parent: any, fallback?: string | null) {
   return (
     parent?.full_name ||
     parent?.name ||
     parent?.responsible_name ||
     parent?.email ||
+    fallback ||
     "Responsável"
   );
 }
@@ -84,7 +86,7 @@ async function getStaffFromToken(token: string) {
 
   const { data: staff, error: staffErr } = await supabaseAdmin
     .from("school_users")
-    .select("school_id, role, is_active")
+    .select("school_id, role, is_active, created_at")
     .eq("user_id", userId)
     .eq("is_active", true)
     .order("created_at", { ascending: false })
@@ -146,6 +148,19 @@ async function loadAuthUsersById(userIds: string[]) {
   );
 }
 
+function getRequestedStatus(req: Request): RecipientStatus {
+  const url = new URL(req.url);
+
+  const raw =
+    String(url.searchParams.get("filter") || "").trim().toLowerCase() ||
+    String(url.searchParams.get("status") || "").trim().toLowerCase() ||
+    "sent";
+
+  const allowedStatus = new Set(["sent", "delivered", "read", "pending"]);
+
+  return allowedStatus.has(raw) ? (raw as RecipientStatus) : "sent";
+}
+
 export async function GET(req: Request, context: RouteContext) {
   try {
     const params = await context.params;
@@ -191,15 +206,7 @@ export async function GET(req: Request, context: RouteContext) {
       return jsonError("Comunicado não encontrado nesta escola.", 404);
     }
 
-    const url = new URL(req.url);
-    const statusParam = String(url.searchParams.get("status") || "sent")
-      .trim()
-      .toLowerCase();
-
-    const allowedStatus = new Set(["sent", "delivered", "read", "pending"]);
-    const requestedStatus: RecipientStatus = allowedStatus.has(statusParam)
-      ? (statusParam as RecipientStatus)
-      : "sent";
+    const requestedStatus = getRequestedStatus(req);
 
     const { data: recipients, error: recErr } = await supabaseAdmin
       .from("message_recipients")
@@ -253,7 +260,9 @@ export async function GET(req: Request, context: RouteContext) {
         .in("id", parentIds);
 
       if (!parentErr) {
-        parentsById = new Map((parents || []).map((parent: any) => [String(parent.id), parent]));
+        parentsById = new Map(
+          (parents || []).map((parent: any) => [String(parent.id), parent])
+        );
       }
     }
 
@@ -268,7 +277,10 @@ export async function GET(req: Request, context: RouteContext) {
 
       if (!staffErr) {
         schoolUsersByUserId = new Map(
-          (staffRows || []).map((staffRow: any) => [String(staffRow.user_id), staffRow])
+          (staffRows || []).map((staffRow: any) => [
+            String(staffRow.user_id),
+            staffRow,
+          ])
         );
       }
     }
@@ -282,19 +294,27 @@ export async function GET(req: Request, context: RouteContext) {
 
       if (type === "parent") {
         const parent = parentsById.get(recipientId) || null;
+        const name = parentDisplayName(parent, recipientId);
 
         return {
           id: String(row.id),
           recipientType: "parent",
+          recipient_type: "parent",
           recipientId,
-          name: parentDisplayName(parent),
+          recipient_id: recipientId,
+          name,
+          fullName: name,
+          full_name: name,
           email: parent?.email || null,
           phone: parent?.phone || parent?.whatsapp || null,
           role: "responsavel",
           roleLabel: "Responsável",
           deliveredAt: row.delivered_at || null,
+          delivered_at: row.delivered_at || null,
           readAt: row.read_at || null,
+          read_at: row.read_at || null,
           createdAt: row.created_at || null,
+          created_at: row.created_at || null,
           status: computedStatus,
         };
       }
@@ -302,19 +322,27 @@ export async function GET(req: Request, context: RouteContext) {
       const authUser = authUsersById.get(recipientId) || null;
       const staffRow = schoolUsersByUserId.get(recipientId) || null;
       const role = normalizeRole(staffRow?.role);
+      const name = staffNameFromUser(authUser, recipientId);
 
       return {
         id: String(row.id),
         recipientType: "staff",
+        recipient_type: "staff",
         recipientId,
-        name: staffNameFromUser(authUser),
+        recipient_id: recipientId,
+        name,
+        fullName: name,
+        full_name: name,
         email: authUser?.email || null,
         phone: null,
         role,
         roleLabel: roleLabel(role),
         deliveredAt: row.delivered_at || null,
+        delivered_at: row.delivered_at || null,
         readAt: row.read_at || null,
+        read_at: row.read_at || null,
         createdAt: row.created_at || null,
+        created_at: row.created_at || null,
         status: computedStatus,
       };
     });
@@ -324,7 +352,7 @@ export async function GET(req: Request, context: RouteContext) {
         ? rows
         : rows.filter((row: any) => row.status === requestedStatus);
 
-    const summary = {
+    const stats = {
       sent: rows.length,
       delivered: rows.filter((row: any) => row.status === "delivered").length,
       read: rows.filter((row: any) => row.status === "read").length,
@@ -334,8 +362,10 @@ export async function GET(req: Request, context: RouteContext) {
     return jsonOk({
       message,
       status: requestedStatus,
+      filter: requestedStatus,
       recipients: filteredRows,
-      summary,
+      stats,
+      summary: stats,
     });
   } catch (e: any) {
     return jsonError(e?.message || "Erro interno ao carregar destinatários.", 500);

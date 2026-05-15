@@ -51,17 +51,37 @@ async function getParentFromToken(token: string) {
   };
 }
 
+async function getSchoolName(schoolId: string) {
+  try {
+    const { data } = await supabaseAdmin
+      .from("schools")
+      .select("name")
+      .eq("id", schoolId)
+      .maybeSingle();
+
+    return data?.name || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
   try {
     const authHeader = req.headers.get("authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
-    if (!token) return jsonError("Sessão não enviada.", 401);
+    if (!token) {
+      return jsonError("Sessão não enviada.", 401);
+    }
 
     const parentCheck = await getParentFromToken(token);
-    if (!parentCheck.ok) return jsonError(parentCheck.error, parentCheck.status);
 
-    const { parentId, schoolId } = parentCheck;
+    if (!parentCheck.ok) {
+      return jsonError(parentCheck.error, parentCheck.status);
+    }
+
+    const { parentId, schoolId, parent } = parentCheck;
+    const schoolName = await getSchoolName(schoolId);
 
     const { data: recipients, error: recErr } = await supabaseAdmin
       .from("message_recipients")
@@ -75,16 +95,16 @@ export async function GET(req: Request) {
       return jsonError("Erro ao carregar comunicados recebidos: " + recErr.message, 500);
     }
 
-    const unreadDeliveries = (recipients || [])
+    const missingDelivered = (recipients || [])
       .filter((row: any) => !row.delivered_at)
       .map((row: any) => String(row.id))
       .filter(Boolean);
 
-    if (unreadDeliveries.length > 0) {
+    if (missingDelivered.length > 0) {
       await supabaseAdmin
         .from("message_recipients")
         .update({ delivered_at: new Date().toISOString() })
-        .in("id", unreadDeliveries)
+        .in("id", missingDelivered)
         .eq("school_id", schoolId)
         .eq("recipient_type", "parent")
         .eq("recipient_id", parentId);
@@ -97,7 +117,9 @@ export async function GET(req: Request) {
     if (messageIds.length === 0) {
       return jsonOk({
         schoolId,
+        schoolName,
         parentId,
+        parentName: parent.full_name || null,
         messages: [],
         summary: {
           total: 0,
@@ -170,7 +192,9 @@ export async function GET(req: Request) {
 
     return jsonOk({
       schoolId,
+      schoolName,
       parentId,
+      parentName: parent.full_name || null,
       messages: rows,
       summary: {
         total: rows.length,
@@ -188,15 +212,22 @@ export async function POST(req: Request) {
     const authHeader = req.headers.get("authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
-    if (!token) return jsonError("Sessão não enviada.", 401);
+    if (!token) {
+      return jsonError("Sessão não enviada.", 401);
+    }
 
     const parentCheck = await getParentFromToken(token);
-    if (!parentCheck.ok) return jsonError(parentCheck.error, parentCheck.status);
+
+    if (!parentCheck.ok) {
+      return jsonError(parentCheck.error, parentCheck.status);
+    }
 
     const body = await req.json().catch(() => ({}));
     const messageId = String(body?.messageId || body?.message_id || "").trim();
 
-    if (!messageId) return jsonError("messageId é obrigatório.", 422);
+    if (!messageId) {
+      return jsonError("messageId é obrigatório.", 422);
+    }
 
     const now = new Date().toISOString();
 

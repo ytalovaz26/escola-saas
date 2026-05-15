@@ -5,33 +5,18 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type AudienceType =
-  | "school"
   | "all_parents"
+  | "parent_individual"
   | "class"
   | "teachers"
   | "teachers_class"
-  | "teacher_class"
   | "teacher_individual"
   | "coordinators"
-  | "coordinator_individual"
   | "secretaria"
-  | "staff";
+  | "staff"
+  | "school";
 
-type RecipientStatus = "sent" | "delivered" | "read" | "pending";
-
-type ClassRow = {
-  id: string;
-  name: string;
-  grade: string | null;
-  shift: string | null;
-};
-
-type StaffRow = {
-  userId: string;
-  fullName: string | null;
-  email: string | null;
-  role: string;
-};
+type MessageCategory = "normal" | "advertencia_suspensao";
 
 type MessageStats = {
   sent: number;
@@ -40,51 +25,199 @@ type MessageStats = {
   pending: number;
 };
 
-type RecipientRow = {
-  id: string;
-  recipientType: "parent" | "staff" | string;
-  recipientId: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  role: string | null;
-  roleLabel: string;
-  deliveredAt: string | null;
-  readAt: string | null;
-  createdAt: string | null;
-  status: RecipientStatus;
-};
-
-type MessageRow = {
+type SchoolMessage = {
   id: string;
   school_id: string;
-  created_by: string;
+  created_by: string | null;
   title: string;
   body: string;
-  status: string;
-  audience_type?: AudienceType | string | null;
-  target_class_id?: string | null;
-  target_role?: string | null;
-  target_user_id?: string | null;
-  published_at?: string | null;
-  created_at: string;
-  audienceLabel?: string;
-  targetClass?: ClassRow | null;
+  status: string | null;
+  audience_type: string | null;
+  target_class_id: string | null;
+  target_role: string | null;
+  published_at: string | null;
+  created_at: string | null;
+  audienceLabel?: string | null;
+  targetClass?: {
+    id: string;
+    name: string | null;
+    grade?: string | null;
+    shift?: string | null;
+  } | null;
   stats?: MessageStats;
 };
 
-type MePayload = {
-  ok: true;
-  user: { id: string; email: string | null };
-  isPlatformAdmin: boolean;
-  school?: { schoolId: string; role: string };
-  branding?: {
-    brandName: string | null;
-    brandLogoUrl: string | null;
-    brandIconUrl: string | null;
-  };
-  redirectTo: string;
+type SelectableParent = {
+  id: string;
+  parentId?: string;
+  userId?: string | null;
+  fullName?: string | null;
+  name?: string | null;
+  phone?: string | null;
+  photoUrl?: string | null;
 };
+
+type SelectableStaff = {
+  id: string;
+  userId?: string;
+  fullName?: string | null;
+  name?: string | null;
+  email?: string | null;
+  role?: string | null;
+  roleLabel?: string | null;
+};
+
+type ClassRow = {
+  id: string;
+  name: string;
+  grade?: string | null;
+  shift?: string | null;
+};
+
+type RecipientStatusRow = {
+  id?: string;
+  recipientId?: string;
+  recipient_id?: string;
+  recipientType?: string;
+  recipient_type?: string;
+  name?: string | null;
+  fullName?: string | null;
+  full_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  deliveredAt?: string | null;
+  delivered_at?: string | null;
+  readAt?: string | null;
+  read_at?: string | null;
+  status?: string | null;
+};
+
+type RecipientModal = {
+  title: string;
+  subtitle: string;
+  messageTitle: string;
+  rows: RecipientStatusRow[];
+  stats: MessageStats;
+} | null;
+
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+function safeNumber(value: unknown) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeAudienceType(value: unknown): AudienceType {
+  const v = String(value || "all_parents").trim().toLowerCase();
+
+  if (v === "teacher_class") return "teachers_class";
+
+  const allowed: AudienceType[] = [
+    "all_parents",
+    "parent_individual",
+    "class",
+    "teachers",
+    "teachers_class",
+    "teacher_individual",
+    "coordinators",
+    "secretaria",
+    "staff",
+    "school",
+  ];
+
+  return allowed.includes(v as AudienceType) ? (v as AudienceType) : "all_parents";
+}
+
+function formatDateTimeBR(value?: string | null) {
+  if (!value) return "—";
+
+  try {
+    return new Date(value).toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return value;
+  }
+}
+
+function formatDateBR(value?: string | null) {
+  if (!value) return "—";
+
+  try {
+    return new Date(value).toLocaleDateString("pt-BR");
+  } catch {
+    return value;
+  }
+}
+
+function getStats(message: SchoolMessage): MessageStats {
+  return {
+    sent: safeNumber(message.stats?.sent),
+    delivered: safeNumber(message.stats?.delivered),
+    read: safeNumber(message.stats?.read),
+    pending: safeNumber(message.stats?.pending),
+  };
+}
+
+function audienceLabel(type: AudienceType) {
+  if (type === "all_parents") return "Todos os pais/responsáveis";
+  if (type === "parent_individual") return "Pais individuais";
+  if (type === "class") return "Responsáveis de uma turma";
+  if (type === "teachers") return "Todos os professores";
+  if (type === "teachers_class") return "Professores de uma turma";
+  if (type === "teacher_individual") return "Professor individual";
+  if (type === "coordinators") return "Coordenadores";
+  if (type === "secretaria") return "Secretaria";
+  if (type === "staff") return "Toda equipe escolar";
+  if (type === "school") return "Toda escola";
+
+  return "Todos os pais/responsáveis";
+}
+
+function normalizeName(row: any) {
+  return (
+    cleanText(row?.fullName) ||
+    cleanText(row?.full_name) ||
+    cleanText(row?.name) ||
+    cleanText(row?.email) ||
+    cleanText(row?.phone) ||
+    cleanText(row?.recipientId) ||
+    cleanText(row?.recipient_id) ||
+    "Destinatário"
+  );
+}
+
+function initials(name?: string | null) {
+  const safe = cleanText(name);
+
+  if (!safe) return "DE";
+
+  const parts = safe.split(/\s+/).filter(Boolean);
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase();
+}
+
+function audienceNeedsClass(type: AudienceType) {
+  return type === "class" || type === "teachers_class";
+}
+
+function audienceNeedsTeacher(type: AudienceType) {
+  return type === "teacher_individual";
+}
+
+function audienceNeedsParent(type: AudienceType) {
+  return type === "parent_individual";
+}
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -98,272 +231,290 @@ async function safeJson(res: Response) {
   }
 }
 
-function normalizeRole(role?: string | null) {
-  const r = String(role || "").trim().toLowerCase();
-
-  if (r === "diretor" || r === "director") return "diretor";
-  if (r === "coordenador" || r === "coordinator") return "coordenador";
-  if (r === "secretaria" || r === "secretary") return "secretaria";
-  if (r === "professor" || r === "teacher") return "professor";
-  if (r === "admin") return "admin";
-
-  return r || "unknown";
-}
-
-function normalizeAudienceType(type?: string | null): AudienceType {
-  const safe = String(type || "school").trim().toLowerCase();
-
-  if (safe === "teacher_class") return "teachers_class";
-
-  const allowed = new Set([
-    "school",
-    "all_parents",
-    "class",
-    "teachers",
-    "teachers_class",
-    "teacher_individual",
-    "coordinators",
-    "coordinator_individual",
-    "secretaria",
-    "staff",
-  ]);
-
-  return allowed.has(safe) ? (safe as AudienceType) : "school";
-}
-
-function roleLabel(role?: string | null) {
-  const r = normalizeRole(role);
-
-  if (r === "diretor") return "Diretor";
-  if (r === "coordenador") return "Coordenador";
-  if (r === "secretaria") return "Secretaria";
-  if (r === "professor") return "Professor";
-  if (r === "admin") return "Administrador";
-
-  return "Gestão escolar";
-}
-
-function formatDateTimeBR(value?: string | null) {
-  if (!value) return "—";
-
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-
-  return d.toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function staffLabel(staff: StaffRow) {
-  return staff.fullName || staff.email || staff.userId;
-}
-
-function audienceLabel(
-  type: AudienceType,
-  selectedClass?: ClassRow | null,
-  selectedTeacher?: StaffRow | null
-) {
-  const safeType = normalizeAudienceType(type);
-
-  if (safeType === "school") return "Toda escola";
-  if (safeType === "all_parents") return "Todos os pais/responsáveis";
-
-  if (safeType === "class") {
-    if (!selectedClass) return "Responsáveis de uma turma";
-
-    return `Responsáveis da turma: ${selectedClass.name}${
-      selectedClass.grade ? ` • ${selectedClass.grade}` : ""
-    }${selectedClass.shift ? ` • ${selectedClass.shift}` : ""}`;
-  }
-
-  if (safeType === "teachers") return "Todos os professores";
-
-  if (safeType === "teachers_class") {
-    if (!selectedClass) return "Professores de uma turma";
-
-    return `Professores da turma: ${selectedClass.name}${
-      selectedClass.grade ? ` • ${selectedClass.grade}` : ""
-    }${selectedClass.shift ? ` • ${selectedClass.shift}` : ""}`;
-  }
-
-  if (safeType === "teacher_individual") {
-    if (!selectedTeacher) return "Professor individual";
-    return `Professor: ${staffLabel(selectedTeacher)}`;
-  }
-
-  if (safeType === "coordinators") return "Coordenadores";
-  if (safeType === "coordinator_individual") return "Coordenador individual";
-  if (safeType === "secretaria") return "Secretaria";
-  if (safeType === "staff") return "Toda equipe escolar";
-
-  return "Toda escola";
-}
-
-function statusLabel(status?: string | null) {
-  const safe = String(status || "").toLowerCase();
-
-  if (safe === "published") return "Publicado";
-  if (safe === "draft") return "Rascunho";
-
-  return safe || "—";
-}
-
-function recipientStatusLabel(status: RecipientStatus) {
-  if (status === "sent") return "Enviados";
-  if (status === "delivered") return "Entregues não visualizados";
-  if (status === "read") return "Visualizados";
-  if (status === "pending") return "Pendentes";
-
-  return "Destinatários";
-}
-
-function recipientStatusDescription(status: RecipientStatus) {
-  if (status === "sent") return "Todos os destinatários registrados para este comunicado.";
-  if (status === "delivered") {
-    return "Destinatários que receberam o comunicado, mas ainda não visualizaram.";
-  }
-  if (status === "read") return "Destinatários que já abriram o comunicado no portal.";
-  return "Destinatários que ainda não possuem registro de entrega ou leitura.";
-}
-
-function MetricCard({
+function StatCard({
   label,
   value,
   help,
 }: {
   label: string;
-  value: string;
+  value: string | number;
   help: string;
 }) {
   return (
-    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
+    <div className="min-w-0 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
         {label}
       </div>
 
-      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+      <div className="mt-3 break-words text-3xl font-semibold tracking-tight text-slate-900">
         {value}
       </div>
 
-      <div className="mt-2 text-sm leading-6 text-slate-500">{help}</div>
+      <div className="mt-2 break-words text-sm leading-6 text-slate-500">
+        {help}
+      </div>
     </div>
   );
 }
 
-function StatusPill({
-  label,
-  value,
-  tone = "slate",
-  onClick,
-}: {
-  label: string;
-  value: number;
-  tone?: "slate" | "blue" | "emerald" | "amber";
-  onClick?: () => void;
-}) {
-  const classes = {
-    slate: "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100",
-    blue: "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100",
-    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100",
-    amber: "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100",
-  };
+function AudienceHelpCard() {
+  return (
+    <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+      <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+        Como funciona o status
+      </h2>
 
-  const content = (
-    <>
-      <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
-        {label}
-      </div>
-      <div className="mt-1 text-xl font-semibold">{value}</div>
-      {onClick ? (
-        <div className="mt-1 text-[11px] font-medium opacity-70">
-          Clique para ver lista
+      <p className="mt-2 text-sm leading-6 text-slate-500">
+        O painel mostra se o comunicado foi enviado, entregue e visualizado. Nos
+        comunicados publicados, cada card de status é clicável e mostra a lista nominal.
+      </p>
+
+      <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="rounded-3xl border border-blue-200 bg-blue-50 p-4">
+          <div className="text-sm font-semibold text-blue-800">Enviado</div>
+          <p className="mt-2 text-sm leading-6 text-blue-700">
+            Todos os destinatários registrados para aquele comunicado.
+          </p>
         </div>
-      ) : null}
-    </>
+
+        <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
+          <div className="text-sm font-semibold text-emerald-800">Entregue</div>
+          <p className="mt-2 text-sm leading-6 text-emerald-700">
+            Quem recebeu o comunicado, mas ainda não visualizou.
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-sm font-semibold text-slate-900">Visualizado</div>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            Quem abriu o comunicado no portal.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Segmentações disponíveis
+        </div>
+
+        <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-600">
+          <li>• Todos os pais/responsáveis.</li>
+          <li>• Pais individuais.</li>
+          <li>• Responsáveis de uma turma.</li>
+          <li>• Todos os professores.</li>
+          <li>• Professores de uma turma.</li>
+          <li>• Professor individual.</li>
+          <li>• Coordenadores, secretaria ou toda equipe escolar.</li>
+          <li>• Advertência/Suspensão para comunicação disciplinar formal.</li>
+        </ul>
+      </div>
+    </section>
   );
-
-  if (onClick) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        className={`rounded-2xl border px-4 py-3 text-left transition ${classes[tone]}`}
-      >
-        {content}
-      </button>
-    );
-  }
-
-  return <div className={`rounded-2xl border px-4 py-3 ${classes[tone]}`}>{content}</div>;
 }
 
-function AudienceHelp({ audienceType }: { audienceType: AudienceType }) {
-  const safeType = normalizeAudienceType(audienceType);
-
-  if (safeType === "school" || safeType === "all_parents") {
-    return (
-      <p className="mt-2 text-xs leading-5 text-slate-500">
-        O comunicado será entregue para todos os responsáveis cadastrados na escola.
-      </p>
-    );
-  }
-
-  if (safeType === "class") {
-    return (
-      <p className="mt-2 text-xs leading-5 text-slate-500">
-        O comunicado será entregue apenas aos responsáveis dos alunos ativos na turma selecionada.
-      </p>
-    );
-  }
-
-  if (safeType === "teachers") {
-    return (
-      <p className="mt-2 text-xs leading-5 text-slate-500">
-        O comunicado será direcionado para todos os professores ativos da escola.
-      </p>
-    );
-  }
-
-  if (safeType === "teachers_class") {
-    return (
-      <p className="mt-2 text-xs leading-5 text-slate-500">
-        O comunicado será direcionado apenas aos professores vinculados à turma selecionada.
-      </p>
-    );
-  }
-
-  if (safeType === "teacher_individual") {
-    return (
-      <p className="mt-2 text-xs leading-5 text-slate-500">
-        O comunicado será direcionado para um professor específico.
-      </p>
-    );
-  }
-
-  if (safeType === "coordinators") {
-    return (
-      <p className="mt-2 text-xs leading-5 text-slate-500">
-        O comunicado será direcionado aos coordenadores ativos da escola.
-      </p>
-    );
-  }
-
-  if (safeType === "secretaria") {
-    return (
-      <p className="mt-2 text-xs leading-5 text-slate-500">
-        O comunicado será direcionado aos usuários com perfil de secretaria.
-      </p>
-    );
-  }
+function RecipientModalView({
+  modal,
+  onClose,
+}: {
+  modal: RecipientModal;
+  onClose: () => void;
+}) {
+  if (!modal) return null;
 
   return (
-    <p className="mt-2 text-xs leading-5 text-slate-500">
-      O comunicado será direcionado para toda a equipe escolar cadastrada.
-    </p>
+    <div className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-slate-950/70 p-4">
+      <div className="my-8 w-full max-w-6xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
+        <div className="bg-slate-950 px-6 py-6 text-white md:px-8">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-semibold">
+                Lista de destinatários
+              </div>
+
+              <h2 className="mt-4 break-words text-2xl font-semibold">
+                {modal.title}
+              </h2>
+
+              <p className="mt-2 break-words text-sm leading-6 text-slate-200">
+                {modal.subtitle}
+              </p>
+
+              <p className="mt-4 break-words text-sm text-slate-200">
+                Comunicado: <span className="font-semibold">{modal.messageTitle}</span>
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="shrink-0 rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 border-b border-slate-200 p-4 md:grid-cols-4 md:p-6">
+          <StatCard
+            label="Enviado"
+            value={modal.stats.sent}
+            help="Total de destinatários."
+          />
+          <StatCard
+            label="Entregue"
+            value={modal.stats.delivered}
+            help="Recebeu e ainda não visualizou."
+          />
+          <StatCard
+            label="Visualizado"
+            value={modal.stats.read}
+            help="Abriu no portal."
+          />
+          <StatCard
+            label="Pendente"
+            value={modal.stats.pending}
+            help="Sem confirmação."
+          />
+        </div>
+
+        <div className="p-4 md:p-6">
+          {modal.rows.length === 0 ? (
+            <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
+              Nenhum destinatário encontrado para este filtro.
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-3 xl:hidden">
+                {modal.rows.map((row, index) => {
+                  const name = normalizeName(row);
+                  const deliveredAt = row.deliveredAt || row.delivered_at || null;
+                  const readAt = row.readAt || row.read_at || null;
+
+                  return (
+                    <article
+                      key={`${row.id || row.recipientId || row.recipient_id || index}`}
+                      className="rounded-3xl border border-slate-200 bg-slate-50 p-4"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
+                          {initials(name)}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="break-words text-sm font-semibold text-slate-900">
+                            {name}
+                          </div>
+
+                          {row.email ? (
+                            <div className="mt-1 break-all text-xs text-slate-500">
+                              {row.email}
+                            </div>
+                          ) : null}
+
+                          {row.phone ? (
+                            <div className="mt-1 break-words text-xs text-slate-500">
+                              {row.phone}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-1 gap-2 text-xs text-slate-600">
+                        <div className="rounded-2xl bg-white px-3 py-2">
+                          Entregue: {formatDateTimeBR(deliveredAt)}
+                        </div>
+                        <div className="rounded-2xl bg-white px-3 py-2">
+                          Visualizado: {formatDateTimeBR(readAt)}
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="hidden overflow-hidden rounded-3xl border border-slate-200 xl:block">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[900px]">
+                    <thead className="bg-slate-50">
+                      <tr className="border-b border-slate-200 text-left">
+                        <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Destinatário
+                        </th>
+                        <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Tipo
+                        </th>
+                        <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Entregue em
+                        </th>
+                        <th className="px-5 py-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Visualizado em
+                        </th>
+                      </tr>
+                    </thead>
+
+                    <tbody className="bg-white">
+                      {modal.rows.map((row, index) => {
+                        const name = normalizeName(row);
+                        const deliveredAt = row.deliveredAt || row.delivered_at || null;
+                        const readAt = row.readAt || row.read_at || null;
+
+                        return (
+                          <tr
+                            key={`${row.id || row.recipientId || row.recipient_id || index}`}
+                            className="border-b border-slate-100 align-top last:border-b-0"
+                          >
+                            <td className="px-5 py-4">
+                              <div className="flex items-start gap-3">
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
+                                  {initials(name)}
+                                </div>
+
+                                <div className="min-w-0">
+                                  <div className="max-w-[360px] break-words text-sm font-semibold text-slate-900">
+                                    {name}
+                                  </div>
+
+                                  {row.email ? (
+                                    <div className="mt-1 max-w-[360px] break-all text-xs text-slate-500">
+                                      {row.email}
+                                    </div>
+                                  ) : null}
+
+                                  {row.phone ? (
+                                    <div className="mt-1 max-w-[360px] break-words text-xs text-slate-500">
+                                      {row.phone}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </td>
+
+                            <td className="px-5 py-4 text-sm text-slate-600">
+                              {row.recipientType ||
+                                row.recipient_type ||
+                                row.status ||
+                                "Destinatário"}
+                            </td>
+
+                            <td className="px-5 py-4 text-sm text-slate-600">
+                              {formatDateTimeBR(deliveredAt)}
+                            </td>
+
+                            <td className="px-5 py-4 text-sm text-slate-600">
+                              {formatDateTimeBR(readAt)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -371,79 +522,59 @@ export default function SchoolMessagesPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
-  const [schoolId, setSchoolId] = useState<string | null>(null);
-  const [role, setRole] = useState<string | null>(null);
-  const [brandName, setBrandName] = useState("Minha Escola");
-  const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [reloading, setReloading] = useState(false);
 
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const [messages, setMessages] = useState<SchoolMessage[]>([]);
+  const [selectableParents, setSelectableParents] = useState<SelectableParent[]>([]);
+  const [selectableStaff, setSelectableStaff] = useState<SelectableStaff[]>([]);
   const [classes, setClasses] = useState<ClassRow[]>([]);
-  const [staff, setStaff] = useState<StaffRow[]>([]);
-  const [messages, setMessages] = useState<MessageRow[]>([]);
+
+  const [audienceType, setAudienceType] = useState<AudienceType>("all_parents");
+  const [category, setCategory] = useState<MessageCategory>("normal");
+  const [targetClassId, setTargetClassId] = useState("");
+  const [targetTeacherUserId, setTargetTeacherUserId] = useState("");
+  const [targetParentId, setTargetParentId] = useState("");
 
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [audienceType, setAudienceType] = useState<AudienceType>("all_parents");
-  const [targetClassId, setTargetClassId] = useState("");
-  const [targetTeacherUserId, setTargetTeacherUserId] = useState("");
-  const [publishing, setPublishing] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const [editingMessage, setEditingMessage] = useState<MessageRow | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editBody, setEditBody] = useState("");
-  const [savingEdit, setSavingEdit] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [recipientModal, setRecipientModal] = useState<RecipientModal>(null);
 
-  const [recipientModalOpen, setRecipientModalOpen] = useState(false);
-  const [recipientModalMessage, setRecipientModalMessage] = useState<MessageRow | null>(null);
-  const [recipientModalStatus, setRecipientModalStatus] = useState<RecipientStatus>("sent");
-  const [recipientRows, setRecipientRows] = useState<RecipientRow[]>([]);
-  const [recipientSummary, setRecipientSummary] = useState<MessageStats | null>(null);
-  const [recipientLoading, setRecipientLoading] = useState(false);
-  const [recipientError, setRecipientError] = useState<string | null>(null);
+  const teacherOptions = useMemo(() => {
+    return selectableStaff.filter((item) => {
+      const role = cleanText(item.role).toLowerCase();
+      return role === "professor" || role === "teacher";
+    });
+  }, [selectableStaff]);
 
-  const teachers = useMemo(() => {
-    return staff.filter((item) => normalizeRole(item.role) === "professor");
-  }, [staff]);
+  const totals = useMemo(() => {
+    const totalMessages = messages.length;
+    const sent = messages.reduce((acc, msg) => acc + getStats(msg).sent, 0);
+    const read = messages.reduce((acc, msg) => acc + getStats(msg).read, 0);
+    const last = messages[0] || null;
 
-  const selectedClass = useMemo(() => {
-    if (!targetClassId) return null;
-    return classes.find((item) => item.id === targetClassId) || null;
-  }, [classes, targetClassId]);
-
-  const selectedTeacher = useMemo(() => {
-    if (!targetTeacherUserId) return null;
-    return teachers.find((item) => item.userId === targetTeacherUserId) || null;
-  }, [teachers, targetTeacherUserId]);
-
-  const totalMessages = useMemo(() => messages.length, [messages]);
-
-  const totalSent = useMemo(() => {
-    return messages.reduce((acc, item) => acc + Number(item.stats?.sent || 0), 0);
-  }, [messages]);
-
-  const totalRead = useMemo(() => {
-    return messages.reduce((acc, item) => acc + Number(item.stats?.read || 0), 0);
-  }, [messages]);
-
-  const latestMessage = useMemo(() => {
-    return messages[0] || null;
+    return {
+      totalMessages,
+      sent,
+      read,
+      last,
+    };
   }, [messages]);
 
   async function getAccessToken() {
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-
-    if (sessionError || !sessionData.session?.access_token) {
-      throw new Error(sessionError?.message || "Sessão inválida.");
-    }
-
-    return sessionData.session.access_token;
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token || null;
   }
 
   async function loadClasses(token: string) {
-    const res = await fetch("/api/school/classes", {
-      headers: { Authorization: `Bearer ${token}` },
+    const res = await fetch("/api/school/classes/list", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
       cache: "no-store",
     });
 
@@ -454,233 +585,134 @@ export default function SchoolMessagesPage() {
       return;
     }
 
-    setClasses((json.classes || []) as ClassRow[]);
+    const list = Array.isArray(json.classes) ? json.classes : [];
+
+    setClasses(
+      list
+        .map((item: any) => ({
+          id: String(item.id || ""),
+          name: cleanText(item.name) || cleanText(item.class_name) || "Turma sem nome",
+          grade: item.grade ?? item.series ?? null,
+          shift: item.shift ?? item.turno ?? null,
+        }))
+        .filter((item: ClassRow) => item.id)
+    );
   }
 
-  function normalizeStaffRows(payload: any): StaffRow[] {
-    const rawRows =
-      payload?.selectableStaff ||
-      payload?.staff ||
-      payload?.users ||
-      payload?.teachers ||
-      payload?.items ||
-      payload?.data ||
-      [];
+  async function loadMessages(options?: { silent?: boolean }) {
+    const silent = options?.silent === true;
 
-    if (!Array.isArray(rawRows)) return [];
-
-    return rawRows
-      .map((row: any) => {
-        const userId =
-          row.userId ||
-          row.user_id ||
-          row.auth_user_id ||
-          row.teacher_user_id ||
-          row.staff_user_id ||
-          "";
-
-        const fullName =
-          row.fullName ||
-          row.full_name ||
-          row.name ||
-          row.display_name ||
-          row.teacher_name ||
-          null;
-
-        const email = row.email || row.user_email || row.teacher_email || null;
-
-        const role = normalizeRole(row.role || row.user_role || row.profile || "professor");
-
-        return {
-          userId: String(userId || "").trim(),
-          fullName: fullName ? String(fullName) : null,
-          email: email ? String(email) : null,
-          role,
-        };
-      })
-      .filter((row: StaffRow) => row.userId);
-  }
-
-  async function loadStaff(token: string) {
-    const endpoints = ["/api/school/staff", "/api/school/teachers"];
-
-    for (const endpoint of endpoints) {
-      try {
-        const res = await fetch(endpoint, {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
-
-        const json = await safeJson(res);
-
-        if (res.ok && json?.ok) {
-          const rows = normalizeStaffRows(json);
-          if (rows.length > 0) {
-            setStaff(rows);
-            return;
-          }
-        }
-      } catch {
-        // tenta próximo endpoint
-      }
-    }
-
-    setStaff([]);
-  }
-
-  async function loadMessages(token?: string) {
-    const accessToken = token || (await getAccessToken());
-
-    const res = await fetch("/api/school/messages", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      cache: "no-store",
-    });
-
-    const json = await safeJson(res);
-
-    if (!res.ok || !json?.ok) {
-      setError(json?.error || "Erro ao carregar comunicados.");
-      setMessages([]);
-      return;
-    }
-
-    setMessages((json.messages || []) as MessageRow[]);
-
-    const rows = normalizeStaffRows(json);
-    if (rows.length > 0) {
-      setStaff(rows);
-    }
-  }
-
-  async function loadPage() {
-    try {
-      setError(null);
-      setSuccessMessage(null);
+    if (silent) {
+      setReloading(true);
+    } else {
       setLoading(true);
+    }
 
+    setError(null);
+
+    try {
       const token = await getAccessToken();
 
-      const meRes = await fetch("/api/me", {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-
-      const me = (await safeJson(meRes)) as MePayload | any;
-
-      if (!meRes.ok || !me?.ok) {
-        router.replace(me?.redirectTo || "/login");
-        return;
-      }
-
-      if (me?.isPlatformAdmin) {
-        router.replace("/admin-master");
-        return;
-      }
-
-      const normalized = normalizeRole(me?.school?.role);
-      const sid = me?.school?.schoolId ? String(me.school.schoolId) : null;
-
-      if (
-        normalized !== "diretor" &&
-        normalized !== "coordenador" &&
-        normalized !== "secretaria" &&
-        normalized !== "admin"
-      ) {
-        router.replace("/school");
-        return;
-      }
-
-      if (!sid) {
-        setError("Usuário sem escola vinculada.");
-        return;
-      }
-
-      setSchoolId(sid);
-      setRole(normalized);
-      setBrandName(me?.branding?.brandName || "Minha Escola");
-
-      await Promise.all([loadClasses(token), loadStaff(token), loadMessages(token)]);
-    } catch (e: any) {
-      const msg = e?.message || "Erro inesperado ao carregar comunicados.";
-      setError(msg);
-
-      if (msg.toLowerCase().includes("sessão")) {
+      if (!token) {
         router.replace("/login");
+        return;
       }
+
+      const [messagesRes] = await Promise.all([
+        fetch("/api/school/messages", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          cache: "no-store",
+        }),
+        loadClasses(token),
+      ]);
+
+      const messagesJson = await safeJson(messagesRes);
+
+      if (!messagesRes.ok || !messagesJson?.ok) {
+        setError(messagesJson?.error || "Erro ao carregar comunicados.");
+        return;
+      }
+
+      setMessages(Array.isArray(messagesJson.messages) ? messagesJson.messages : []);
+      setSelectableParents(
+        Array.isArray(messagesJson.selectableParents) ? messagesJson.selectableParents : []
+      );
+      setSelectableStaff(
+        Array.isArray(messagesJson.selectableStaff) ? messagesJson.selectableStaff : []
+      );
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao carregar comunicados.");
     } finally {
       setLoading(false);
+      setReloading(false);
     }
   }
 
   useEffect(() => {
-    loadPage();
+    loadMessages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function refresh() {
-    try {
-      setRefreshing(true);
-      setError(null);
-      setSuccessMessage(null);
+  useEffect(() => {
+    const type = normalizeAudienceType(audienceType);
 
-      const token = await getAccessToken();
-      await Promise.all([loadClasses(token), loadStaff(token), loadMessages(token)]);
-    } catch (e: any) {
-      setError(e?.message || "Erro ao atualizar comunicados.");
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
-  function resetAudienceTargets(next: AudienceType) {
-    const safeNext = normalizeAudienceType(next);
-
-    if (safeNext !== "class" && safeNext !== "teachers_class") {
+    if (!audienceNeedsClass(type)) {
       setTargetClassId("");
     }
 
-    if (safeNext !== "teacher_individual") {
+    if (!audienceNeedsTeacher(type)) {
       setTargetTeacherUserId("");
     }
-  }
 
-  async function publish() {
-    if (!title.trim()) {
+    if (!audienceNeedsParent(type)) {
+      setTargetParentId("");
+    }
+  }, [audienceType]);
+
+  async function createMessage() {
+    setError(null);
+    setSuccess(null);
+
+    const safeTitle = cleanText(title);
+    const safeBody = cleanText(body);
+    const type = normalizeAudienceType(audienceType);
+
+    if (!safeTitle) {
       setError("Informe o título do comunicado.");
       return;
     }
 
-    if (!body.trim()) {
+    if (!safeBody) {
       setError("Informe o conteúdo do comunicado.");
       return;
     }
 
-    const safeAudienceType = normalizeAudienceType(audienceType);
-
-    if ((safeAudienceType === "class" || safeAudienceType === "teachers_class") && !targetClassId) {
-      setError("Selecione a turma para enviar o comunicado.");
+    if (audienceNeedsClass(type) && !targetClassId) {
+      setError("Selecione a turma para esta segmentação.");
       return;
     }
 
-    if (safeAudienceType === "teacher_individual" && !targetTeacherUserId) {
-      setError("Selecione o professor para enviar o comunicado individual.");
+    if (audienceNeedsTeacher(type) && !targetTeacherUserId) {
+      setError("Selecione o professor individual.");
+      return;
+    }
+
+    if (audienceNeedsParent(type) && !targetParentId) {
+      setError("Selecione o responsável individual.");
       return;
     }
 
     try {
-      setPublishing(true);
-      setError(null);
-      setSuccessMessage(null);
+      setSaving(true);
 
       const token = await getAccessToken();
 
-      const selectedTeacherId =
-        safeAudienceType === "teacher_individual" ? targetTeacherUserId : null;
-
-      const selectedClassId =
-        safeAudienceType === "class" || safeAudienceType === "teachers_class"
-          ? targetClassId
-          : null;
+      if (!token) {
+        router.replace("/login");
+        return;
+      }
 
       const res = await fetch("/api/school/messages/create", {
         method: "POST",
@@ -690,24 +722,13 @@ export default function SchoolMessagesPage() {
         },
         cache: "no-store",
         body: JSON.stringify({
-          title: title.trim(),
-          body: body.trim(),
-          audienceType: safeAudienceType,
-          audience_type: safeAudienceType,
-
-          targetClassId: selectedClassId,
-          target_class_id: selectedClassId,
-
-          targetTeacherUserId: selectedTeacherId,
-          target_teacher_user_id: selectedTeacherId,
-
-          targetUserId: selectedTeacherId,
-          target_user_id: selectedTeacherId,
-
-          targetStaffId: selectedTeacherId,
-          target_staff_id: selectedTeacherId,
-
-          status: "published",
+          title: safeTitle,
+          body: safeBody,
+          audienceType: type,
+          targetClassId: targetClassId || null,
+          targetTeacherUserId: targetTeacherUserId || null,
+          targetParentId: targetParentId || null,
+          category,
         }),
       });
 
@@ -720,106 +741,43 @@ export default function SchoolMessagesPage() {
 
       setTitle("");
       setBody("");
+      setCategory("normal");
       setAudienceType("all_parents");
       setTargetClassId("");
       setTargetTeacherUserId("");
+      setTargetParentId("");
 
-      await loadMessages(token);
-
-      const recipientsCreated = Number(json.recipientsCreated || 0);
-
-      setSuccessMessage(
-        recipientsCreated > 0
-          ? `Comunicado publicado com sucesso para ${recipientsCreated} destinatário(s).`
-          : "Comunicado publicado com sucesso."
+      setSuccess(
+        `Comunicado publicado com sucesso para ${json.recipientsCreated || 0} destinatário(s).`
       );
+
+      await loadMessages({ silent: true });
     } catch (e: any) {
       setError(e?.message || "Erro inesperado ao publicar comunicado.");
     } finally {
-      setPublishing(false);
+      setSaving(false);
     }
   }
 
-  function openEdit(message: MessageRow) {
-    setEditingMessage(message);
-    setEditTitle(message.title || "");
-    setEditBody(message.body || "");
-    setError(null);
-    setSuccessMessage(null);
-  }
+  async function deleteMessage(message: SchoolMessage) {
+    const ok = window.confirm(
+      `Deseja excluir este comunicado?\n\n${message.title}`
+    );
 
-  function closeEdit() {
-    setEditingMessage(null);
-    setEditTitle("");
-    setEditBody("");
-    setSavingEdit(false);
-  }
-
-  async function saveEdit() {
-    if (!editingMessage?.id) return;
-
-    if (!editTitle.trim()) {
-      setError("Informe o título do comunicado.");
-      return;
-    }
-
-    if (!editBody.trim()) {
-      setError("Informe o conteúdo do comunicado.");
-      return;
-    }
+    if (!ok) return;
 
     try {
-      setSavingEdit(true);
       setError(null);
-      setSuccessMessage(null);
+      setSuccess(null);
 
       const token = await getAccessToken();
 
-      const res = await fetch(`/api/school/messages/${editingMessage.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        cache: "no-store",
-        body: JSON.stringify({
-          title: editTitle.trim(),
-          body: editBody.trim(),
-        }),
-      });
-
-      const json = await safeJson(res);
-
-      if (!res.ok || !json?.ok) {
-        setError(json?.error || "Erro ao atualizar comunicado.");
+      if (!token) {
+        router.replace("/login");
         return;
       }
 
-      closeEdit();
-      await loadMessages(token);
-      setSuccessMessage("Comunicado atualizado com sucesso.");
-    } catch (e: any) {
-      setError(e?.message || "Erro inesperado ao atualizar comunicado.");
-    } finally {
-      setSavingEdit(false);
-    }
-  }
-
-  async function deleteMessage(message: MessageRow) {
-    const confirmed = window.confirm(
-      `Tem certeza que deseja excluir o comunicado "${message.title}"?\n\nEssa ação também removerá o histórico de envio, entrega e visualização desse comunicado.`
-    );
-
-    if (!confirmed) return;
-
-    try {
-      setDeletingId(message.id);
-      setError(null);
-      setSuccessMessage(null);
-
-      const token = await getAccessToken();
-
-      const res = await fetch(`/api/school/messages/${message.id}`, {
+      const res = await fetch(`/api/school/messages/${encodeURIComponent(message.id)}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -834,72 +792,86 @@ export default function SchoolMessagesPage() {
         return;
       }
 
-      await loadMessages(token);
-      setSuccessMessage("Comunicado excluído com sucesso.");
+      setSuccess("Comunicado excluído com sucesso.");
+      await loadMessages({ silent: true });
     } catch (e: any) {
       setError(e?.message || "Erro inesperado ao excluir comunicado.");
-    } finally {
-      setDeletingId(null);
     }
   }
 
-  async function openRecipients(message: MessageRow, status: RecipientStatus) {
-    try {
-      setRecipientModalOpen(true);
-      setRecipientModalMessage(message);
-      setRecipientModalStatus(status);
-      setRecipientRows([]);
-      setRecipientSummary(null);
-      setRecipientLoading(true);
-      setRecipientError(null);
+  async function openRecipients(message: SchoolMessage, filter: "sent" | "delivered" | "read" | "pending") {
+    setError(null);
 
+    try {
       const token = await getAccessToken();
 
-      const res = await fetch(`/api/school/messages/${message.id}/recipients?status=${status}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-
-      const json = await safeJson(res);
-
-      if (!res.ok || !json?.ok) {
-        setRecipientError(json?.error || "Erro ao carregar destinatários.");
+      if (!token) {
+        router.replace("/login");
         return;
       }
 
-      setRecipientRows((json.recipients || []) as RecipientRow[]);
-      setRecipientSummary((json.summary || null) as MessageStats | null);
+      const res = await fetch(
+        `/api/school/messages/${encodeURIComponent(message.id)}/recipients?filter=${encodeURIComponent(filter)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          cache: "no-store",
+        }
+      );
+
+      const json = await safeJson(res);
+
+      const fallbackRows = Array.isArray(json?.recipients) ? json.recipients : [];
+
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "Erro ao carregar destinatários.");
+        return;
+      }
+
+      const stats = getStats(message);
+
+      let titleLabel = "Destinatários";
+
+      if (filter === "sent") titleLabel = "Destinatários enviados";
+      if (filter === "delivered") titleLabel = "Entregues não visualizados";
+      if (filter === "read") titleLabel = "Visualizados";
+      if (filter === "pending") titleLabel = "Pendentes";
+
+      setRecipientModal({
+        title: titleLabel,
+        subtitle:
+          filter === "sent"
+            ? "Lista completa dos destinatários registrados para este comunicado."
+            : filter === "delivered"
+              ? "Destinatários que receberam, mas ainda não visualizaram."
+              : filter === "read"
+                ? "Destinatários que visualizaram o comunicado no portal."
+                : "Destinatários ainda sem confirmação.",
+        messageTitle: message.title,
+        rows: fallbackRows,
+        stats: json.stats || stats,
+      });
     } catch (e: any) {
-      setRecipientError(e?.message || "Erro inesperado ao carregar destinatários.");
-    } finally {
-      setRecipientLoading(false);
+      setError(e?.message || "Erro inesperado ao carregar destinatários.");
     }
-  }
-
-  function closeRecipients() {
-    setRecipientModalOpen(false);
-    setRecipientModalMessage(null);
-    setRecipientRows([]);
-    setRecipientSummary(null);
-    setRecipientLoading(false);
-    setRecipientError(null);
-  }
-
-  async function changeRecipientStatus(status: RecipientStatus) {
-    if (!recipientModalMessage?.id) return;
-    await openRecipients(recipientModalMessage, status);
   }
 
   if (loading) {
     return (
       <main className="space-y-6">
-        <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
-          <div className="animate-pulse space-y-4">
-            <div className="h-8 w-72 rounded-xl bg-slate-200" />
-            <div className="h-4 w-96 rounded-xl bg-slate-100" />
-            <div className="h-40 rounded-[28px] bg-slate-100" />
-          </div>
+        <section className="h-56 animate-pulse rounded-[32px] border border-slate-200 bg-white shadow-sm" />
+
+        <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div
+              key={index}
+              className="h-36 animate-pulse rounded-[28px] border border-slate-200 bg-white shadow-sm"
+            />
+          ))}
         </section>
+
+        <section className="h-96 animate-pulse rounded-[32px] border border-slate-200 bg-white shadow-sm" />
       </main>
     );
   }
@@ -914,44 +886,24 @@ export default function SchoolMessagesPage() {
                 Comunicação escolar
               </div>
 
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
+              <h1 className="mt-3 break-words text-3xl font-semibold tracking-tight md:text-4xl">
                 Comunicados
               </h1>
 
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
-                Envie avisos segmentados para responsáveis, turmas ou equipe escolar e acompanhe
-                o status de entrega e visualização.
+              <p className="mt-2 max-w-3xl break-words text-sm leading-6 text-slate-200 md:text-base">
+                Envie avisos para pais, responsáveis, professores e equipe escolar com
+                acompanhamento de entrega e visualização.
               </p>
-
-              <div className="mt-4 flex flex-wrap gap-2 text-xs text-slate-200">
-                <span className="rounded-full bg-white/10 px-3 py-1">
-                  Escola: {brandName}
-                </span>
-                <span className="rounded-full bg-white/10 px-3 py-1">
-                  Perfil: {roleLabel(role)}
-                </span>
-                {schoolId ? (
-                  <span className="rounded-full bg-white/10 px-3 py-1">ID: {schoolId}</span>
-                ) : null}
-              </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={refresh}
-                disabled={refreshing || publishing}
+                onClick={() => loadMessages({ silent: true })}
+                disabled={reloading}
                 className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15 disabled:opacity-60"
               >
-                {refreshing ? "Atualizando..." : "Atualizar"}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => router.push("/school/calendar")}
-                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
-              >
-                Agenda
+                {reloading ? "Recarregando..." : "Recarregar lista"}
               </button>
 
               <button
@@ -966,73 +918,92 @@ export default function SchoolMessagesPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-4 md:p-6">
-          <MetricCard
+          <StatCard
             label="Comunicados"
-            value={String(totalMessages)}
+            value={totals.totalMessages}
             help="Total de comunicados criados pela gestão escolar."
           />
 
-          <MetricCard
+          <StatCard
             label="Enviados"
-            value={String(totalSent)}
+            value={totals.sent}
             help="Total de destinatários registrados para os comunicados."
           />
 
-          <MetricCard
+          <StatCard
             label="Visualizados"
-            value={String(totalRead)}
-            help="Quantidade total de leituras confirmadas pelos responsáveis/equipe."
+            value={totals.read}
+            help="Quantidade total de leituras confirmadas no portal."
           />
 
-          <MetricCard
+          <StatCard
             label="Última publicação"
-            value={latestMessage ? formatDateTimeBR(latestMessage.created_at) : "—"}
-            help={latestMessage ? latestMessage.title : "Nenhum comunicado publicado ainda."}
+            value={totals.last ? formatDateBR(totals.last.published_at || totals.last.created_at) : "—"}
+            help={totals.last?.title || "Nenhum comunicado publicado ainda."}
           />
         </div>
       </section>
 
       {error ? (
-        <section className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <section className="whitespace-pre-wrap rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           {error}
         </section>
       ) : null}
 
-      {successMessage ? (
+      {success ? (
         <section className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
-          {successMessage}
+          {success}
         </section>
       ) : null}
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-        <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <div>
-            <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-              Criar aviso / comunicado
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-slate-500">
-              Selecione o público correto antes de publicar. O sistema registra entrega e leitura
-              para acompanhamento da escola.
-            </p>
-          </div>
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+            Criar aviso / comunicado
+          </h2>
 
-          <div className="mt-5 space-y-4">
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Público do comunicado
-              </span>
+          <p className="mt-2 break-words text-sm leading-6 text-slate-500">
+            Selecione o público correto antes de publicar. O sistema registra
+            entrega e leitura para acompanhamento da escola.
+          </p>
+
+          <div className="mt-6 space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Tipo de comunicado
+              </label>
 
               <select
-                className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
+                value={category}
+                onChange={(e) => setCategory(e.target.value as MessageCategory)}
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                disabled={saving}
+              >
+                <option value="normal">Comunicado normal</option>
+                <option value="advertencia_suspensao">Advertência/Suspensão</option>
+              </select>
+
+              {category === "advertencia_suspensao" ? (
+                <div className="mt-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+                  Use esta opção para comunicações disciplinares formais. O título e o
+                  conteúdo serão identificados como Advertência/Suspensão.
+                </div>
+              ) : null}
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Público do comunicado
+              </label>
+
+              <select
                 value={audienceType}
-                onChange={(e) => {
-                  const next = normalizeAudienceType(e.target.value);
-                  setAudienceType(next);
-                  resetAudienceTargets(next);
-                }}
-                disabled={publishing}
+                onChange={(e) => setAudienceType(normalizeAudienceType(e.target.value))}
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                disabled={saving}
               >
                 <option value="all_parents">Todos os pais/responsáveis</option>
+                <option value="parent_individual">Pais individuais</option>
                 <option value="class">Responsáveis de uma turma</option>
                 <option value="teachers">Todos os professores</option>
                 <option value="teachers_class">Professores de uma turma</option>
@@ -1043,306 +1014,318 @@ export default function SchoolMessagesPage() {
                 <option value="school">Toda escola</option>
               </select>
 
-              <AudienceHelp audienceType={audienceType} />
-            </label>
-
-            {audienceType === "class" || audienceType === "teachers_class" ? (
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Turma
+              <p className="mt-2 break-words text-xs leading-5 text-slate-500">
+                O comunicado será entregue para:{" "}
+                <span className="font-semibold text-slate-700">
+                  {audienceLabel(audienceType)}
                 </span>
+                .
+              </p>
+            </div>
+
+            {audienceNeedsClass(audienceType) ? (
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Turma
+                </label>
 
                 <select
-                  className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
                   value={targetClassId}
                   onChange={(e) => setTargetClassId(e.target.value)}
-                  disabled={publishing}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                  disabled={saving}
                 >
                   <option value="">Selecione uma turma</option>
-                  {classes.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                      {item.grade ? ` • ${item.grade}` : ""}
-                      {item.shift ? ` • ${item.shift}` : ""}
+                  {classes.map((cls) => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name}
+                      {cls.grade ? ` • ${cls.grade}` : ""}
+                      {cls.shift ? ` • ${cls.shift}` : ""}
                     </option>
                   ))}
                 </select>
-              </label>
+              </div>
             ) : null}
 
-            {audienceType === "teacher_individual" ? (
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Professor
-                </span>
+            {audienceNeedsParent(audienceType) ? (
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Responsável individual
+                </label>
 
                 <select
-                  className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
-                  value={targetTeacherUserId}
-                  onChange={(e) => setTargetTeacherUserId(e.target.value)}
-                  disabled={publishing}
+                  value={targetParentId}
+                  onChange={(e) => setTargetParentId(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                  disabled={saving}
                 >
-                  <option value="">Selecione um professor</option>
-                  {teachers.map((teacher) => (
-                    <option key={teacher.userId} value={teacher.userId}>
-                      {staffLabel(teacher)}
-                    </option>
-                  ))}
-                </select>
+                  <option value="">Selecione um responsável</option>
+                  {selectableParents.map((parent) => {
+                    const id = parent.parentId || parent.id;
+                    const name = parent.fullName || parent.name || "Responsável sem nome";
 
-                {teachers.length === 0 ? (
-                  <p className="mt-2 text-xs leading-5 text-amber-700">
-                    Nenhum professor encontrado. Verifique se os professores estão cadastrados e
-                    ativos em Equipe Escolar / Professores.
-                  </p>
-                ) : (
-                  <p className="mt-2 text-xs leading-5 text-slate-500">
-                    {teachers.length} professor(es) ativo(s) encontrado(s).
-                  </p>
-                )}
-              </label>
+                    return (
+                      <option key={id} value={id}>
+                        {name}
+                        {parent.phone ? ` • ${parent.phone}` : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
             ) : null}
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+            {audienceNeedsTeacher(audienceType) ? (
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Professor individual
+                </label>
+
+                <select
+                  value={targetTeacherUserId}
+                  onChange={(e) => setTargetTeacherUserId(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                  disabled={saving}
+                >
+                  <option value="">Selecione um professor</option>
+                  {teacherOptions.map((teacher) => {
+                    const id = teacher.userId || teacher.id;
+                    const name = teacher.fullName || teacher.name || teacher.email || "Professor";
+
+                    return (
+                      <option key={id} value={id}>
+                        {name}
+                        {teacher.email ? ` • ${teacher.email}` : ""}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            ) : null}
+
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Título
-              </span>
+              </label>
 
               <input
-                className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
-                placeholder="Ex.: Reunião de pais, feriado, comunicado importante..."
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                disabled={publishing}
+                placeholder="Ex.: Reunião de pais, feriado, comunicado importante..."
+                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                disabled={saving}
+                maxLength={180}
               />
-            </label>
+            </div>
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Conteúdo
-              </span>
+              </label>
 
               <textarea
-                className="min-h-[180px] w-full resize-y rounded-2xl border border-slate-300 bg-white p-3 text-sm leading-6 text-slate-900 outline-none transition focus:border-slate-500"
-                placeholder="Digite o comunicado que será enviado..."
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
-                disabled={publishing}
+                placeholder={
+                  category === "advertencia_suspensao"
+                    ? "Descreva a advertência, suspensão, motivo, data, orientação aos responsáveis e próximos passos..."
+                    : "Digite o comunicado que será enviado..."
+                }
+                className="min-h-[180px] w-full resize-y rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                disabled={saving}
               />
-            </label>
+            </div>
+
+            <button
+              type="button"
+              onClick={createMessage}
+              disabled={saving}
+              className="w-full rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
+            >
+              {saving ? "Publicando comunicado..." : "Publicar comunicado"}
+            </button>
           </div>
+        </section>
 
-          <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Resumo do envio
-            </div>
-
-            <div className="mt-2 text-sm font-semibold text-slate-900">
-              {audienceLabel(audienceType, selectedClass, selectedTeacher)}
-            </div>
-
-            <div className="mt-2 text-xs leading-5 text-slate-500">
-              Após publicar, o comunicado será registrado com status de enviado/entregue e
-              passará para visualizado quando o destinatário abrir no portal.
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={publish}
-            disabled={publishing}
-            className="mt-5 w-full rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
-          >
-            {publishing ? "Publicando..." : "Publicar comunicado"}
-          </button>
-        </div>
-
-        <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-            Como funciona o status
-          </h2>
-
-          <p className="mt-1 text-sm leading-6 text-slate-500">
-            O painel mostra se o comunicado foi enviado, entregue e visualizado. Nos comunicados
-            publicados, cada card de status é clicável e mostra a lista nominal.
-          </p>
-
-          <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div className="rounded-3xl border border-blue-200 bg-blue-50 p-4">
-              <div className="text-sm font-semibold text-blue-800">Enviado</div>
-              <p className="mt-2 text-xs leading-5 text-blue-700">
-                Todos os destinatários registrados para aquele comunicado.
-              </p>
-            </div>
-
-            <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4">
-              <div className="text-sm font-semibold text-emerald-800">Entregue</div>
-              <p className="mt-2 text-xs leading-5 text-emerald-700">
-                Quem recebeu o comunicado, mas ainda não visualizou.
-              </p>
-            </div>
-
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-semibold text-slate-800">Visualizado</div>
-              <p className="mt-2 text-xs leading-5 text-slate-600">
-                Quem abriu o comunicado no portal.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-5 rounded-3xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Segmentações disponíveis
-            </div>
-
-            <div className="mt-3 space-y-2 text-sm leading-6 text-slate-600">
-              <p>• Todos os pais/responsáveis.</p>
-              <p>• Responsáveis de uma turma.</p>
-              <p>• Todos os professores.</p>
-              <p>• Professores de uma turma.</p>
-              <p>• Professor individual.</p>
-              <p>• Coordenadores, secretaria ou toda equipe escolar.</p>
-            </div>
-          </div>
-        </div>
+        <AudienceHelpCard />
       </section>
 
       <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-200 px-5 py-4 md:px-6">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
               <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-                Comunicados publicados
+                Histórico de comunicados
               </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Histórico de comunicados com indicadores de entrega e visualização.
+
+              <p className="mt-1 break-words text-sm leading-6 text-slate-500">
+                Comunicados publicados do mais recente para o mais antigo.
               </p>
             </div>
 
             <button
               type="button"
-              onClick={refresh}
-              disabled={refreshing}
-              className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+              onClick={() => loadMessages({ silent: true })}
+              disabled={reloading}
+              className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
             >
-              {refreshing ? "Atualizando..." : "Recarregar lista"}
+              {reloading ? "Atualizando..." : "Atualizar"}
             </button>
           </div>
         </div>
 
         <div className="p-4 md:p-6">
           {messages.length === 0 ? (
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-600">
-              Nenhum comunicado publicado ainda.
+            <div className="rounded-[28px] border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+              <div className="text-sm font-semibold text-slate-700">
+                Nenhum comunicado publicado ainda
+              </div>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Crie o primeiro aviso para alimentar o portal dos responsáveis e da equipe.
+              </p>
             </div>
           ) : (
             <div className="space-y-4">
               {messages.map((message) => {
-                const stats = message.stats || {
-                  sent: 0,
-                  delivered: 0,
-                  read: 0,
-                  pending: 0,
-                };
-
-                const classInfo = message.targetClass;
+                const stats = getStats(message);
+                const disciplinary =
+                  String(message.target_role || "").includes("advertencia") ||
+                  String(message.title || "").toLowerCase().includes("advertência") ||
+                  String(message.title || "").toLowerCase().includes("advertencia") ||
+                  String(message.body || "").toLowerCase().startsWith("advertência") ||
+                  String(message.body || "").toLowerCase().startsWith("advertencia");
 
                 return (
                   <article
                     key={message.id}
-                    className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
+                    className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm"
                   >
-                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap gap-2">
-                          <span className="inline-flex rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
-                            {statusLabel(message.status)}
-                          </span>
-
-                          <span className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                            {message.audienceLabel ||
-                              audienceLabel(
-                                normalizeAudienceType(message.audience_type),
-                                classInfo
-                              )}
-                          </span>
-
-                          {classInfo ? (
-                            <span className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-                              {classInfo.name}
-                              {classInfo.grade ? ` • ${classInfo.grade}` : ""}
-                              {classInfo.shift ? ` • ${classInfo.shift}` : ""}
+                    <div className="p-5">
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={[
+                                "inline-flex rounded-full px-3 py-1 text-xs font-semibold",
+                                disciplinary
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-slate-100 text-slate-700",
+                              ].join(" ")}
+                            >
+                              {disciplinary ? "Advertência/Suspensão" : "Publicado"}
                             </span>
-                          ) : null}
+
+                            <span className="inline-flex max-w-full rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                              <span className="truncate">
+                                {message.audienceLabel ||
+                                  audienceLabel(normalizeAudienceType(message.audience_type))}
+                              </span>
+                            </span>
+
+                            {message.targetClass ? (
+                              <span className="inline-flex max-w-full rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                                <span className="truncate">
+                                  {message.targetClass.name || "Turma"}
+                                  {message.targetClass.grade ? ` • ${message.targetClass.grade}` : ""}
+                                  {message.targetClass.shift ? ` • ${message.targetClass.shift}` : ""}
+                                </span>
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <h3 className="mt-4 break-words text-lg font-semibold text-slate-900">
+                            {message.title}
+                          </h3>
+
+                          <div className="mt-2 text-xs text-slate-500">
+                            Publicado em: {formatDateTimeBR(message.published_at || message.created_at)}
+                          </div>
+
+                          <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">
+                            {message.body}
+                          </p>
                         </div>
 
-                        <h3 className="mt-3 text-lg font-semibold text-slate-900">
-                          {message.title}
-                        </h3>
-
-                        <div className="mt-2 text-xs text-slate-500">
-                          Publicado em:{" "}
-                          <span className="font-medium">
-                            {formatDateTimeBR(message.published_at || message.created_at)}
-                          </span>
-                        </div>
-
-                        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700 whitespace-pre-wrap">
-                          {message.body}
-                        </div>
-
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openEdit(message)}
-                            disabled={deletingId === message.id}
-                            className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
-                          >
-                            Editar comunicado
-                          </button>
-
+                        <div className="flex shrink-0 flex-wrap gap-2 xl:flex-col">
                           <button
                             type="button"
                             onClick={() => deleteMessage(message)}
-                            disabled={deletingId === message.id}
-                            className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:opacity-60"
+                            className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition hover:bg-red-100"
                           >
-                            {deletingId === message.id ? "Excluindo..." : "Excluir"}
+                            Excluir
                           </button>
                         </div>
                       </div>
 
-                      <div className="w-full xl:w-[360px]">
-                        <div className="grid grid-cols-2 gap-3">
-                          <StatusPill
-                            label="Enviado"
-                            value={stats.sent}
-                            tone="blue"
-                            onClick={() => openRecipients(message, "sent")}
-                          />
-                          <StatusPill
-                            label="Entregue"
-                            value={stats.delivered}
-                            tone="emerald"
-                            onClick={() => openRecipients(message, "delivered")}
-                          />
-                          <StatusPill
-                            label="Visualizado"
-                            value={stats.read}
-                            tone="slate"
-                            onClick={() => openRecipients(message, "read")}
-                          />
-                          <StatusPill
-                            label="Pendente"
-                            value={stats.pending}
-                            tone="amber"
-                            onClick={() => openRecipients(message, "pending")}
-                          />
-                        </div>
+                      <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-4">
+                        <button
+                          type="button"
+                          onClick={() => openRecipients(message, "sent")}
+                          className="rounded-3xl border border-blue-200 bg-blue-50 p-4 text-left transition hover:bg-blue-100"
+                        >
+                          <div className="text-xs font-semibold uppercase tracking-wide text-blue-500">
+                            Enviado
+                          </div>
+                          <div className="mt-2 text-2xl font-semibold text-blue-900">
+                            {stats.sent}
+                          </div>
+                          <div className="mt-2 break-words text-xs leading-5 text-blue-700">
+                            Clique para ver lista
+                          </div>
+                        </button>
 
-                        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-500">
-                          ID: <span className="font-mono">{message.id}</span>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openRecipients(message, "delivered")}
+                          className="rounded-3xl border border-emerald-200 bg-emerald-50 p-4 text-left transition hover:bg-emerald-100"
+                        >
+                          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-600">
+                            Entregue
+                          </div>
+                          <div className="mt-2 text-2xl font-semibold text-emerald-900">
+                            {stats.delivered}
+                          </div>
+                          <div className="mt-2 break-words text-xs leading-5 text-emerald-700">
+                            Clique para ver lista
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => openRecipients(message, "read")}
+                          className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:bg-slate-100"
+                        >
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Visualizado
+                          </div>
+                          <div className="mt-2 text-2xl font-semibold text-slate-900">
+                            {stats.read}
+                          </div>
+                          <div className="mt-2 break-words text-xs leading-5 text-slate-600">
+                            Clique para ver lista
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => openRecipients(message, "pending")}
+                          className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-left transition hover:bg-amber-100"
+                        >
+                          <div className="text-xs font-semibold uppercase tracking-wide text-amber-600">
+                            Pendente
+                          </div>
+                          <div className="mt-2 text-2xl font-semibold text-amber-900">
+                            {stats.pending}
+                          </div>
+                          <div className="mt-2 break-words text-xs leading-5 text-amber-700">
+                            Clique para ver lista
+                          </div>
+                        </button>
+                      </div>
+
+                      <div className="mt-4 break-all rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-[11px] text-slate-500">
+                        ID: {message.id}
                       </div>
                     </div>
                   </article>
@@ -1353,277 +1336,10 @@ export default function SchoolMessagesPage() {
         </div>
       </section>
 
-      {editingMessage ? (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-4">
-          <div className="my-8 w-full max-w-3xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
-            <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-6 text-white">
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
-                    Editar comunicado
-                  </div>
-
-                  <h2 className="mt-3 text-2xl font-semibold">{editingMessage.title}</h2>
-
-                  <p className="mt-1 text-sm text-slate-200">
-                    A edição altera o conteúdo exibido para os destinatários, mas mantém o
-                    histórico de envio, entrega e visualização.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={closeEdit}
-                  disabled={savingEdit}
-                  className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90 disabled:opacity-60"
-                >
-                  Fechar
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-4 p-5 md:p-6">
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Título
-                </span>
-
-                <input
-                  className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  disabled={savingEdit}
-                />
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Conteúdo
-                </span>
-
-                <textarea
-                  className="min-h-[220px] w-full resize-y rounded-2xl border border-slate-300 bg-white p-3 text-sm leading-6 text-slate-900 outline-none transition focus:border-slate-500"
-                  value={editBody}
-                  onChange={(e) => setEditBody(e.target.value)}
-                  disabled={savingEdit}
-                />
-              </label>
-
-              <div className="rounded-3xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800">
-                Para preservar auditoria escolar, esta edição não altera o público original do
-                comunicado. Para mudar o público, exclua e publique um novo comunicado.
-              </div>
-
-              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={closeEdit}
-                  disabled={savingEdit}
-                  className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
-                >
-                  Cancelar
-                </button>
-
-                <button
-                  type="button"
-                  onClick={saveEdit}
-                  disabled={savingEdit}
-                  className="rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60"
-                >
-                  {savingEdit ? "Salvando..." : "Salvar alterações"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {recipientModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-4">
-          <div className="my-8 w-full max-w-5xl overflow-hidden rounded-[32px] bg-white shadow-2xl">
-            <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-6 text-white">
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div className="min-w-0">
-                  <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
-                    Lista de destinatários
-                  </div>
-
-                  <h2 className="mt-3 text-2xl font-semibold">
-                    {recipientStatusLabel(recipientModalStatus)}
-                  </h2>
-
-                  <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-200">
-                    {recipientStatusDescription(recipientModalStatus)}
-                  </p>
-
-                  {recipientModalMessage ? (
-                    <div className="mt-3 text-sm text-slate-200">
-                      Comunicado:{" "}
-                      <span className="font-semibold">{recipientModalMessage.title}</span>
-                    </div>
-                  ) : null}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={closeRecipients}
-                  className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
-                >
-                  Fechar
-                </button>
-              </div>
-            </div>
-
-            <div className="border-b border-slate-200 bg-slate-50 p-4 md:p-5">
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <button
-                  type="button"
-                  onClick={() => changeRecipientStatus("sent")}
-                  disabled={recipientLoading}
-                  className={[
-                    "rounded-2xl border px-4 py-3 text-left transition",
-                    recipientModalStatus === "sent"
-                      ? "border-blue-300 bg-blue-50 text-blue-700"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-                  ].join(" ")}
-                >
-                  <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
-                    Enviado
-                  </div>
-                  <div className="mt-1 text-xl font-semibold">
-                    {recipientSummary?.sent ?? "—"}
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => changeRecipientStatus("delivered")}
-                  disabled={recipientLoading}
-                  className={[
-                    "rounded-2xl border px-4 py-3 text-left transition",
-                    recipientModalStatus === "delivered"
-                      ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-                  ].join(" ")}
-                >
-                  <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
-                    Entregue
-                  </div>
-                  <div className="mt-1 text-xl font-semibold">
-                    {recipientSummary?.delivered ?? "—"}
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => changeRecipientStatus("read")}
-                  disabled={recipientLoading}
-                  className={[
-                    "rounded-2xl border px-4 py-3 text-left transition",
-                    recipientModalStatus === "read"
-                      ? "border-slate-400 bg-slate-100 text-slate-800"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-                  ].join(" ")}
-                >
-                  <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
-                    Visualizado
-                  </div>
-                  <div className="mt-1 text-xl font-semibold">
-                    {recipientSummary?.read ?? "—"}
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => changeRecipientStatus("pending")}
-                  disabled={recipientLoading}
-                  className={[
-                    "rounded-2xl border px-4 py-3 text-left transition",
-                    recipientModalStatus === "pending"
-                      ? "border-amber-300 bg-amber-50 text-amber-700"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-                  ].join(" ")}
-                >
-                  <div className="text-[11px] font-semibold uppercase tracking-wide opacity-70">
-                    Pendente
-                  </div>
-                  <div className="mt-1 text-xl font-semibold">
-                    {recipientSummary?.pending ?? "—"}
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            <div className="p-4 md:p-6">
-              {recipientError ? (
-                <div className="rounded-3xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                  {recipientError}
-                </div>
-              ) : null}
-
-              {recipientLoading ? (
-                <div className="space-y-3">
-                  <div className="h-16 animate-pulse rounded-3xl bg-slate-100" />
-                  <div className="h-16 animate-pulse rounded-3xl bg-slate-100" />
-                  <div className="h-16 animate-pulse rounded-3xl bg-slate-100" />
-                </div>
-              ) : recipientRows.length === 0 ? (
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-600">
-                  Nenhum destinatário encontrado para este status.
-                </div>
-              ) : (
-                <div className="overflow-hidden rounded-3xl border border-slate-200">
-                  <div className="hidden grid-cols-[1.2fr_0.7fr_0.8fr_0.8fr] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-400 md:grid">
-                    <div>Destinatário</div>
-                    <div>Tipo</div>
-                    <div>Entregue em</div>
-                    <div>Visualizado em</div>
-                  </div>
-
-                  <div className="divide-y divide-slate-200">
-                    {recipientRows.map((recipient) => (
-                      <div
-                        key={recipient.id}
-                        className="grid grid-cols-1 gap-3 px-4 py-4 text-sm md:grid-cols-[1.2fr_0.7fr_0.8fr_0.8fr]"
-                      >
-                        <div className="min-w-0">
-                          <div className="font-semibold text-slate-900">
-                            {recipient.name || "Destinatário"}
-                          </div>
-
-                          <div className="mt-1 text-xs text-slate-500">
-                            {recipient.email || recipient.phone || recipient.recipientId}
-                          </div>
-                        </div>
-
-                        <div>
-                          <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
-                            {recipient.roleLabel || recipient.recipientType}
-                          </span>
-                        </div>
-
-                        <div className="text-xs leading-5 text-slate-600 md:text-sm">
-                          <span className="font-semibold text-slate-400 md:hidden">
-                            Entregue em:{" "}
-                          </span>
-                          {formatDateTimeBR(recipient.deliveredAt)}
-                        </div>
-
-                        <div className="text-xs leading-5 text-slate-600 md:text-sm">
-                          <span className="font-semibold text-slate-400 md:hidden">
-                            Visualizado em:{" "}
-                          </span>
-                          {formatDateTimeBR(recipient.readAt)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <RecipientModalView
+        modal={recipientModal}
+        onClose={() => setRecipientModal(null)}
+      />
     </main>
   );
 }

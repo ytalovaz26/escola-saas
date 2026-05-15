@@ -23,6 +23,36 @@ function normalizeRole(role?: string | null) {
   return r;
 }
 
+function audienceLabel(message: any) {
+  const type = String(message.audience_type || "school").trim().toLowerCase();
+
+  if (type === "parent_individual") return "Pais individuais";
+  if (type === "all_parents") return "Todos os pais/responsáveis";
+  if (type === "class") return "Responsáveis de uma turma";
+  if (type === "teachers") return "Todos os professores";
+  if (type === "teachers_class" || type === "teacher_class") return "Professores de uma turma";
+  if (type === "teacher_individual") return "Professor individual";
+  if (type === "coordinators") return "Coordenadores";
+  if (type === "secretaria") return "Secretaria";
+  if (type === "staff") return "Toda equipe escolar";
+  if (type === "school") return "Toda escola";
+
+  return "Toda escola";
+}
+
+function staffNameFromAuthUser(user: any) {
+  const meta = user?.raw_user_meta_data || user?.user_metadata || {};
+
+  return (
+    meta.full_name ||
+    meta.fullName ||
+    meta.name ||
+    meta.nome ||
+    user?.email ||
+    "Usuário escolar"
+  );
+}
+
 async function getStaffFromToken(token: string) {
   const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
 
@@ -34,7 +64,7 @@ async function getStaffFromToken(token: string) {
 
   const { data: staff, error: staffErr } = await supabaseAdmin
     .from("school_users")
-    .select("school_id, role, is_active")
+    .select("school_id, role, is_active, created_at")
     .eq("user_id", userId)
     .eq("is_active", true)
     .order("created_at", { ascending: false })
@@ -55,17 +85,17 @@ async function getStaffFromToken(token: string) {
 
   const role = normalizeRole(staff.role);
 
-  const canRead =
+  const canAccess =
     role === "diretor" ||
     role === "coordenador" ||
     role === "secretaria" ||
     role === "admin";
 
-  if (!canRead) {
+  if (!canAccess) {
     return {
       ok: false as const,
       status: 403,
-      error: "Sem permissão para visualizar comunicados da gestão.",
+      error: "Sem permissão para acessar comunicados da gestão.",
     };
   }
 
@@ -77,33 +107,27 @@ async function getStaffFromToken(token: string) {
   };
 }
 
-function audienceLabel(message: any) {
-  const type = String(message.audience_type || "school");
+async function loadSelectableParents(schoolId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("parents")
+    .select("id, user_id, full_name, phone, photo_url, created_at")
+    .eq("school_id", schoolId)
+    .order("full_name", { ascending: true });
 
-  if (type === "class") return "Responsáveis de uma turma";
-  if (type === "teachers") return "Professores";
-  if (type === "teacher_class") return "Professores de uma turma";
-  if (type === "teacher_individual") return "Professor individual";
-  if (type === "coordinators") return "Coordenadores";
-  if (type === "coordinator_individual") return "Coordenador individual";
-  if (type === "secretaria") return "Secretaria";
-  if (type === "staff") return "Equipe escolar";
-  if (type === "all_parents") return "Todos os responsáveis";
+  if (error) {
+    throw new Error("Erro ao carregar responsáveis: " + error.message);
+  }
 
-  return "Escola toda";
-}
-
-function staffNameFromUser(user: any) {
-  const meta = user?.raw_user_meta_data || user?.user_metadata || {};
-  const name =
-    meta.full_name ||
-    meta.fullName ||
-    meta.name ||
-    meta.nome ||
-    user?.email ||
-    "Usuário escolar";
-
-  return String(name);
+  return (data || []).map((parent: any) => ({
+    id: String(parent.id),
+    parentId: String(parent.id),
+    userId: parent.user_id ? String(parent.user_id) : null,
+    fullName: parent.full_name || "Responsável sem nome",
+    name: parent.full_name || "Responsável sem nome",
+    phone: parent.phone || null,
+    photoUrl: parent.photo_url || null,
+    createdAt: parent.created_at || null,
+  }));
 }
 
 async function loadSelectableStaff(schoolId: string) {
@@ -115,7 +139,7 @@ async function loadSelectableStaff(schoolId: string) {
     .order("created_at", { ascending: false });
 
   if (error) {
-    throw new Error("Erro ao carregar usuários da equipe: " + error.message);
+    throw new Error("Erro ao carregar equipe escolar: " + error.message);
   }
 
   const userIds = Array.from(
@@ -144,9 +168,11 @@ async function loadSelectableStaff(schoolId: string) {
       const userId = String(row.user_id);
       const authUser = authUsersById.get(userId) || null;
       const role = normalizeRole(row.role);
+      const fullName = staffNameFromAuthUser(authUser);
 
       return {
         userId,
+        id: userId,
         role,
         roleLabel:
           role === "professor"
@@ -160,7 +186,8 @@ async function loadSelectableStaff(schoolId: string) {
                   : role === "admin"
                     ? "Administrador"
                     : role,
-        name: staffNameFromUser(authUser),
+        fullName,
+        name: fullName,
         email: authUser?.email || null,
       };
     })
@@ -177,6 +204,7 @@ async function loadSelectableStaff(schoolId: string) {
       };
 
       const roleCompare = (roleOrder[a.role] || 99) - (roleOrder[b.role] || 99);
+
       if (roleCompare !== 0) return roleCompare;
 
       return String(a.name).localeCompare(String(b.name), "pt-BR");
@@ -188,10 +216,15 @@ export async function GET(req: Request) {
     const authHeader = req.headers.get("authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
-    if (!token) return jsonError("Sessão não enviada.", 401);
+    if (!token) {
+      return jsonError("Sessão não enviada.", 401);
+    }
 
     const staffCheck = await getStaffFromToken(token);
-    if (!staffCheck.ok) return jsonError(staffCheck.error, staffCheck.status);
+
+    if (!staffCheck.ok) {
+      return jsonError(staffCheck.error, staffCheck.status);
+    }
 
     const schoolId = staffCheck.schoolId;
 
@@ -221,7 +254,6 @@ export async function GET(req: Request) {
     }
 
     const messageIds = (messages || []).map((m: any) => String(m.id)).filter(Boolean);
-
     const statsByMessage = new Map<string, any>();
 
     if (messageIds.length > 0) {
@@ -262,11 +294,7 @@ export async function GET(req: Request) {
     }
 
     const classIds = Array.from(
-      new Set(
-        (messages || [])
-          .map((m: any) => String(m.target_class_id || ""))
-          .filter(Boolean)
-      )
+      new Set((messages || []).map((m: any) => String(m.target_class_id || "")).filter(Boolean))
     );
 
     let classById = new Map<string, any>();
@@ -285,7 +313,10 @@ export async function GET(req: Request) {
       classById = new Map((classes || []).map((cls: any) => [String(cls.id), cls]));
     }
 
-    const selectableStaff = await loadSelectableStaff(schoolId);
+    const [selectableStaff, selectableParents] = await Promise.all([
+      loadSelectableStaff(schoolId),
+      loadSelectableParents(schoolId),
+    ]);
 
     const rows = (messages || []).map((message: any) => {
       const stats = statsByMessage.get(String(message.id)) || {
@@ -308,6 +339,7 @@ export async function GET(req: Request) {
     return jsonOk({
       messages: rows,
       selectableStaff,
+      selectableParents,
     });
   } catch (e: any) {
     return jsonError(e?.message || "Erro interno ao carregar comunicados.", 500);
