@@ -15,6 +15,14 @@ type RecipientStatus = "sent" | "delivered" | "viewed" | "pending";
 
 type AnyRow = Record<string, any>;
 
+type ResolvedPerson = {
+  name: string;
+  phone: string | null;
+  photoUrl: string | null;
+  email: string | null;
+  typeLabel: string;
+};
+
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
 }
@@ -108,11 +116,16 @@ function normalizeType(value: unknown) {
 function getRecipientType(row: AnyRow) {
   return normalizeType(
     row.recipient_type ??
+      row.recipientType ??
       row.type ??
       row.target_type ??
+      row.targetType ??
       row.audience_type ??
+      row.audienceType ??
       row.receiver_type ??
-      row.destination_type
+      row.receiverType ??
+      row.destination_type ??
+      row.destinationType
   );
 }
 
@@ -219,6 +232,8 @@ function getCandidateIds(row: AnyRow) {
     row.studentId,
     row.profile_id,
     row.profileId,
+    row.person_id,
+    row.personId,
     row.user_id,
     row.userId,
     row.auth_user_id,
@@ -256,6 +271,8 @@ function getPrimaryRecipientId(row: AnyRow) {
     row.studentId,
     row.profile_id,
     row.profileId,
+    row.person_id,
+    row.personId,
     row.user_id,
     row.userId,
     row.auth_user_id,
@@ -296,6 +313,15 @@ function initials(name: string) {
   }
 
   return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase();
+}
+
+function fallbackLabelForType(type: string) {
+  if (type === "parent") return "Responsável não identificado";
+  if (type === "teacher") return "Professor(a) não identificado";
+  if (type === "staff") return "Equipe escolar não identificada";
+  if (type === "student") return "Aluno(a) não identificado";
+
+  return "Destinatário não identificado";
 }
 
 async function loadMessageTitle(messageId: string, schoolId: string) {
@@ -424,6 +450,18 @@ async function safeSelectByUserId(params: {
   return (data || []) as AnyRow[];
 }
 
+async function loadAllParentsFallback(schoolId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("parents")
+    .select("*")
+    .eq("school_id", schoolId)
+    .limit(2000);
+
+  if (error) return [];
+
+  return (data || []) as AnyRow[];
+}
+
 async function resolveParents(rows: AnyRow[], schoolId: string) {
   const parentRows = rows.filter((row) => getRecipientType(row) === "parent");
 
@@ -431,43 +469,43 @@ async function resolveParents(rows: AnyRow[], schoolId: string) {
     new Set(parentRows.flatMap(getCandidateIds).filter(Boolean))
   );
 
-  const map = new Map<
-    string,
-    {
-      name: string;
-      phone: string | null;
-      photoUrl: string | null;
-      email: string | null;
-      typeLabel: string;
-    }
-  >();
+  const map = new Map<string, ResolvedPerson>();
 
-  if (ids.length === 0) return map;
-
-  const [byId, byUserId] = await Promise.all([
+  const [byId, byUserId, allParents] = await Promise.all([
     safeSelectById({ table: "parents", schoolId, ids }),
     safeSelectByUserId({ table: "parents", schoolId, ids }),
+    loadAllParentsFallback(schoolId),
   ]);
 
-  for (const item of [...byId, ...byUserId]) {
+  for (const item of [...byId, ...byUserId, ...allParents]) {
     const id = clean(item.id);
     const userId = clean(item.user_id);
+    const authUserId = clean(item.auth_user_id);
+    const profileId = clean(item.profile_id);
+
     const name =
       pickName(
         item.full_name,
+        item.fullName,
         item.name,
         item.nome,
         item.parent_name,
+        item.parentName,
         item.responsible_name,
-        item.guardian_name
+        item.responsibleName,
+        item.guardian_name,
+        item.guardianName,
+        item.display_name,
+        item.displayName
       ) || "Responsável";
 
     const phone = clean(item.phone || item.telefone || item.whatsapp) || null;
     const photoUrl =
-      clean(item.photo_url || item.avatar_url || item.profile_photo_url) || null;
+      clean(item.photo_url || item.photoUrl || item.avatar_url || item.profile_photo_url) ||
+      null;
     const email = clean(item.email) || null;
 
-    const payload = {
+    const payload: ResolvedPerson = {
       name,
       phone,
       photoUrl,
@@ -477,6 +515,8 @@ async function resolveParents(rows: AnyRow[], schoolId: string) {
 
     if (id) map.set(id, payload);
     if (userId) map.set(userId, payload);
+    if (authUserId) map.set(authUserId, payload);
+    if (profileId) map.set(profileId, payload);
   }
 
   return map;
@@ -489,16 +529,7 @@ async function resolveTeachers(rows: AnyRow[], schoolId: string) {
     new Set(teacherRows.flatMap(getCandidateIds).filter(Boolean))
   );
 
-  const map = new Map<
-    string,
-    {
-      name: string;
-      phone: string | null;
-      photoUrl: string | null;
-      email: string | null;
-      typeLabel: string;
-    }
-  >();
+  const map = new Map<string, ResolvedPerson>();
 
   if (ids.length === 0) return map;
 
@@ -510,21 +541,27 @@ async function resolveTeachers(rows: AnyRow[], schoolId: string) {
   for (const item of [...byId, ...byUserId]) {
     const id = clean(item.id);
     const userId = clean(item.user_id);
+    const authUserId = clean(item.auth_user_id);
+
     const name =
       pickName(
         item.full_name,
+        item.fullName,
         item.name,
         item.nome,
         item.teacher_name,
-        item.display_name
+        item.teacherName,
+        item.display_name,
+        item.displayName
       ) || "Professor(a)";
 
     const phone = clean(item.phone || item.telefone || item.whatsapp) || null;
     const photoUrl =
-      clean(item.photo_url || item.avatar_url || item.profile_photo_url) || null;
+      clean(item.photo_url || item.photoUrl || item.avatar_url || item.profile_photo_url) ||
+      null;
     const email = clean(item.email) || null;
 
-    const payload = {
+    const payload: ResolvedPerson = {
       name,
       phone,
       photoUrl,
@@ -534,6 +571,7 @@ async function resolveTeachers(rows: AnyRow[], schoolId: string) {
 
     if (id) map.set(id, payload);
     if (userId) map.set(userId, payload);
+    if (authUserId) map.set(authUserId, payload);
   }
 
   return map;
@@ -546,16 +584,7 @@ async function resolveStudents(rows: AnyRow[], schoolId: string) {
     new Set(studentRows.flatMap(getCandidateIds).filter(Boolean))
   );
 
-  const map = new Map<
-    string,
-    {
-      name: string;
-      phone: string | null;
-      photoUrl: string | null;
-      email: string | null;
-      typeLabel: string;
-    }
-  >();
+  const map = new Map<string, ResolvedPerson>();
 
   if (ids.length === 0) return map;
 
@@ -563,13 +592,22 @@ async function resolveStudents(rows: AnyRow[], schoolId: string) {
 
   for (const item of byId) {
     const id = clean(item.id);
+
     const name =
-      pickName(item.full_name, item.name, item.nome, item.student_name) || "Aluno(a)";
+      pickName(
+        item.full_name,
+        item.fullName,
+        item.name,
+        item.nome,
+        item.student_name,
+        item.studentName
+      ) || "Aluno(a)";
 
     const photoUrl =
-      clean(item.student_photo_url || item.photo_url || item.avatar_url) || null;
+      clean(item.student_photo_url || item.studentPhotoUrl || item.photo_url || item.avatar_url) ||
+      null;
 
-    const payload = {
+    const payload: ResolvedPerson = {
       name,
       phone: null,
       photoUrl,
@@ -590,16 +628,7 @@ async function resolveStaff(rows: AnyRow[], schoolId: string) {
     new Set(staffRows.flatMap(getCandidateIds).filter(Boolean))
   );
 
-  const map = new Map<
-    string,
-    {
-      name: string;
-      phone: string | null;
-      photoUrl: string | null;
-      email: string | null;
-      typeLabel: string;
-    }
-  >();
+  const map = new Map<string, ResolvedPerson>();
 
   if (ids.length === 0) return map;
 
@@ -611,16 +640,14 @@ async function resolveStaff(rows: AnyRow[], schoolId: string) {
 
   if (!error) {
     for (const item of data || []) {
-      const id = clean((item as AnyRow).id);
-      const userId = clean((item as AnyRow).user_id);
-      const role = clean((item as AnyRow).role).toLowerCase();
+      const row = item as AnyRow;
+
+      const id = clean(row.id);
+      const userId = clean(row.user_id);
+      const role = clean(row.role).toLowerCase();
 
       const name =
-        pickName(
-          (item as AnyRow).full_name,
-          (item as AnyRow).name,
-          (item as AnyRow).display_name
-        ) ||
+        pickName(row.full_name, row.fullName, row.name, row.display_name, row.displayName) ||
         (role === "diretor"
           ? "Diretor(a)"
           : role === "coordenador"
@@ -631,7 +658,7 @@ async function resolveStaff(rows: AnyRow[], schoolId: string) {
                 ? "Administrador"
                 : "Equipe escolar");
 
-      const payload = {
+      const payload: ResolvedPerson = {
         name,
         phone: null,
         photoUrl: null,
@@ -661,7 +688,7 @@ async function resolveAuthEmails(rows: AnyRow[]) {
         map.set(userId, email);
       }
     } catch {
-      // Não quebra a lista por causa de e-mail.
+      // não quebra a listagem por causa de e-mail
     }
   }
 
@@ -670,18 +697,7 @@ async function resolveAuthEmails(rows: AnyRow[]) {
 
 function findResolved(
   row: AnyRow,
-  maps: Array<
-    Map<
-      string,
-      {
-        name: string;
-        phone: string | null;
-        photoUrl: string | null;
-        email: string | null;
-        typeLabel: string;
-      }
-    >
-  >
+  maps: Array<Map<string, ResolvedPerson>>
 ) {
   const keys = getCandidateIds(row);
 
@@ -693,15 +709,6 @@ function findResolved(
   }
 
   return null;
-}
-
-function fallbackLabelForType(type: string) {
-  if (type === "parent") return "Responsável";
-  if (type === "teacher") return "Professor(a)";
-  if (type === "staff") return "Equipe escolar";
-  if (type === "student") return "Aluno(a)";
-
-  return "Destinatário";
 }
 
 export async function GET(req: Request, context: RouteContext) {
@@ -770,6 +777,7 @@ export async function GET(req: Request, context: RouteContext) {
       );
 
       const fallbackName = fallbackLabelForType(type);
+
       const name =
         pickName(explicitName, resolved?.name, resolved?.email, emailFromAuth) ||
         fallbackName;
@@ -778,11 +786,14 @@ export async function GET(req: Request, context: RouteContext) {
       const viewedAt = getViewedAt(row);
       const createdAt = getCreatedAt(row);
       const recipientId = getPrimaryRecipientId(row);
+      const avatarInitials = initials(name);
 
       return {
         id: clean(row.id) || recipientId,
         message_id: clean(row.message_id || row.messageId) || messageId,
+        messageId,
         school_id: clean(row.school_id || row.schoolId) || schoolId,
+        schoolId,
 
         recipient_type: type,
         recipientType: type,
@@ -793,17 +804,30 @@ export async function GET(req: Request, context: RouteContext) {
         recipient_name: name,
         recipientName: name,
 
+        name,
+        full_name: name,
+        fullName: name,
+        display_name: name,
+        displayName: name,
+        label: name,
+        title: name,
+
         recipient_email: resolved?.email || emailFromAuth,
         recipientEmail: resolved?.email || emailFromAuth,
+        email: resolved?.email || emailFromAuth,
 
         recipient_phone: resolved?.phone || null,
         recipientPhone: resolved?.phone || null,
+        phone: resolved?.phone || null,
 
         recipient_photo_url: resolved?.photoUrl || null,
         recipientPhotoUrl: resolved?.photoUrl || null,
+        photo_url: resolved?.photoUrl || null,
+        photoUrl: resolved?.photoUrl || null,
 
-        recipient_initials: initials(name),
-        recipientInitials: initials(name),
+        recipient_initials: avatarInitials,
+        recipientInitials: avatarInitials,
+        initials: avatarInitials,
 
         type_label: resolved?.typeLabel || fallbackName,
         typeLabel: resolved?.typeLabel || fallbackName,
@@ -823,18 +847,21 @@ export async function GET(req: Request, context: RouteContext) {
       };
     });
 
-    const statsBase = allRecipients;
+    const sentCount = allRecipients.length;
 
-    const sentCount = statsBase.length;
-    const deliveredCount = statsBase.filter((item) => {
+    const deliveredCount = allRecipients.filter((item) => {
       const deliveredAt = getDeliveredAt(item);
       const viewedAt = getViewedAt(item);
+
       return Boolean(deliveredAt) && !viewedAt;
     }).length;
-    const viewedCount = statsBase.filter((item) => Boolean(getViewedAt(item))).length;
-    const pendingCount = statsBase.filter((item) => {
+
+    const viewedCount = allRecipients.filter((item) => Boolean(getViewedAt(item))).length;
+
+    const pendingCount = allRecipients.filter((item) => {
       const deliveredAt = getDeliveredAt(item);
       const viewedAt = getViewedAt(item);
+
       return !deliveredAt && !viewedAt;
     }).length;
 
