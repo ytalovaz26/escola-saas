@@ -25,14 +25,6 @@ type RecipientRow = {
   created_at: string | null;
 };
 
-type ResolvedRecipient = RecipientRow & {
-  recipientName: string;
-  recipientEmail: string | null;
-  recipientPhone: string | null;
-  recipientPhotoUrl: string | null;
-  status: RecipientStatus;
-};
-
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
 }
@@ -42,9 +34,17 @@ function clean(value: unknown) {
 }
 
 function normalizeType(value: unknown) {
-  const raw = clean(value).toLowerCase();
+  const raw = clean(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
-  if (raw === "parent" || raw === "parents" || raw === "responsavel" || raw === "responsável") {
+  if (
+    raw === "parent" ||
+    raw === "parents" ||
+    raw === "responsavel" ||
+    raw === "responsaveis"
+  ) {
     return "parent";
   }
 
@@ -56,14 +56,17 @@ function normalizeType(value: unknown) {
     raw === "staff" ||
     raw === "equipe" ||
     raw === "secretaria" ||
+    raw === "secretary" ||
     raw === "coordenador" ||
+    raw === "coordinator" ||
     raw === "diretor" ||
+    raw === "director" ||
     raw === "admin"
   ) {
     return "staff";
   }
 
-  if (raw === "student" || raw === "aluno") {
+  if (raw === "student" || raw === "aluno" || raw === "alunos") {
     return "student";
   }
 
@@ -77,95 +80,141 @@ function getStatus(row: RecipientRow): RecipientStatus {
   return "pending";
 }
 
+function statusMatchesFilter(row: RecipientRow, filter: string) {
+  const normalizedFilter = clean(filter).toLowerCase();
+
+  if (!normalizedFilter || normalizedFilter === "all" || normalizedFilter === "todos") {
+    return true;
+  }
+
+  const status = getStatus(row);
+
+  if (normalizedFilter === "sent" || normalizedFilter === "enviado") {
+    return true;
+  }
+
+  if (
+    normalizedFilter === "delivered" ||
+    normalizedFilter === "entregue" ||
+    normalizedFilter === "entregues"
+  ) {
+    return Boolean(row.delivered_at) && !row.viewed_at;
+  }
+
+  if (
+    normalizedFilter === "viewed" ||
+    normalizedFilter === "visualizado" ||
+    normalizedFilter === "visualizados"
+  ) {
+    return status === "viewed";
+  }
+
+  if (
+    normalizedFilter === "pending" ||
+    normalizedFilter === "pendente" ||
+    normalizedFilter === "pendentes"
+  ) {
+    return !row.delivered_at && !row.viewed_at;
+  }
+
+  return true;
+}
+
 function isUuidLike(value: unknown) {
   const s = clean(value);
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    s
+  );
 }
 
 function pickName(...values: unknown[]) {
   for (const value of values) {
     const text = clean(value);
-    if (text && !isUuidLike(text)) return text;
+
+    if (text && !isUuidLike(text)) {
+      return text;
+    }
   }
 
   return "";
 }
 
-async function getMessageSchoolId(messageId: string, guardSchoolId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("school_messages")
-    .select("id, school_id")
-    .eq("id", messageId)
-    .eq("school_id", guardSchoolId)
-    .maybeSingle();
+function initials(name: string) {
+  const safe = clean(name);
+  if (!safe) return "DT";
 
-  if (error) {
-    throw new Error(error.message);
+  const parts = safe.split(/\s+/).filter(Boolean);
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
   }
 
-  if (!data?.id) {
-    return null;
-  }
-
-  return String(data.school_id || guardSchoolId);
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase();
 }
 
 async function loadRecipients(messageId: string, schoolId: string): Promise<RecipientRow[]> {
-  const primary = await supabaseAdmin
-    .from("school_message_recipients")
-    .select(
-      `
-        id,
-        message_id,
-        school_id,
-        recipient_type,
-        recipient_id,
-        user_id,
-        delivered_at,
-        viewed_at,
-        created_at
-      `
-    )
-    .eq("message_id", messageId)
-    .eq("school_id", schoolId)
-    .order("created_at", { ascending: true });
+  const attempts = [
+    supabaseAdmin
+      .from("school_message_recipients")
+      .select(
+        `
+          id,
+          message_id,
+          school_id,
+          recipient_type,
+          recipient_id,
+          user_id,
+          delivered_at,
+          viewed_at,
+          created_at
+        `
+      )
+      .eq("message_id", messageId)
+      .eq("school_id", schoolId)
+      .order("created_at", { ascending: true }),
 
-  if (!primary.error) {
-    return (primary.data || []) as RecipientRow[];
+    supabaseAdmin
+      .from("message_recipients")
+      .select(
+        `
+          id,
+          message_id,
+          school_id,
+          recipient_type,
+          recipient_id,
+          user_id,
+          delivered_at,
+          viewed_at,
+          created_at
+        `
+      )
+      .eq("message_id", messageId)
+      .eq("school_id", schoolId)
+      .order("created_at", { ascending: true }),
+  ];
+
+  let lastError: any = null;
+
+  for (const query of attempts) {
+    const { data, error } = await query;
+
+    if (!error) {
+      return (data || []) as RecipientRow[];
+    }
+
+    lastError = error;
   }
 
-  const fallback = await supabaseAdmin
-    .from("message_recipients")
-    .select(
-      `
-        id,
-        message_id,
-        school_id,
-        recipient_type,
-        recipient_id,
-        user_id,
-        delivered_at,
-        viewed_at,
-        created_at
-      `
-    )
-    .eq("message_id", messageId)
-    .eq("school_id", schoolId)
-    .order("created_at", { ascending: true });
-
-  if (fallback.error) {
-    throw new Error(fallback.error.message || primary.error.message);
-  }
-
-  return (fallback.data || []) as RecipientRow[];
+  throw new Error(lastError?.message || "Não foi possível carregar destinatários.");
 }
 
-async function resolveParentNames(rows: RecipientRow[], schoolId: string) {
+async function resolveParents(rows: RecipientRow[], schoolId: string) {
   const ids = Array.from(
     new Set(
       rows
         .filter((row) => normalizeType(row.recipient_type) === "parent")
-        .map((row) => clean(row.recipient_id || row.user_id))
+        .flatMap((row) => [clean(row.recipient_id), clean(row.user_id)])
         .filter(Boolean)
     )
   );
@@ -182,46 +231,67 @@ async function resolveParentNames(rows: RecipientRow[], schoolId: string) {
 
   if (ids.length === 0) return map;
 
-  const { data } = await supabaseAdmin
+  const byId = await supabaseAdmin
     .from("parents")
-    .select("id, user_id, full_name, name, phone, photo_url")
+    .select("id, school_id, user_id, full_name, phone, photo_url")
     .eq("school_id", schoolId)
-    .or(`id.in.(${ids.join(",")}),user_id.in.(${ids.join(",")})`);
+    .in("id", ids);
 
-  for (const item of data || []) {
-    const name = pickName((item as any).full_name, (item as any).name);
-    const phone = clean((item as any).phone) || null;
-    const photoUrl = clean((item as any).photo_url) || null;
-    const userId = clean((item as any).user_id) || null;
+  if (!byId.error) {
+    for (const item of byId.data || []) {
+      const id = clean((item as any).id);
+      const userId = clean((item as any).user_id);
+      const name = pickName((item as any).full_name) || "Responsável";
+      const phone = clean((item as any).phone) || null;
+      const photoUrl = clean((item as any).photo_url) || null;
 
-    if ((item as any).id) {
-      map.set(String((item as any).id), {
-        name,
-        phone,
-        photoUrl,
-        userId,
-      });
+      if (id) {
+        map.set(id, { name, phone, photoUrl, userId: userId || null });
+      }
+
+      if (userId) {
+        map.set(userId, { name, phone, photoUrl, userId });
+      }
     }
+  }
 
-    if (userId) {
-      map.set(userId, {
-        name,
-        phone,
-        photoUrl,
-        userId,
-      });
+  const unresolvedUserIds = ids.filter((id) => !map.has(id));
+
+  if (unresolvedUserIds.length > 0) {
+    const byUserId = await supabaseAdmin
+      .from("parents")
+      .select("id, school_id, user_id, full_name, phone, photo_url")
+      .eq("school_id", schoolId)
+      .in("user_id", unresolvedUserIds);
+
+    if (!byUserId.error) {
+      for (const item of byUserId.data || []) {
+        const id = clean((item as any).id);
+        const userId = clean((item as any).user_id);
+        const name = pickName((item as any).full_name) || "Responsável";
+        const phone = clean((item as any).phone) || null;
+        const photoUrl = clean((item as any).photo_url) || null;
+
+        if (id) {
+          map.set(id, { name, phone, photoUrl, userId: userId || null });
+        }
+
+        if (userId) {
+          map.set(userId, { name, phone, photoUrl, userId });
+        }
+      }
     }
   }
 
   return map;
 }
 
-async function resolveTeacherNames(rows: RecipientRow[], schoolId: string) {
+async function resolveTeachers(rows: RecipientRow[], schoolId: string) {
   const ids = Array.from(
     new Set(
       rows
         .filter((row) => normalizeType(row.recipient_type) === "teacher")
-        .map((row) => clean(row.recipient_id || row.user_id))
+        .flatMap((row) => [clean(row.recipient_id), clean(row.user_id)])
         .filter(Boolean)
     )
   );
@@ -238,46 +308,67 @@ async function resolveTeacherNames(rows: RecipientRow[], schoolId: string) {
 
   if (ids.length === 0) return map;
 
-  const { data } = await supabaseAdmin
+  const byId = await supabaseAdmin
     .from("teachers")
-    .select("id, user_id, full_name, name, phone, photo_url")
+    .select("id, school_id, user_id, full_name, phone, photo_url")
     .eq("school_id", schoolId)
-    .or(`id.in.(${ids.join(",")}),user_id.in.(${ids.join(",")})`);
+    .in("id", ids);
 
-  for (const item of data || []) {
-    const name = pickName((item as any).full_name, (item as any).name);
-    const phone = clean((item as any).phone) || null;
-    const photoUrl = clean((item as any).photo_url) || null;
-    const userId = clean((item as any).user_id) || null;
+  if (!byId.error) {
+    for (const item of byId.data || []) {
+      const id = clean((item as any).id);
+      const userId = clean((item as any).user_id);
+      const name = pickName((item as any).full_name) || "Professor(a)";
+      const phone = clean((item as any).phone) || null;
+      const photoUrl = clean((item as any).photo_url) || null;
 
-    if ((item as any).id) {
-      map.set(String((item as any).id), {
-        name,
-        phone,
-        photoUrl,
-        userId,
-      });
+      if (id) {
+        map.set(id, { name, phone, photoUrl, userId: userId || null });
+      }
+
+      if (userId) {
+        map.set(userId, { name, phone, photoUrl, userId });
+      }
     }
+  }
 
-    if (userId) {
-      map.set(userId, {
-        name,
-        phone,
-        photoUrl,
-        userId,
-      });
+  const unresolvedUserIds = ids.filter((id) => !map.has(id));
+
+  if (unresolvedUserIds.length > 0) {
+    const byUserId = await supabaseAdmin
+      .from("teachers")
+      .select("id, school_id, user_id, full_name, phone, photo_url")
+      .eq("school_id", schoolId)
+      .in("user_id", unresolvedUserIds);
+
+    if (!byUserId.error) {
+      for (const item of byUserId.data || []) {
+        const id = clean((item as any).id);
+        const userId = clean((item as any).user_id);
+        const name = pickName((item as any).full_name) || "Professor(a)";
+        const phone = clean((item as any).phone) || null;
+        const photoUrl = clean((item as any).photo_url) || null;
+
+        if (id) {
+          map.set(id, { name, phone, photoUrl, userId: userId || null });
+        }
+
+        if (userId) {
+          map.set(userId, { name, phone, photoUrl, userId });
+        }
+      }
     }
   }
 
   return map;
 }
 
-async function resolveStaffNames(rows: RecipientRow[], schoolId: string) {
+async function resolveStaff(rows: RecipientRow[], schoolId: string) {
   const ids = Array.from(
     new Set(
       rows
         .filter((row) => normalizeType(row.recipient_type) === "staff")
-        .map((row) => clean(row.recipient_id || row.user_id))
+        .flatMap((row) => [clean(row.recipient_id), clean(row.user_id)])
         .filter(Boolean)
     )
   );
@@ -294,45 +385,47 @@ async function resolveStaffNames(rows: RecipientRow[], schoolId: string) {
 
   if (ids.length === 0) return map;
 
-  const { data } = await supabaseAdmin
+  const byUserId = await supabaseAdmin
     .from("school_users")
-    .select("id, user_id, full_name, name, role")
+    .select("id, school_id, user_id, role")
     .eq("school_id", schoolId)
-    .or(`id.in.(${ids.join(",")}),user_id.in.(${ids.join(",")})`);
+    .in("user_id", ids);
 
-  for (const item of data || []) {
-    const role = clean((item as any).role);
-    const name = pickName((item as any).full_name, (item as any).name) || role || "Equipe escolar";
-    const userId = clean((item as any).user_id) || null;
+  if (!byUserId.error) {
+    for (const item of byUserId.data || []) {
+      const id = clean((item as any).id);
+      const userId = clean((item as any).user_id);
+      const role = clean((item as any).role);
+      const name =
+        role === "diretor"
+          ? "Diretor(a)"
+          : role === "coordenador"
+            ? "Coordenador(a)"
+            : role === "secretaria"
+              ? "Secretaria"
+              : role === "admin"
+                ? "Administrador"
+                : "Equipe escolar";
 
-    if ((item as any).id) {
-      map.set(String((item as any).id), {
-        name,
-        phone: null,
-        photoUrl: null,
-        userId,
-      });
-    }
+      if (id) {
+        map.set(id, { name, phone: null, photoUrl: null, userId: userId || null });
+      }
 
-    if (userId) {
-      map.set(userId, {
-        name,
-        phone: null,
-        photoUrl: null,
-        userId,
-      });
+      if (userId) {
+        map.set(userId, { name, phone: null, photoUrl: null, userId });
+      }
     }
   }
 
   return map;
 }
 
-async function resolveStudentNames(rows: RecipientRow[], schoolId: string) {
+async function resolveStudents(rows: RecipientRow[], schoolId: string) {
   const ids = Array.from(
     new Set(
       rows
         .filter((row) => normalizeType(row.recipient_type) === "student")
-        .map((row) => clean(row.recipient_id || row.user_id))
+        .map((row) => clean(row.recipient_id))
         .filter(Boolean)
     )
   );
@@ -349,50 +442,44 @@ async function resolveStudentNames(rows: RecipientRow[], schoolId: string) {
 
   if (ids.length === 0) return map;
 
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from("students")
-    .select("id, full_name, name, student_photo_url")
+    .select("id, school_id, full_name, student_photo_url")
     .eq("school_id", schoolId)
     .in("id", ids);
 
-  for (const item of data || []) {
-    const name = pickName((item as any).full_name, (item as any).name);
-    const photoUrl = clean((item as any).student_photo_url) || null;
+  if (!error) {
+    for (const item of data || []) {
+      const id = clean((item as any).id);
+      const name = pickName((item as any).full_name) || "Aluno(a)";
+      const photoUrl = clean((item as any).student_photo_url) || null;
 
-    if ((item as any).id) {
-      map.set(String((item as any).id), {
-        name,
-        phone: null,
-        photoUrl,
-        userId: null,
-      });
+      if (id) {
+        map.set(id, { name, phone: null, photoUrl, userId: null });
+      }
     }
   }
 
   return map;
 }
 
-async function resolveAuthEmails(rows: RecipientRow[]) {
-  const userIds = Array.from(
-    new Set(
-      rows
-        .map((row) => clean(row.user_id))
-        .filter(Boolean)
-    )
+async function resolveEmails(rows: RecipientRow[]) {
+  const ids = Array.from(
+    new Set(rows.map((row) => clean(row.user_id)).filter(Boolean))
   );
 
   const map = new Map<string, string>();
 
-  for (const userId of userIds) {
+  for (const userId of ids) {
     try {
       const { data } = await supabaseAdmin.auth.admin.getUserById(userId);
-
       const email = clean(data?.user?.email);
+
       if (email) {
         map.set(userId, email);
       }
     } catch {
-      // Não quebra a rota se não conseguir buscar e-mail.
+      // Mantém silencioso para não quebrar o modal.
     }
   }
 
@@ -415,38 +502,38 @@ export async function GET(req: Request, context: RouteContext) {
   try {
     const params = await context.params;
     const messageId = clean(params?.id);
+    const schoolId = clean((guard as any).schoolId);
 
     if (!messageId) {
       return jsonError("ID do comunicado é obrigatório.", 400);
     }
 
-    const schoolId = clean((guard as any).schoolId);
-
     if (!schoolId) {
       return jsonError("Escola não identificada.", 401);
     }
 
-    const messageSchoolId = await getMessageSchoolId(messageId, schoolId);
+    const url = new URL(req.url);
+    const filter = clean(url.searchParams.get("filter"));
 
-    if (!messageSchoolId) {
-      return jsonError("Comunicado não encontrado.", 404);
-    }
+    const allRecipients = await loadRecipients(messageId, schoolId);
+    const filteredRecipients = allRecipients.filter((row) =>
+      statusMatchesFilter(row, filter)
+    );
 
-    const recipients = await loadRecipients(messageId, messageSchoolId);
+    const [parentsMap, teachersMap, staffMap, studentsMap, emailsMap] =
+      await Promise.all([
+        resolveParents(filteredRecipients, schoolId),
+        resolveTeachers(filteredRecipients, schoolId),
+        resolveStaff(filteredRecipients, schoolId),
+        resolveStudents(filteredRecipients, schoolId),
+        resolveEmails(filteredRecipients),
+      ]);
 
-    const [parentsMap, teachersMap, staffMap, studentsMap, emailsMap] = await Promise.all([
-      resolveParentNames(recipients, messageSchoolId),
-      resolveTeacherNames(recipients, messageSchoolId),
-      resolveStaffNames(recipients, messageSchoolId),
-      resolveStudentNames(recipients, messageSchoolId),
-      resolveAuthEmails(recipients),
-    ]);
-
-    const resolved: ResolvedRecipient[] = recipients.map((row) => {
+    const recipients = filteredRecipients.map((row) => {
       const type = normalizeType(row.recipient_type);
-      const mainId = clean(row.recipient_id);
+      const recipientId = clean(row.recipient_id);
       const userId = clean(row.user_id);
-      const lookupKey = mainId || userId;
+      const lookupKeys = [recipientId, userId].filter(Boolean);
 
       let found:
         | {
@@ -457,14 +544,11 @@ export async function GET(req: Request, context: RouteContext) {
           }
         | undefined;
 
-      if (type === "parent") {
-        found = parentsMap.get(lookupKey) || parentsMap.get(userId) || parentsMap.get(mainId);
-      } else if (type === "teacher") {
-        found = teachersMap.get(lookupKey) || teachersMap.get(userId) || teachersMap.get(mainId);
-      } else if (type === "staff") {
-        found = staffMap.get(lookupKey) || staffMap.get(userId) || staffMap.get(mainId);
-      } else if (type === "student") {
-        found = studentsMap.get(lookupKey) || studentsMap.get(mainId);
+      for (const key of lookupKeys) {
+        if (type === "parent") found = found || parentsMap.get(key);
+        if (type === "teacher") found = found || teachersMap.get(key);
+        if (type === "staff") found = found || staffMap.get(key);
+        if (type === "student") found = found || studentsMap.get(key);
       }
 
       const email = userId ? emailsMap.get(userId) || null : null;
@@ -480,25 +564,29 @@ export async function GET(req: Request, context: RouteContext) {
                 ? "Aluno(a)"
                 : "Destinatário";
 
+      const recipientName = pickName(found?.name, email) || fallbackName;
+
       return {
         ...row,
         recipient_type: type,
-        recipientName: pickName(found?.name) || email || fallbackName,
+        recipientName,
         recipientEmail: email,
         recipientPhone: found?.phone || null,
         recipientPhotoUrl: found?.photoUrl || null,
+        recipientInitials: initials(recipientName),
         status: getStatus(row),
       };
     });
 
-    const sentCount = resolved.length;
-    const deliveredCount = resolved.filter((item) => item.delivered_at).length;
-    const viewedCount = resolved.filter((item) => item.viewed_at).length;
-    const pendingCount = resolved.filter((item) => !item.delivered_at && !item.viewed_at).length;
+    const statsBase = allRecipients;
+    const sentCount = statsBase.length;
+    const deliveredCount = statsBase.filter((item) => item.delivered_at && !item.viewed_at).length;
+    const viewedCount = statsBase.filter((item) => item.viewed_at).length;
+    const pendingCount = statsBase.filter((item) => !item.delivered_at && !item.viewed_at).length;
 
     return NextResponse.json({
       ok: true,
-      recipients: resolved,
+      recipients,
       stats: {
         sent: sentCount,
         delivered: deliveredCount,
