@@ -16,6 +16,16 @@ type AudienceType =
   | "secretaria"
   | "staff";
 
+type RecipientRow = {
+  recipient_type: string;
+  recipient_id: string;
+};
+
+type StaffRecipientRow = {
+  user_id: string | null;
+  role: string | null;
+};
+
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
 }
@@ -29,15 +39,31 @@ function cleanText(value: unknown) {
 }
 
 function normalizeRole(role?: string | null) {
-  const r = String(role || "").trim().toLowerCase();
+  const r = String(role || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
   if (r === "diretor" || r === "director") return "diretor";
   if (r === "coordenador" || r === "coordinator") return "coordenador";
   if (r === "secretaria" || r === "secretary") return "secretaria";
   if (r === "professor" || r === "teacher") return "professor";
-  if (r === "admin") return "admin";
+  if (r === "admin" || r === "administrador") return "admin";
 
   return r;
+}
+
+function recipientTypeFromRole(role?: string | null) {
+  const r = normalizeRole(role);
+
+  if (r === "diretor") return "diretor";
+  if (r === "coordenador") return "coordenador";
+  if (r === "secretaria") return "secretaria";
+  if (r === "professor") return "professor";
+  if (r === "admin") return "admin";
+
+  return "staff";
 }
 
 function normalizeAudienceType(type?: string | null): AudienceType {
@@ -120,7 +146,7 @@ async function getParentRecipients(params: {
   audienceType: AudienceType;
   targetClassId: string;
   targetParentId: string;
-}) {
+}): Promise<RecipientRow[]> {
   const { schoolId, audienceType, targetClassId, targetParentId } = params;
 
   if (audienceType === "parent_individual") {
@@ -143,7 +169,12 @@ async function getParentRecipients(params: {
       throw new Error("Responsável não encontrado nesta escola.");
     }
 
-    return [{ recipient_type: "parent", recipient_id: String(data.id) }];
+    return [
+      {
+        recipient_type: "parent",
+        recipient_id: String(data.id),
+      },
+    ];
   }
 
   if (audienceType === "class") {
@@ -166,7 +197,9 @@ async function getParentRecipients(params: {
       new Set((studentLinks || []).map((row: any) => String(row.student_id)).filter(Boolean))
     );
 
-    if (studentIds.length === 0) return [];
+    if (studentIds.length === 0) {
+      return [];
+    }
 
     const { data: parentLinks, error: parentLinksErr } = await supabaseAdmin
       .from("student_parents")
@@ -204,12 +237,39 @@ async function getParentRecipients(params: {
   }));
 }
 
+async function getSchoolUserByUserId(params: {
+  schoolId: string;
+  userId: string;
+  allowedRoles?: string[];
+}) {
+  const { schoolId, userId, allowedRoles } = params;
+
+  let query = supabaseAdmin
+    .from("school_users")
+    .select("user_id, role")
+    .eq("school_id", schoolId)
+    .eq("user_id", userId)
+    .eq("is_active", true);
+
+  if (allowedRoles && allowedRoles.length > 0) {
+    query = query.in("role", allowedRoles);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) {
+    throw new Error("Erro ao validar destinatário da equipe: " + error.message);
+  }
+
+  return data as StaffRecipientRow | null;
+}
+
 async function getStaffRecipients(params: {
   schoolId: string;
   audienceType: AudienceType;
   targetClassId: string;
   targetTeacherUserId: string;
-}) {
+}): Promise<RecipientRow[]> {
   const { schoolId, audienceType, targetClassId, targetTeacherUserId } = params;
 
   if (audienceType === "teacher_individual") {
@@ -217,23 +277,22 @@ async function getStaffRecipients(params: {
       throw new Error("Selecione o professor individual.");
     }
 
-    const { data, error } = await supabaseAdmin
-      .from("school_users")
-      .select("user_id")
-      .eq("school_id", schoolId)
-      .eq("user_id", targetTeacherUserId)
-      .eq("is_active", true)
-      .maybeSingle();
+    const staff = await getSchoolUserByUserId({
+      schoolId,
+      userId: targetTeacherUserId,
+      allowedRoles: ["professor", "teacher"],
+    });
 
-    if (error) {
-      throw new Error("Erro ao validar professor: " + error.message);
-    }
-
-    if (!data?.user_id) {
+    if (!staff?.user_id) {
       throw new Error("Professor não encontrado nesta escola.");
     }
 
-    return [{ recipient_type: "staff", recipient_id: String(data.user_id) }];
+    return [
+      {
+        recipient_type: "professor",
+        recipient_id: String(staff.user_id),
+      },
+    ];
   }
 
   if (audienceType === "teachers_class") {
@@ -241,7 +300,7 @@ async function getStaffRecipients(params: {
       throw new Error("Selecione a turma.");
     }
 
-    const { data, error } = await supabaseAdmin
+    const { data: teacherLinks, error } = await supabaseAdmin
       .from("teacher_classes")
       .select("teacher_user_id")
       .eq("school_id", schoolId)
@@ -251,14 +310,35 @@ async function getStaffRecipients(params: {
       throw new Error("Erro ao buscar professores da turma: " + error.message);
     }
 
-    const ids = Array.from(
-      new Set((data || []).map((row: any) => String(row.teacher_user_id)).filter(Boolean))
+    const teacherUserIds = Array.from(
+      new Set(
+        (teacherLinks || [])
+          .map((row: any) => String(row.teacher_user_id || "").trim())
+          .filter(Boolean)
+      )
     );
 
-    return ids.map((id) => ({
-      recipient_type: "staff",
-      recipient_id: id,
-    }));
+    if (teacherUserIds.length === 0) {
+      return [];
+    }
+
+    const { data: staffRows, error: staffErr } = await supabaseAdmin
+      .from("school_users")
+      .select("user_id, role")
+      .eq("school_id", schoolId)
+      .eq("is_active", true)
+      .in("user_id", teacherUserIds);
+
+    if (staffErr) {
+      throw new Error("Erro ao validar professores da turma: " + staffErr.message);
+    }
+
+    return (staffRows || [])
+      .filter((row: any) => String(row.user_id || "").trim())
+      .map((row: any) => ({
+        recipient_type: recipientTypeFromRole(row.role || "professor"),
+        recipient_id: String(row.user_id),
+      }));
   }
 
   let roles: string[] = [];
@@ -294,18 +374,21 @@ async function getStaffRecipients(params: {
     throw new Error("Erro ao buscar equipe escolar: " + error.message);
   }
 
-  const ids = Array.from(
-    new Set((data || []).map((row: any) => String(row.user_id)).filter(Boolean))
-  );
-
-  return ids.map((id) => ({
-    recipient_type: "staff",
-    recipient_id: id,
-  }));
+  return (data || [])
+    .filter((row: any) => String(row.user_id || "").trim())
+    .map((row: any) => ({
+      recipient_type: recipientTypeFromRole(row.role),
+      recipient_id: String(row.user_id),
+    }));
 }
 
 function isParentAudience(type: AudienceType) {
-  return type === "school" || type === "all_parents" || type === "parent_individual" || type === "class";
+  return (
+    type === "school" ||
+    type === "all_parents" ||
+    type === "parent_individual" ||
+    type === "class"
+  );
 }
 
 function isStaffAudience(type: AudienceType) {
@@ -317,6 +400,23 @@ function isStaffAudience(type: AudienceType) {
     type === "secretaria" ||
     type === "staff"
   );
+}
+
+function getTargetRoleForMessage(params: {
+  audienceType: AudienceType;
+  isDisciplinary: boolean;
+}) {
+  const { audienceType, isDisciplinary } = params;
+
+  if (isDisciplinary) return "advertencia_suspensao";
+  if (audienceType === "teachers") return "professor";
+  if (audienceType === "coordinators") return "coordenador";
+  if (audienceType === "secretaria") return "secretaria";
+  if (audienceType === "staff") return "equipe_escolar";
+  if (audienceType === "teacher_individual") return "professor";
+  if (audienceType === "teachers_class") return "professor";
+
+  return null;
 }
 
 export async function POST(req: Request) {
@@ -359,6 +459,7 @@ export async function POST(req: Request) {
     );
 
     const category = cleanText(body?.category || body?.messageCategory || body?.message_category);
+
     const isDisciplinary =
       category === "disciplinary" ||
       category === "advertencia_suspensao" ||
@@ -405,20 +506,14 @@ export async function POST(req: Request) {
         audience_type: audienceType,
         target_class_id:
           audienceType === "class" || audienceType === "teachers_class" ? targetClassId : null,
-        target_role:
-          audienceType === "teachers"
-            ? "professor"
-            : audienceType === "coordinators"
-              ? "coordenador"
-              : audienceType === "secretaria"
-                ? "secretaria"
-                : isDisciplinary
-                  ? "advertencia_suspensao"
-                  : null,
+        target_role: getTargetRoleForMessage({
+          audienceType,
+          isDisciplinary,
+        }),
         published_at: now,
       })
       .select(
-        "id, school_id, title, body, status, audience_type, target_class_id, published_at, created_at"
+        "id, school_id, title, body, status, audience_type, target_class_id, target_role, published_at, created_at"
       )
       .single();
 
@@ -426,7 +521,7 @@ export async function POST(req: Request) {
       return jsonError("Erro ao criar comunicado: " + msgErr.message, 500);
     }
 
-    let recipients: { recipient_type: string; recipient_id: string }[] = [];
+    let recipients: RecipientRow[] = [];
 
     if (isParentAudience(audienceType)) {
       recipients = await getParentRecipients({
@@ -444,11 +539,18 @@ export async function POST(req: Request) {
       });
     }
 
-    const unique = new Map<string, { recipient_type: string; recipient_id: string }>();
+    const unique = new Map<string, RecipientRow>();
 
     for (const rec of recipients) {
-      if (!rec.recipient_id) continue;
-      unique.set(`${rec.recipient_type}:${rec.recipient_id}`, rec);
+      const recipientId = cleanText(rec.recipient_id);
+      const recipientType = cleanText(rec.recipient_type);
+
+      if (!recipientId || !recipientType) continue;
+
+      unique.set(`${recipientType}:${recipientId}`, {
+        recipient_type: recipientType,
+        recipient_id: recipientId,
+      });
     }
 
     const rows = Array.from(unique.values()).map((rec) => ({
