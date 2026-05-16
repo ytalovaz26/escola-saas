@@ -230,14 +230,7 @@ function getReadAt(row: any) {
 }
 
 function getCreatedAt(row: any) {
-  return (
-    cleanText(
-      getFirstExisting(row, [
-        "created_at",
-        "createdAt",
-      ])
-    ) || null
-  );
+  return cleanText(getFirstExisting(row, ["created_at", "createdAt"])) || null;
 }
 
 function inferStatus(row: any) {
@@ -308,8 +301,11 @@ function isUsefulName(value: unknown) {
     lower === "equipe escolar" ||
     lower === "equipe" ||
     lower === "coordenador" ||
+    lower === "coordenadora" ||
     lower === "secretaria" ||
-    lower === "diretor"
+    lower === "secretário" ||
+    lower === "diretor" ||
+    lower === "diretora"
   ) {
     return false;
   }
@@ -320,12 +316,23 @@ function isUsefulName(value: unknown) {
 function addResolved(
   map: Map<string, PersonResolved>,
   keys: Array<string | null | undefined>,
-  person: PersonResolved
+  person: PersonResolved,
+  options?: { preferExistingUsefulName?: boolean }
 ) {
   for (const key of keys) {
     const safeKey = cleanText(key);
 
     if (!safeKey) continue;
+
+    const current = map.get(safeKey);
+
+    if (options?.preferExistingUsefulName && current && isUsefulName(current.name)) {
+      continue;
+    }
+
+    if (current && isUsefulName(current.name) && !isUsefulName(person.name)) {
+      continue;
+    }
 
     map.set(safeKey, person);
   }
@@ -399,9 +406,7 @@ async function trySelectAllByColumn(params: {
 }) {
   const { table, column, values, schoolId } = params;
 
-  const cleanValues = Array.from(
-    new Set(values.map(cleanText).filter(Boolean))
-  );
+  const cleanValues = Array.from(new Set(values.map(cleanText).filter(Boolean)));
 
   if (cleanValues.length === 0) return [];
 
@@ -414,9 +419,7 @@ async function trySelectAllByColumn(params: {
     if (schoolId) {
       try {
         query = query.eq("school_id", schoolId);
-      } catch {
-        // algumas tabelas podem não ter school_id
-      }
+      } catch {}
     }
 
     const { data, error } = await query;
@@ -427,6 +430,51 @@ async function trySelectAllByColumn(params: {
   } catch {
     return [];
   }
+}
+
+function getNameFromAuthUser(user: any) {
+  const metadata = user?.user_metadata || {};
+  const appMetadata = user?.app_metadata || {};
+
+  const candidates = [
+    metadata.full_name,
+    metadata.fullName,
+    metadata.name,
+    metadata.display_name,
+    metadata.displayName,
+    metadata.nome,
+    appMetadata.full_name,
+    appMetadata.name,
+    user?.email,
+    user?.phone,
+  ];
+
+  for (const candidate of candidates) {
+    const value = cleanText(candidate);
+
+    if (isUsefulName(value)) {
+      return value;
+    }
+  }
+
+  return cleanText(user?.email) || "";
+}
+
+async function resolveAuthUsersByIds(userIds: string[]) {
+  const cleanIds = Array.from(new Set(userIds.map(cleanText).filter(Boolean)));
+  const map = new Map<string, any>();
+
+  for (const userId of cleanIds) {
+    try {
+      const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
+
+      if (!error && data?.user?.id) {
+        map.set(data.user.id, data.user);
+      }
+    } catch {}
+  }
+
+  return map;
 }
 
 async function resolvePeople(params: {
@@ -476,34 +524,16 @@ async function resolvePeople(params: {
   const resolved = new Map<string, PersonResolved>();
 
   const parentRows = [
-    ...(await trySelectAllByColumn({
-      table: "parents",
-      column: "id",
-      values: allIds,
-      schoolId,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "parents",
-      column: "user_id",
-      values: allUserIds,
-      schoolId,
-    })),
+    ...(await trySelectAllByColumn({ table: "parents", column: "id", values: allIds, schoolId })),
+    ...(await trySelectAllByColumn({ table: "parents", column: "user_id", values: allUserIds, schoolId })),
   ];
 
   for (const row of parentRows) {
-    const person = personFromRow({
-      row,
-      source: "parents",
-      fallbackType: "Responsável",
-    });
+    const person = personFromRow({ row, source: "parents", fallbackType: "Responsável" });
 
     addResolved(
       resolved,
-      [
-        row?.id,
-        row?.user_id,
-        row?.auth_user_id,
-      ],
+      [row?.id, row?.user_id, row?.auth_user_id],
       {
         ...person,
         type: "Responsável",
@@ -512,47 +542,18 @@ async function resolvePeople(params: {
   }
 
   const teacherRows = [
-    ...(await trySelectAllByColumn({
-      table: "teachers",
-      column: "id",
-      values: allIds,
-      schoolId,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "teachers",
-      column: "user_id",
-      values: allUserIds,
-      schoolId,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "teacher_profiles",
-      column: "id",
-      values: allIds,
-      schoolId,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "teacher_profiles",
-      column: "user_id",
-      values: allUserIds,
-      schoolId,
-    })),
+    ...(await trySelectAllByColumn({ table: "teachers", column: "id", values: allIds, schoolId })),
+    ...(await trySelectAllByColumn({ table: "teachers", column: "user_id", values: allUserIds, schoolId })),
+    ...(await trySelectAllByColumn({ table: "teacher_profiles", column: "id", values: allIds, schoolId })),
+    ...(await trySelectAllByColumn({ table: "teacher_profiles", column: "user_id", values: allUserIds, schoolId })),
   ];
 
   for (const row of teacherRows) {
-    const person = personFromRow({
-      row,
-      source: "teachers",
-      fallbackType: "Professor",
-    });
+    const person = personFromRow({ row, source: "teachers", fallbackType: "Professor" });
 
     addResolved(
       resolved,
-      [
-        row?.id,
-        row?.user_id,
-        row?.auth_user_id,
-        row?.teacher_user_id,
-      ],
+      [row?.id, row?.user_id, row?.auth_user_id, row?.teacher_user_id],
       {
         ...person,
         type: "Professor",
@@ -560,143 +561,118 @@ async function resolvePeople(params: {
     );
   }
 
-  const schoolUserRows = [
-    ...(await trySelectAllByColumn({
-      table: "school_users",
-      column: "id",
-      values: allIds,
-      schoolId,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "school_users",
-      column: "user_id",
-      values: allUserIds,
-      schoolId,
-    })),
-  ];
-
-  for (const row of schoolUserRows) {
-    const role = roleLabel(row?.role);
-
-    const person = personFromRow({
-      row,
-      source: "school_users",
-      fallbackType: role,
-    });
-
-    const directName =
-      cleanText(
-        getFirstExisting(row, [
-          "full_name",
-          "name",
-          "display_name",
-          "email",
-        ])
-      ) || "";
-
-    addResolved(
-      resolved,
-      [
-        row?.id,
-        row?.user_id,
-        row?.auth_user_id,
-      ],
-      {
-        ...person,
-        name: isUsefulName(directName) ? directName : role,
-        type: role,
-        subtitle: cleanText(row?.email) || role,
-      }
-    );
-  }
-
   const profileRows = [
-    ...(await trySelectAllByColumn({
-      table: "profiles",
-      column: "id",
-      values: allIds,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "profiles",
-      column: "user_id",
-      values: allUserIds,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "user_profiles",
-      column: "id",
-      values: allIds,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "user_profiles",
-      column: "user_id",
-      values: allUserIds,
-    })),
+    ...(await trySelectAllByColumn({ table: "profiles", column: "id", values: allIds })),
+    ...(await trySelectAllByColumn({ table: "profiles", column: "user_id", values: allUserIds })),
+    ...(await trySelectAllByColumn({ table: "user_profiles", column: "id", values: allIds })),
+    ...(await trySelectAllByColumn({ table: "user_profiles", column: "user_id", values: allUserIds })),
   ];
 
   for (const row of profileRows) {
-    const person = personFromRow({
-      row,
-      source: "profiles",
-      fallbackType: "Usuário",
-    });
+    const person = personFromRow({ row, source: "profiles", fallbackType: "Usuário" });
 
     addResolved(
       resolved,
-      [
-        row?.id,
-        row?.user_id,
-        row?.auth_user_id,
-      ],
+      [row?.id, row?.user_id, row?.auth_user_id],
       person
     );
   }
 
   const staffRows = [
-    ...(await trySelectAllByColumn({
-      table: "staff",
-      column: "id",
-      values: allIds,
-      schoolId,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "staff",
-      column: "user_id",
-      values: allUserIds,
-      schoolId,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "school_staff",
-      column: "id",
-      values: allIds,
-      schoolId,
-    })),
-    ...(await trySelectAllByColumn({
-      table: "school_staff",
-      column: "user_id",
-      values: allUserIds,
-      schoolId,
-    })),
+    ...(await trySelectAllByColumn({ table: "staff", column: "id", values: allIds, schoolId })),
+    ...(await trySelectAllByColumn({ table: "staff", column: "user_id", values: allUserIds, schoolId })),
+    ...(await trySelectAllByColumn({ table: "school_staff", column: "id", values: allIds, schoolId })),
+    ...(await trySelectAllByColumn({ table: "school_staff", column: "user_id", values: allUserIds, schoolId })),
   ];
 
   for (const row of staffRows) {
     const role = roleLabel(row?.role);
-
-    const person = personFromRow({
-      row,
-      source: "staff",
-      fallbackType: role,
-    });
+    const person = personFromRow({ row, source: "staff", fallbackType: role });
 
     addResolved(
       resolved,
-      [
-        row?.id,
-        row?.user_id,
-        row?.auth_user_id,
-      ],
+      [row?.id, row?.user_id, row?.auth_user_id],
       {
         ...person,
         type: role,
+      }
+    );
+  }
+
+  const schoolUserRows = [
+    ...(await trySelectAllByColumn({ table: "school_users", column: "id", values: allIds, schoolId })),
+    ...(await trySelectAllByColumn({ table: "school_users", column: "user_id", values: allUserIds, schoolId })),
+  ];
+
+  const authIdsFromSchoolUsers = schoolUserRows
+    .map((row) => cleanText(row?.user_id || row?.auth_user_id))
+    .filter(Boolean);
+
+  const authUsersMap = await resolveAuthUsersByIds([
+    ...allUserIds,
+    ...authIdsFromSchoolUsers,
+  ]);
+
+  for (const row of schoolUserRows) {
+    const role = roleLabel(row?.role);
+    const userId = cleanText(row?.user_id || row?.auth_user_id);
+    const authUser = userId ? authUsersMap.get(userId) : null;
+
+    const nameFromRow = cleanText(
+      getFirstExisting(row, [
+        "full_name",
+        "name",
+        "display_name",
+        "email",
+      ])
+    );
+
+    const nameFromAuth = getNameFromAuthUser(authUser);
+
+    const finalName =
+      (isUsefulName(nameFromRow) ? nameFromRow : "") ||
+      (isUsefulName(nameFromAuth) ? nameFromAuth : "") ||
+      cleanText(authUser?.email) ||
+      role;
+
+    const subtitle =
+      cleanText(row?.email) ||
+      cleanText(authUser?.email) ||
+      role;
+
+    addResolved(
+      resolved,
+      [row?.id, row?.user_id, row?.auth_user_id],
+      {
+        id: cleanText(row?.id || userId),
+        name: finalName,
+        subtitle,
+        type: role,
+        source: "school_users/auth",
+      },
+      {
+        preferExistingUsefulName: true,
+      }
+    );
+  }
+
+  for (const [userId, authUser] of authUsersMap.entries()) {
+    const authName = getNameFromAuthUser(authUser);
+
+    if (!authName) continue;
+
+    addResolved(
+      resolved,
+      [userId],
+      {
+        id: userId,
+        name: authName,
+        subtitle: cleanText(authUser?.email) || null,
+        type: "Usuário",
+        source: "auth.users",
+      },
+      {
+        preferExistingUsefulName: true,
       }
     );
   }
@@ -704,12 +680,8 @@ async function resolvePeople(params: {
   return resolved;
 }
 
-async function getMessage(req: Request, messageId: string, schoolId: string) {
-  const tables = [
-    "school_messages",
-    "messages",
-    "public_school_messages",
-  ];
+async function getMessage(messageId: string, schoolId: string) {
+  const tables = ["school_messages", "messages", "public_school_messages"];
 
   for (const table of tables) {
     try {
@@ -726,9 +698,7 @@ async function getMessage(req: Request, messageId: string, schoolId: string) {
           message: data,
         };
       }
-    } catch {
-      // tenta próxima tabela
-    }
+    } catch {}
   }
 
   return null;
@@ -755,9 +725,7 @@ async function getRecipientRows(messageId: string, schoolId: string) {
 
       try {
         query = query.eq("school_id", schoolId);
-      } catch {
-        // segue sem school_id caso a tabela não tenha
-      }
+      } catch {}
 
       const { data, error } = await query;
 
@@ -767,9 +735,7 @@ async function getRecipientRows(messageId: string, schoolId: string) {
           rows: data,
         };
       }
-    } catch {
-      // tenta próxima tabela
-    }
+    } catch {}
   }
 
   return {
@@ -827,9 +793,20 @@ function buildRecipientOutput(params: {
   for (const key of lookupKeys) {
     const found = resolvedPeople.get(key);
 
-    if (found?.name) {
+    if (found?.name && isUsefulName(found.name)) {
       resolved = found;
       break;
+    }
+  }
+
+  if (!resolved) {
+    for (const key of lookupKeys) {
+      const found = resolvedPeople.get(key);
+
+      if (found?.name) {
+        resolved = found;
+        break;
+      }
     }
   }
 
@@ -865,7 +842,7 @@ function buildRecipientOutput(params: {
     recipientType: resolved?.type || roleLabel(type),
 
     subtitle,
-    phone: cleanText(row?.phone) || resolved?.subtitle || null,
+    phone: cleanText(row?.phone) || null,
     email: cleanText(row?.email) || null,
 
     status,
@@ -907,7 +884,7 @@ export async function GET(req: Request, context: RouteContext) {
     const url = new URL(req.url);
     const filter = normalizeFilter(url.searchParams.get("filter"));
 
-    const foundMessage = await getMessage(req, messageId, schoolId);
+    const foundMessage = await getMessage(messageId, schoolId);
 
     if (!foundMessage?.message?.id) {
       return jsonError("Comunicado não encontrado.", 404);
@@ -916,6 +893,7 @@ export async function GET(req: Request, context: RouteContext) {
     const { rows, table } = await getRecipientRows(messageId, schoolId);
 
     const filteredRows = rows.filter((row) => shouldIncludeByFilter(row, filter));
+
     const resolvedPeople = await resolvePeople({
       rows: filteredRows,
       schoolId,
