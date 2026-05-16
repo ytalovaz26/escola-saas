@@ -130,6 +130,44 @@ function normalizeAudienceType(value: unknown): AudienceType {
   return allowed.includes(v as AudienceType) ? (v as AudienceType) : "all_parents";
 }
 
+function normalizeRecipientType(value: unknown) {
+  const raw = String(value || "").trim().toLowerCase();
+
+  if (raw === "parent" || raw === "responsavel" || raw === "responsável") {
+    return "Responsável";
+  }
+
+  if (raw === "professor" || raw === "teacher") {
+    return "Professor";
+  }
+
+  if (raw === "coordenador" || raw === "coordinator") {
+    return "Coordenador";
+  }
+
+  if (raw === "secretaria" || raw === "secretary") {
+    return "Secretaria";
+  }
+
+  if (raw === "diretor" || raw === "director") {
+    return "Diretor";
+  }
+
+  if (raw === "admin" || raw === "administrador") {
+    return "Administrador";
+  }
+
+  if (raw === "staff" || raw === "equipe" || raw === "equipe_escolar") {
+    return "Equipe escolar";
+  }
+
+  if (raw === "user" || raw === "usuario" || raw === "usuário") {
+    return "Usuário";
+  }
+
+  return cleanText(value) || "Destinatário";
+}
+
 function formatDateTimeBR(value?: string | null) {
   if (!value) return "—";
 
@@ -187,6 +225,8 @@ function normalizeName(row: any) {
     cleanText(row?.name) ||
     cleanText(row?.email) ||
     cleanText(row?.phone) ||
+    cleanText(row?.recipientName) ||
+    cleanText(row?.recipient_name) ||
     cleanText(row?.recipientId) ||
     cleanText(row?.recipient_id) ||
     "Destinatário"
@@ -305,6 +345,7 @@ function AudienceHelpCard() {
           <li>• Professores de uma turma.</li>
           <li>• Professor individual.</li>
           <li>• Coordenadores, secretaria ou toda equipe escolar.</li>
+          <li>• Toda escola: responsáveis e equipe escolar.</li>
           <li>• Advertência/Suspensão para comunicação disciplinar formal.</li>
         </ul>
       </div>
@@ -389,6 +430,9 @@ function RecipientModalView({
                   const name = normalizeName(row);
                   const deliveredAt = row.deliveredAt || row.delivered_at || null;
                   const readAt = row.readAt || row.read_at || null;
+                  const typeLabel = normalizeRecipientType(
+                    row.recipientType || row.recipient_type || row.status
+                  );
 
                   return (
                     <article
@@ -403,6 +447,10 @@ function RecipientModalView({
                         <div className="min-w-0 flex-1">
                           <div className="break-words text-sm font-semibold text-slate-900">
                             {name}
+                          </div>
+
+                          <div className="mt-1 break-words text-xs font-medium text-slate-500">
+                            {typeLabel}
                           </div>
 
                           {row.email ? (
@@ -457,6 +505,9 @@ function RecipientModalView({
                         const name = normalizeName(row);
                         const deliveredAt = row.deliveredAt || row.delivered_at || null;
                         const readAt = row.readAt || row.read_at || null;
+                        const typeLabel = normalizeRecipientType(
+                          row.recipientType || row.recipient_type || row.status
+                        );
 
                         return (
                           <tr
@@ -490,10 +541,7 @@ function RecipientModalView({
                             </td>
 
                             <td className="px-5 py-4 text-sm text-slate-600">
-                              {row.recipientType ||
-                                row.recipient_type ||
-                                row.status ||
-                                "Destinatário"}
+                              {typeLabel}
                             </td>
 
                             <td className="px-5 py-4 text-sm text-slate-600">
@@ -799,7 +847,10 @@ export default function SchoolMessagesPage() {
     }
   }
 
-  async function openRecipients(message: SchoolMessage, filter: "sent" | "delivered" | "read" | "pending") {
+  async function openRecipients(
+    message: SchoolMessage,
+    filter: "sent" | "delivered" | "read" | "pending"
+  ) {
     setError(null);
 
     try {
@@ -822,14 +873,13 @@ export default function SchoolMessagesPage() {
 
       const json = await safeJson(res);
 
-      const fallbackRows = Array.isArray(json?.recipients) ? json.recipients : [];
-
       if (!res.ok || !json?.ok) {
         setError(json?.error || "Erro ao carregar destinatários.");
         return;
       }
 
       const stats = getStats(message);
+      const rows = Array.isArray(json?.recipients) ? json.recipients : [];
 
       let titleLabel = "Destinatários";
 
@@ -849,7 +899,7 @@ export default function SchoolMessagesPage() {
                 ? "Destinatários que visualizaram o comunicado no portal."
                 : "Destinatários ainda sem confirmação.",
         messageTitle: message.title,
-        rows: fallbackRows,
+        rows,
         stats: json.stats || stats,
       });
     } catch (e: any) {
@@ -1190,7 +1240,7 @@ export default function SchoolMessagesPage() {
               {messages.map((message) => {
                 const stats = getStats(message);
                 const disciplinary =
-                  String(message.target_role || "").includes("advertencia") ||
+                  String(message.target_role || "") === "advertencia_suspensao" ||
                   String(message.title || "").toLowerCase().includes("advertência") ||
                   String(message.title || "").toLowerCase().includes("advertencia") ||
                   String(message.body || "").toLowerCase().startsWith("advertência") ||

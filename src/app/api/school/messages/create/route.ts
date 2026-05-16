@@ -384,7 +384,6 @@ async function getStaffRecipients(params: {
 
 function isParentAudience(type: AudienceType) {
   return (
-    type === "school" ||
     type === "all_parents" ||
     type === "parent_individual" ||
     type === "class"
@@ -415,6 +414,7 @@ function getTargetRoleForMessage(params: {
   if (audienceType === "staff") return "equipe_escolar";
   if (audienceType === "teacher_individual") return "professor";
   if (audienceType === "teachers_class") return "professor";
+  if (audienceType === "school") return "toda_escola";
 
   return null;
 }
@@ -523,7 +523,24 @@ export async function POST(req: Request) {
 
     let recipients: RecipientRow[] = [];
 
-    if (isParentAudience(audienceType)) {
+    if (audienceType === "school") {
+      const [parentRecipients, staffRecipients] = await Promise.all([
+        getParentRecipients({
+          schoolId,
+          audienceType: "all_parents",
+          targetClassId,
+          targetParentId,
+        }),
+        getStaffRecipients({
+          schoolId,
+          audienceType: "staff",
+          targetClassId,
+          targetTeacherUserId,
+        }),
+      ]);
+
+      recipients = [...parentRecipients, ...staffRecipients];
+    } else if (isParentAudience(audienceType)) {
       recipients = await getParentRecipients({
         schoolId,
         audienceType,

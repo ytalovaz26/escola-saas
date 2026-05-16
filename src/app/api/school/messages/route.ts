@@ -11,14 +11,22 @@ function jsonOk(body: any, status = 200) {
   return NextResponse.json({ ok: true, ...body }, { status });
 }
 
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
 function normalizeRole(role?: string | null) {
-  const r = String(role || "").trim().toLowerCase();
+  const r = String(role || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
   if (r === "diretor" || r === "director") return "diretor";
   if (r === "coordenador" || r === "coordinator") return "coordenador";
   if (r === "secretaria" || r === "secretary") return "secretaria";
   if (r === "professor" || r === "teacher") return "professor";
-  if (r === "admin") return "admin";
+  if (r === "admin" || r === "administrador") return "admin";
 
   return r;
 }
@@ -44,13 +52,25 @@ function staffNameFromAuthUser(user: any) {
   const meta = user?.raw_user_meta_data || user?.user_metadata || {};
 
   return (
-    meta.full_name ||
-    meta.fullName ||
-    meta.name ||
-    meta.nome ||
-    user?.email ||
+    cleanText(meta.full_name) ||
+    cleanText(meta.fullName) ||
+    cleanText(meta.name) ||
+    cleanText(meta.nome) ||
+    cleanText(user?.email) ||
     "Usuário escolar"
   );
+}
+
+function roleLabel(role?: string | null) {
+  const r = normalizeRole(role);
+
+  if (r === "professor") return "Professor";
+  if (r === "coordenador") return "Coordenador";
+  if (r === "secretaria") return "Secretaria";
+  if (r === "diretor") return "Diretor";
+  if (r === "admin") return "Administrador";
+
+  return cleanText(role) || "Equipe escolar";
 }
 
 async function getStaffFromToken(token: string) {
@@ -174,18 +194,7 @@ async function loadSelectableStaff(schoolId: string) {
         userId,
         id: userId,
         role,
-        roleLabel:
-          role === "professor"
-            ? "Professor"
-            : role === "coordenador"
-              ? "Coordenador"
-              : role === "secretaria"
-                ? "Secretaria"
-                : role === "diretor"
-                  ? "Diretor"
-                  : role === "admin"
-                    ? "Administrador"
-                    : role,
+        roleLabel: roleLabel(role),
         fullName,
         name: fullName,
         email: authUser?.email || null,
@@ -302,7 +311,7 @@ export async function GET(req: Request) {
     if (classIds.length > 0) {
       const { data: classes, error: clsErr } = await supabaseAdmin
         .from("classes")
-        .select("id, name, grade, shift")
+        .select("id, name, grade, shift, series, turno")
         .eq("school_id", schoolId)
         .in("id", classIds);
 
@@ -310,7 +319,17 @@ export async function GET(req: Request) {
         return jsonError("Erro ao carregar turmas dos comunicados: " + clsErr.message, 500);
       }
 
-      classById = new Map((classes || []).map((cls: any) => [String(cls.id), cls]));
+      classById = new Map(
+        (classes || []).map((cls: any) => [
+          String(cls.id),
+          {
+            id: cls.id,
+            name: cls.name || "Turma",
+            grade: cls.grade || cls.series || null,
+            shift: cls.shift || cls.turno || null,
+          },
+        ])
+      );
     }
 
     const [selectableStaff, selectableParents] = await Promise.all([
