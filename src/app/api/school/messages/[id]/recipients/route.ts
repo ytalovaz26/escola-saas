@@ -37,6 +37,12 @@ function lowerText(value: unknown) {
   return cleanText(value).toLowerCase();
 }
 
+function isUuidLike(value: unknown) {
+  const raw = cleanText(value);
+
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw);
+}
+
 function normalizeFilter(value: unknown): RecipientFilter {
   const raw = lowerText(value);
 
@@ -48,83 +54,125 @@ function normalizeFilter(value: unknown): RecipientFilter {
   return "all";
 }
 
-function normalizeRecipientType(value: unknown) {
-  const raw = lowerText(value);
-
-  if (
-    raw === "parent" ||
-    raw === "parents" ||
-    raw === "responsavel" ||
-    raw === "responsável" ||
-    raw === "guardian" ||
-    raw === "guardians"
-  ) {
-    return "responsável";
-  }
-
-  if (
-    raw === "teacher" ||
-    raw === "teachers" ||
-    raw === "professor" ||
-    raw === "professores"
-  ) {
-    return "professor";
-  }
-
-  if (
-    raw === "coordinator" ||
-    raw === "coordenador" ||
-    raw === "coordenadores"
-  ) {
-    return "coordenador";
-  }
-
-  if (
-    raw === "secretary" ||
-    raw === "secretaria" ||
-    raw === "secretário" ||
-    raw === "secretario"
-  ) {
-    return "secretaria";
-  }
-
-  if (
-    raw === "director" ||
-    raw === "diretor" ||
-    raw === "diretora"
-  ) {
-    return "diretor";
-  }
-
-  if (
-    raw === "staff" ||
-    raw === "school_staff" ||
-    raw === "school_user" ||
-    raw === "team" ||
-    raw === "equipe" ||
-    raw === "equipe escolar"
-  ) {
-    return "equipe escolar";
-  }
-
-  if (raw) return raw;
-
-  return "destinatário";
-}
-
 function roleLabel(value: unknown) {
-  const raw = lowerText(value);
+  const raw = lowerText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
-  if (raw === "diretor" || raw === "director") return "Diretor";
-  if (raw === "coordenador" || raw === "coordinator") return "Coordenador";
-  if (raw === "secretaria" || raw === "secretary") return "Secretaria";
-  if (raw === "professor" || raw === "teacher") return "Professor";
-  if (raw === "responsavel" || raw === "responsável" || raw === "parent" || raw === "guardian") {
-    return "Responsável";
-  }
+  if (raw === "diretor" || raw === "director" || raw === "diretora") return "Diretor";
+  if (raw === "coordenador" || raw === "coordinator" || raw === "coordenadora") return "Coordenador";
+  if (raw === "secretaria" || raw === "secretary" || raw === "secretario") return "Secretaria";
+  if (raw === "professor" || raw === "teacher" || raw === "professora") return "Professor";
+  if (raw === "responsavel" || raw === "parent" || raw === "guardian") return "Responsável";
+  if (raw === "parents" || raw === "guardians") return "Responsável";
+  if (raw === "teachers") return "Professor";
+  if (raw === "coordinators") return "Coordenador";
+  if (raw === "secretaries") return "Secretaria";
+  if (raw === "staff" || raw === "school_staff" || raw === "school_user" || raw === "team") return "Equipe escolar";
   if (raw === "admin") return "Administrador";
 
   return raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "Destinatário";
+}
+
+function normalizeRecipientType(value: unknown) {
+  const raw = lowerText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (raw.includes("parent") || raw.includes("responsavel") || raw.includes("guardian")) {
+    return "Responsável";
+  }
+
+  if (raw.includes("teacher") || raw.includes("professor")) {
+    return "Professor";
+  }
+
+  if (raw.includes("coordenador") || raw.includes("coordinator")) {
+    return "Coordenador";
+  }
+
+  if (raw.includes("secretaria") || raw.includes("secretary") || raw.includes("secretario")) {
+    return "Secretaria";
+  }
+
+  if (raw.includes("diretor") || raw.includes("director")) {
+    return "Diretor";
+  }
+
+  if (
+    raw.includes("staff") ||
+    raw.includes("school_user") ||
+    raw.includes("school staff") ||
+    raw.includes("equipe")
+  ) {
+    return "Equipe escolar";
+  }
+
+  if (raw) return roleLabel(raw);
+
+  return "Destinatário";
+}
+
+function isGenericTypeLabel(value: unknown) {
+  const raw = lowerText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return (
+    raw === "usuario" ||
+    raw === "user" ||
+    raw === "destinatario" ||
+    raw === "recipient" ||
+    raw === "pessoa" ||
+    raw === "person"
+  );
+}
+
+function isUsefulName(value: unknown) {
+  const raw = cleanText(value);
+
+  if (!raw) return false;
+  if (isUuidLike(raw)) return false;
+
+  const normalized = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const blocked = new Set([
+    "parent",
+    "parents",
+    "responsavel",
+    "responsaveis",
+    "guardian",
+    "guardians",
+    "teacher",
+    "teachers",
+    "professor",
+    "professora",
+    "professores",
+    "staff",
+    "school_staff",
+    "school user",
+    "school_user",
+    "equipe",
+    "equipe escolar",
+    "coordenador",
+    "coordenadora",
+    "coordinator",
+    "coordinators",
+    "secretaria",
+    "secretario",
+    "secretary",
+    "diretor",
+    "diretora",
+    "director",
+    "usuario",
+    "usuário",
+    "user",
+  ]);
+
+  return !blocked.has(normalized);
 }
 
 function getFirstExisting(row: any, keys: string[]) {
@@ -156,6 +204,7 @@ function getRecipientId(row: any) {
       "recipient_user_id",
       "to_user_id",
       "receiver_id",
+      "target_user_id",
     ])
   );
 }
@@ -195,6 +244,20 @@ function getRecipientStoredSubtitle(row: any) {
       "recipient_phone",
       "subtitle",
       "description",
+    ])
+  );
+}
+
+function getRecipientTypeFromRow(row: any) {
+  return normalizeRecipientType(
+    getFirstExisting(row, [
+      "recipient_type",
+      "target_type",
+      "type",
+      "person_type",
+      "role",
+      "audience",
+      "target_audience",
     ])
   );
 }
@@ -276,48 +339,10 @@ function initials(name: string) {
   return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase();
 }
 
-function isUuidLike(value: unknown) {
-  const raw = cleanText(value);
-
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw);
-}
-
-function isUsefulName(value: unknown) {
-  const raw = cleanText(value);
-
-  if (!raw) return false;
-  if (isUuidLike(raw)) return false;
-
-  const lower = raw.toLowerCase();
-
-  if (
-    lower === "parent" ||
-    lower === "parents" ||
-    lower === "responsável" ||
-    lower === "responsavel" ||
-    lower === "teacher" ||
-    lower === "professor" ||
-    lower === "staff" ||
-    lower === "equipe escolar" ||
-    lower === "equipe" ||
-    lower === "coordenador" ||
-    lower === "coordenadora" ||
-    lower === "secretaria" ||
-    lower === "secretário" ||
-    lower === "diretor" ||
-    lower === "diretora"
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
 function addResolved(
   map: Map<string, PersonResolved>,
   keys: Array<string | null | undefined>,
-  person: PersonResolved,
-  options?: { preferExistingUsefulName?: boolean }
+  person: PersonResolved
 ) {
   for (const key of keys) {
     const safeKey = cleanText(key);
@@ -326,11 +351,11 @@ function addResolved(
 
     const current = map.get(safeKey);
 
-    if (options?.preferExistingUsefulName && current && isUsefulName(current.name)) {
+    if (current && isUsefulName(current.name) && !isUsefulName(person.name)) {
       continue;
     }
 
-    if (current && isUsefulName(current.name) && !isUsefulName(person.name)) {
+    if (current && isUsefulName(current.name) && isGenericTypeLabel(person.type)) {
       continue;
     }
 
@@ -393,7 +418,7 @@ function personFromRow(params: {
     id,
     name,
     subtitle,
-    type: roleLabel(type),
+    type: roleLabel(type || fallbackType),
     source,
   };
 }
@@ -417,9 +442,7 @@ async function trySelectAllByColumn(params: {
       .in(column, cleanValues);
 
     if (schoolId) {
-      try {
-        query = query.eq("school_id", schoolId);
-      } catch {}
+      query = query.eq("school_id", schoolId);
     }
 
     const { data, error } = await query;
@@ -444,6 +467,7 @@ function getNameFromAuthUser(user: any) {
     metadata.displayName,
     metadata.nome,
     appMetadata.full_name,
+    appMetadata.fullName,
     appMetadata.name,
     user?.email,
     user?.phone,
@@ -477,6 +501,37 @@ async function resolveAuthUsersByIds(userIds: string[]) {
   return map;
 }
 
+async function getSchoolUserRows(params: {
+  ids: string[];
+  userIds: string[];
+  schoolId: string;
+}) {
+  const { ids, userIds, schoolId } = params;
+
+  const byId = await trySelectAllByColumn({
+    table: "school_users",
+    column: "id",
+    values: ids,
+    schoolId,
+  });
+
+  const byUserId = await trySelectAllByColumn({
+    table: "school_users",
+    column: "user_id",
+    values: userIds,
+    schoolId,
+  });
+
+  const map = new Map<string, any>();
+
+  for (const row of [...byId, ...byUserId]) {
+    const key = cleanText(row?.id || row?.user_id || Math.random());
+    map.set(key, row);
+  }
+
+  return Array.from(map.values());
+}
+
 async function resolvePeople(params: {
   rows: any[];
   schoolId: string;
@@ -484,14 +539,14 @@ async function resolvePeople(params: {
   const { rows, schoolId } = params;
 
   const ids = new Set<string>();
-  const userIds = new Set<string>();
+  const directUserIds = new Set<string>();
 
   for (const row of rows) {
     const recipientId = getRecipientId(row);
     const recipientUserId = getRecipientUserId(row);
 
     if (recipientId) ids.add(recipientId);
-    if (recipientUserId) userIds.add(recipientUserId);
+    if (recipientUserId) directUserIds.add(recipientUserId);
 
     const possibleIds = [
       row?.id,
@@ -519,9 +574,21 @@ async function resolvePeople(params: {
   }
 
   const allIds = Array.from(ids);
-  const allUserIds = Array.from(new Set([...Array.from(userIds), ...allIds]));
+  const initialUserIds = Array.from(new Set([...Array.from(directUserIds), ...allIds]));
 
   const resolved = new Map<string, PersonResolved>();
+
+  const schoolUserRows = await getSchoolUserRows({
+    ids: allIds,
+    userIds: initialUserIds,
+    schoolId,
+  });
+
+  const schoolUserIds = schoolUserRows
+    .map((row) => cleanText(row?.user_id || row?.auth_user_id))
+    .filter(Boolean);
+
+  const allUserIds = Array.from(new Set([...initialUserIds, ...schoolUserIds]));
 
   const parentRows = [
     ...(await trySelectAllByColumn({ table: "parents", column: "id", values: allIds, schoolId })),
@@ -561,23 +628,6 @@ async function resolvePeople(params: {
     );
   }
 
-  const profileRows = [
-    ...(await trySelectAllByColumn({ table: "profiles", column: "id", values: allIds })),
-    ...(await trySelectAllByColumn({ table: "profiles", column: "user_id", values: allUserIds })),
-    ...(await trySelectAllByColumn({ table: "user_profiles", column: "id", values: allIds })),
-    ...(await trySelectAllByColumn({ table: "user_profiles", column: "user_id", values: allUserIds })),
-  ];
-
-  for (const row of profileRows) {
-    const person = personFromRow({ row, source: "profiles", fallbackType: "Usuário" });
-
-    addResolved(
-      resolved,
-      [row?.id, row?.user_id, row?.auth_user_id],
-      person
-    );
-  }
-
   const staffRows = [
     ...(await trySelectAllByColumn({ table: "staff", column: "id", values: allIds, schoolId })),
     ...(await trySelectAllByColumn({ table: "staff", column: "user_id", values: allUserIds, schoolId })),
@@ -599,24 +649,37 @@ async function resolvePeople(params: {
     );
   }
 
-  const schoolUserRows = [
-    ...(await trySelectAllByColumn({ table: "school_users", column: "id", values: allIds, schoolId })),
-    ...(await trySelectAllByColumn({ table: "school_users", column: "user_id", values: allUserIds, schoolId })),
+  const profileRows = [
+    ...(await trySelectAllByColumn({ table: "profiles", column: "id", values: allIds })),
+    ...(await trySelectAllByColumn({ table: "profiles", column: "id", values: allUserIds })),
+    ...(await trySelectAllByColumn({ table: "profiles", column: "user_id", values: allUserIds })),
+    ...(await trySelectAllByColumn({ table: "user_profiles", column: "id", values: allIds })),
+    ...(await trySelectAllByColumn({ table: "user_profiles", column: "id", values: allUserIds })),
+    ...(await trySelectAllByColumn({ table: "user_profiles", column: "user_id", values: allUserIds })),
   ];
 
-  const authIdsFromSchoolUsers = schoolUserRows
-    .map((row) => cleanText(row?.user_id || row?.auth_user_id))
-    .filter(Boolean);
+  for (const row of profileRows) {
+    const person = personFromRow({ row, source: "profiles", fallbackType: "Usuário" });
 
-  const authUsersMap = await resolveAuthUsersByIds([
-    ...allUserIds,
-    ...authIdsFromSchoolUsers,
-  ]);
+    addResolved(
+      resolved,
+      [row?.id, row?.user_id, row?.auth_user_id],
+      {
+        ...person,
+        type: isGenericTypeLabel(person.type) ? "Usuário" : person.type,
+      }
+    );
+  }
+
+  const authUsersMap = await resolveAuthUsersByIds(allUserIds);
 
   for (const row of schoolUserRows) {
     const role = roleLabel(row?.role);
+    const schoolUserId = cleanText(row?.id);
     const userId = cleanText(row?.user_id || row?.auth_user_id);
     const authUser = userId ? authUsersMap.get(userId) : null;
+
+    const existingFromProfiles = userId ? resolved.get(userId) : null;
 
     const nameFromRow = cleanText(
       getFirstExisting(row, [
@@ -627,32 +690,38 @@ async function resolvePeople(params: {
       ])
     );
 
+    const nameFromProfile =
+      existingFromProfiles && isUsefulName(existingFromProfiles.name)
+        ? existingFromProfiles.name
+        : "";
+
     const nameFromAuth = getNameFromAuthUser(authUser);
 
     const finalName =
+      (isUsefulName(nameFromProfile) ? nameFromProfile : "") ||
       (isUsefulName(nameFromRow) ? nameFromRow : "") ||
       (isUsefulName(nameFromAuth) ? nameFromAuth : "") ||
       cleanText(authUser?.email) ||
       role;
 
     const subtitle =
+      existingFromProfiles?.subtitle ||
       cleanText(row?.email) ||
       cleanText(authUser?.email) ||
       role;
 
+    const person: PersonResolved = {
+      id: schoolUserId || userId,
+      name: finalName,
+      subtitle,
+      type: role,
+      source: "school_users",
+    };
+
     addResolved(
       resolved,
-      [row?.id, row?.user_id, row?.auth_user_id],
-      {
-        id: cleanText(row?.id || userId),
-        name: finalName,
-        subtitle,
-        type: role,
-        source: "school_users/auth",
-      },
-      {
-        preferExistingUsefulName: true,
-      }
+      [schoolUserId, userId, row?.auth_user_id],
+      person
     );
   }
 
@@ -670,9 +739,6 @@ async function resolvePeople(params: {
         subtitle: cleanText(authUser?.email) || null,
         type: "Usuário",
         source: "auth.users",
-      },
-      {
-        preferExistingUsefulName: true,
       }
     );
   }
@@ -744,6 +810,25 @@ async function getRecipientRows(messageId: string, schoolId: string) {
   };
 }
 
+function chooseDisplayType(params: {
+  rowType: string;
+  resolvedType?: string | null;
+}) {
+  const { rowType, resolvedType } = params;
+
+  if (rowType && !isGenericTypeLabel(rowType) && rowType !== "Destinatário") {
+    return rowType;
+  }
+
+  if (resolvedType && !isGenericTypeLabel(resolvedType)) {
+    return resolvedType;
+  }
+
+  if (resolvedType) return resolvedType;
+
+  return rowType || "Destinatário";
+}
+
 function buildRecipientOutput(params: {
   row: any;
   resolvedPeople: Map<string, PersonResolved>;
@@ -754,16 +839,7 @@ function buildRecipientOutput(params: {
   const recipientUserId = getRecipientUserId(row);
   const storedName = getRecipientStoredName(row);
   const storedSubtitle = getRecipientStoredSubtitle(row);
-
-  const type = normalizeRecipientType(
-    getFirstExisting(row, [
-      "recipient_type",
-      "target_type",
-      "type",
-      "person_type",
-      "role",
-    ])
-  );
+  const rowType = getRecipientTypeFromRow(row);
 
   const lookupKeys = [
     recipientId,
@@ -799,22 +875,17 @@ function buildRecipientOutput(params: {
     }
   }
 
-  if (!resolved) {
-    for (const key of lookupKeys) {
-      const found = resolvedPeople.get(key);
-
-      if (found?.name) {
-        resolved = found;
-        break;
-      }
-    }
-  }
-
   const displayName =
-    resolved?.name ||
+    (resolved?.name && isUsefulName(resolved.name) ? resolved.name : "") ||
     (isUsefulName(storedName) ? storedName : "") ||
-    (recipientId && !isUuidLike(recipientId) ? recipientId : "") ||
-    roleLabel(type);
+    (recipientId && !isUuidLike(recipientId) && isUsefulName(recipientId) ? recipientId : "") ||
+    rowType ||
+    "Destinatário";
+
+  const displayType = chooseDisplayType({
+    rowType,
+    resolvedType: resolved?.type,
+  });
 
   const subtitle =
     resolved?.subtitle ||
@@ -838,8 +909,8 @@ function buildRecipientOutput(params: {
 
     initials: initials(displayName),
 
-    type: resolved?.type || roleLabel(type),
-    recipientType: resolved?.type || roleLabel(type),
+    type: displayType,
+    recipientType: displayType,
 
     subtitle,
     phone: cleanText(row?.phone) || null,
@@ -854,7 +925,7 @@ function buildRecipientOutput(params: {
     read_at: readAt,
     created_at: createdAt,
 
-    rawType: type,
+    rawType: rowType,
     source: resolved?.source || "message_recipients",
   };
 }
