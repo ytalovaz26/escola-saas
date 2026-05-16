@@ -383,11 +383,7 @@ async function getStaffRecipients(params: {
 }
 
 function isParentAudience(type: AudienceType) {
-  return (
-    type === "all_parents" ||
-    type === "parent_individual" ||
-    type === "class"
-  );
+  return type === "all_parents" || type === "parent_individual" || type === "class";
 }
 
 function isStaffAudience(type: AudienceType) {

@@ -311,7 +311,7 @@ export async function GET(req: Request) {
     if (classIds.length > 0) {
       const { data: classes, error: clsErr } = await supabaseAdmin
         .from("classes")
-        .select("id, name, grade, shift, series, turno")
+        .select("id, name, grade, shift")
         .eq("school_id", schoolId)
         .in("id", classIds);
 
@@ -325,8 +325,10 @@ export async function GET(req: Request) {
           {
             id: cls.id,
             name: cls.name || "Turma",
-            grade: cls.grade || cls.series || null,
-            shift: cls.shift || cls.turno || null,
+            grade: cls.grade || null,
+            series: cls.grade || null,
+            shift: cls.shift || null,
+            turno: cls.shift || null,
           },
         ])
       );
