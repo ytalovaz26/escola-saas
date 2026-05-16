@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type AudienceType =
   | "school"
@@ -21,17 +22,31 @@ type RecipientRow = {
   recipient_id: string;
 };
 
-type StaffRecipientRow = {
+type SchoolUserRow = {
   user_id: string | null;
   role: string | null;
+  is_active?: boolean | null;
 };
 
 function jsonError(message: string, status = 400, extra?: any) {
-  return NextResponse.json({ ok: false, error: message, ...extra }, { status });
+  return NextResponse.json(
+    {
+      ok: false,
+      error: message,
+      ...extra,
+    },
+    { status }
+  );
 }
 
 function jsonOk(body: any, status = 200) {
-  return NextResponse.json({ ok: true, ...body }, { status });
+  return NextResponse.json(
+    {
+      ok: true,
+      ...body,
+    },
+    { status }
+  );
 }
 
 function cleanText(value: unknown) {
@@ -54,22 +69,27 @@ function normalizeRole(role?: string | null) {
   return r;
 }
 
-function recipientTypeFromRole(role?: string | null) {
-  const r = normalizeRole(role);
-
-  if (r === "diretor") return "diretor";
-  if (r === "coordenador") return "coordenador";
-  if (r === "secretaria") return "secretaria";
-  if (r === "professor") return "professor";
-  if (r === "admin") return "admin";
-
-  return "staff";
-}
-
 function normalizeAudienceType(type?: string | null): AudienceType {
-  const safe = String(type || "school").trim().toLowerCase();
+  const safe = String(type || "school")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
   if (safe === "teacher_class") return "teachers_class";
+  if (safe === "parents") return "all_parents";
+  if (safe === "parent") return "parent_individual";
+  if (safe === "pais") return "all_parents";
+  if (safe === "responsaveis") return "all_parents";
+  if (safe === "responsavel_individual") return "parent_individual";
+  if (safe === "professores") return "teachers";
+  if (safe === "professor_individual") return "teacher_individual";
+  if (safe === "professores_turma") return "teachers_class";
+  if (safe === "coordenadores") return "coordinators";
+  if (safe === "coordenador") return "coordinators";
+  if (safe === "secretarias") return "secretaria";
+  if (safe === "equipe") return "staff";
+  if (safe === "equipe_escolar") return "staff";
 
   const allowed = new Set([
     "school",
@@ -87,11 +107,53 @@ function normalizeAudienceType(type?: string | null): AudienceType {
   return allowed.has(safe) ? (safe as AudienceType) : "school";
 }
 
+function isParentAudience(type: AudienceType) {
+  return (
+    type === "school" ||
+    type === "all_parents" ||
+    type === "parent_individual" ||
+    type === "class"
+  );
+}
+
+function isStaffAudience(type: AudienceType) {
+  return (
+    type === "teachers" ||
+    type === "teachers_class" ||
+    type === "teacher_individual" ||
+    type === "coordinators" ||
+    type === "secretaria" ||
+    type === "staff"
+  );
+}
+
+function dedupeRecipients(recipients: RecipientRow[]) {
+  const map = new Map<string, RecipientRow>();
+
+  for (const rec of recipients) {
+    const type = cleanText(rec.recipient_type);
+    const id = cleanText(rec.recipient_id);
+
+    if (!type || !id) continue;
+
+    map.set(`${type}:${id}`, {
+      recipient_type: type,
+      recipient_id: id,
+    });
+  }
+
+  return Array.from(map.values());
+}
+
 async function getStaffFromToken(token: string) {
   const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
 
   if (userErr || !userData?.user) {
-    return { ok: false as const, status: 401, error: "Sessão inválida." };
+    return {
+      ok: false as const,
+      status: 401,
+      error: "Sessão inválida.",
+    };
   }
 
   const userId = userData.user.id;
@@ -114,7 +176,11 @@ async function getStaffFromToken(token: string) {
   }
 
   if (!staff?.school_id) {
-    return { ok: false as const, status: 403, error: "Usuário sem escola ativa." };
+    return {
+      ok: false as const,
+      status: 403,
+      error: "Usuário sem escola ativa.",
+    };
   }
 
   const role = normalizeRole(staff.role);
@@ -141,6 +207,141 @@ async function getStaffFromToken(token: string) {
   };
 }
 
+async function getActiveSchoolUsers(schoolId: string): Promise<SchoolUserRow[]> {
+  const { data, error } = await supabaseAdmin
+    .from("school_users")
+    .select("user_id, role, is_active")
+    .eq("school_id", schoolId)
+    .eq("is_active", true);
+
+  if (error) {
+    throw new Error("Erro ao buscar equipe escolar: " + error.message);
+  }
+
+  return (data || []) as SchoolUserRow[];
+}
+
+async function resolveParentId(params: {
+  schoolId: string;
+  targetParentId: string;
+}) {
+  const { schoolId, targetParentId } = params;
+
+  if (!targetParentId) return "";
+
+  const target = cleanText(targetParentId);
+
+  const byParentId = await supabaseAdmin
+    .from("parents")
+    .select("id")
+    .eq("school_id", schoolId)
+    .eq("id", target)
+    .maybeSingle();
+
+  if (!byParentId.error && byParentId.data?.id) {
+    return String(byParentId.data.id);
+  }
+
+  const byUserId = await supabaseAdmin
+    .from("parents")
+    .select("id")
+    .eq("school_id", schoolId)
+    .eq("user_id", target)
+    .maybeSingle();
+
+  if (!byUserId.error && byUserId.data?.id) {
+    return String(byUserId.data.id);
+  }
+
+  const byProfileId = await supabaseAdmin
+    .from("parents")
+    .select("id")
+    .eq("school_id", schoolId)
+    .eq("profile_id", target)
+    .maybeSingle();
+
+  if (!byProfileId.error && byProfileId.data?.id) {
+    return String(byProfileId.data.id);
+  }
+
+  return "";
+}
+
+async function resolveTeacherUserId(params: {
+  schoolId: string;
+  targetTeacherUserId: string;
+}) {
+  const { schoolId, targetTeacherUserId } = params;
+
+  const target = cleanText(targetTeacherUserId);
+
+  if (!target) return "";
+
+  const schoolUsers = await getActiveSchoolUsers(schoolId);
+
+  const direct = schoolUsers.find((row) => {
+    return String(row.user_id || "") === target && normalizeRole(row.role) === "professor";
+  });
+
+  if (direct?.user_id) {
+    return String(direct.user_id);
+  }
+
+  const activeUser = schoolUsers.find((row) => String(row.user_id || "") === target);
+
+  if (activeUser?.user_id && normalizeRole(activeUser.role) === "professor") {
+    return String(activeUser.user_id);
+  }
+
+  try {
+    const { data: teacherById } = await supabaseAdmin
+      .from("teachers")
+      .select("id, user_id, teacher_user_id, school_id")
+      .eq("school_id", schoolId)
+      .eq("id", target)
+      .maybeSingle();
+
+    const found =
+      cleanText((teacherById as any)?.user_id) ||
+      cleanText((teacherById as any)?.teacher_user_id);
+
+    if (found) {
+      const matched = schoolUsers.find((row) => {
+        return String(row.user_id || "") === found && normalizeRole(row.role) === "professor";
+      });
+
+      if (matched?.user_id) return String(matched.user_id);
+    }
+  } catch {
+    // Algumas bases não têm tabela teachers. Segue para os próximos fallbacks.
+  }
+
+  try {
+    const { data: teacherByUserId } = await supabaseAdmin
+      .from("teachers")
+      .select("id, user_id, teacher_user_id, school_id")
+      .eq("school_id", schoolId)
+      .or(`user_id.eq.${target},teacher_user_id.eq.${target}`)
+      .maybeSingle();
+
+    const found =
+      cleanText((teacherByUserId as any)?.user_id) ||
+      cleanText((teacherByUserId as any)?.teacher_user_id);
+
+    if (found) {
+      const matched = schoolUsers.find((row) => {
+        return String(row.user_id || "") === found && normalizeRole(row.role) === "professor";
+      });
+
+      if (matched?.user_id) return String(matched.user_id);
+    }
+  } catch {
+    // Ignora fallback caso a tabela/colunas não existam.
+  }
+
+  return "";
+}
+
 async function getParentRecipients(params: {
   schoolId: string;
   audienceType: AudienceType;
@@ -150,29 +351,19 @@ async function getParentRecipients(params: {
   const { schoolId, audienceType, targetClassId, targetParentId } = params;
 
   if (audienceType === "parent_individual") {
-    if (!targetParentId) {
-      throw new Error("Selecione o responsável individual.");
-    }
+    const parentId = await resolveParentId({
+      schoolId,
+      targetParentId,
+    });
 
-    const { data, error } = await supabaseAdmin
-      .from("parents")
-      .select("id")
-      .eq("school_id", schoolId)
-      .eq("id", targetParentId)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error("Erro ao validar responsável: " + error.message);
-    }
-
-    if (!data?.id) {
-      throw new Error("Responsável não encontrado nesta escola.");
+    if (!parentId) {
+      throw new Error("Responsável individual não encontrado nesta escola.");
     }
 
     return [
       {
         recipient_type: "parent",
-        recipient_id: String(data.id),
+        recipient_id: parentId,
       },
     ];
   }
@@ -237,33 +428,6 @@ async function getParentRecipients(params: {
   }));
 }
 
-async function getSchoolUserByUserId(params: {
-  schoolId: string;
-  userId: string;
-  allowedRoles?: string[];
-}) {
-  const { schoolId, userId, allowedRoles } = params;
-
-  let query = supabaseAdmin
-    .from("school_users")
-    .select("user_id, role")
-    .eq("school_id", schoolId)
-    .eq("user_id", userId)
-    .eq("is_active", true);
-
-  if (allowedRoles && allowedRoles.length > 0) {
-    query = query.in("role", allowedRoles);
-  }
-
-  const { data, error } = await query.maybeSingle();
-
-  if (error) {
-    throw new Error("Erro ao validar destinatário da equipe: " + error.message);
-  }
-
-  return data as StaffRecipientRow | null;
-}
-
 async function getStaffRecipients(params: {
   schoolId: string;
   audienceType: AudienceType;
@@ -272,25 +436,22 @@ async function getStaffRecipients(params: {
 }): Promise<RecipientRow[]> {
   const { schoolId, audienceType, targetClassId, targetTeacherUserId } = params;
 
-  if (audienceType === "teacher_individual") {
-    if (!targetTeacherUserId) {
-      throw new Error("Selecione o professor individual.");
-    }
+  const schoolUsers = await getActiveSchoolUsers(schoolId);
 
-    const staff = await getSchoolUserByUserId({
+  if (audienceType === "teacher_individual") {
+    const teacherUserId = await resolveTeacherUserId({
       schoolId,
-      userId: targetTeacherUserId,
-      allowedRoles: ["professor", "teacher"],
+      targetTeacherUserId,
     });
 
-    if (!staff?.user_id) {
-      throw new Error("Professor não encontrado nesta escola.");
+    if (!teacherUserId) {
+      throw new Error("Professor individual não encontrado nesta escola.");
     }
 
     return [
       {
-        recipient_type: "professor",
-        recipient_id: String(staff.user_id),
+        recipient_type: "staff",
+        recipient_id: teacherUserId,
       },
     ];
   }
@@ -300,7 +461,7 @@ async function getStaffRecipients(params: {
       throw new Error("Selecione a turma.");
     }
 
-    const { data: teacherLinks, error } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("teacher_classes")
       .select("teacher_user_id")
       .eq("school_id", schoolId)
@@ -310,112 +471,76 @@ async function getStaffRecipients(params: {
       throw new Error("Erro ao buscar professores da turma: " + error.message);
     }
 
-    const teacherUserIds = Array.from(
-      new Set(
-        (teacherLinks || [])
-          .map((row: any) => String(row.teacher_user_id || "").trim())
-          .filter(Boolean)
-      )
+    const ids = Array.from(
+      new Set((data || []).map((row: any) => String(row.teacher_user_id)).filter(Boolean))
     );
 
-    if (teacherUserIds.length === 0) {
-      return [];
-    }
+    const activeProfessorIds = ids.filter((id) => {
+      return schoolUsers.some((row) => {
+        return String(row.user_id || "") === id && normalizeRole(row.role) === "professor";
+      });
+    });
 
-    const { data: staffRows, error: staffErr } = await supabaseAdmin
-      .from("school_users")
-      .select("user_id, role")
-      .eq("school_id", schoolId)
-      .eq("is_active", true)
-      .in("user_id", teacherUserIds);
-
-    if (staffErr) {
-      throw new Error("Erro ao validar professores da turma: " + staffErr.message);
-    }
-
-    return (staffRows || [])
-      .filter((row: any) => String(row.user_id || "").trim())
-      .map((row: any) => ({
-        recipient_type: recipientTypeFromRole(row.role || "professor"),
-        recipient_id: String(row.user_id),
-      }));
+    return activeProfessorIds.map((id) => ({
+      recipient_type: "staff",
+      recipient_id: id,
+    }));
   }
 
-  let roles: string[] = [];
+  let acceptedRoles: string[] = [];
 
   if (audienceType === "teachers") {
-    roles = ["professor", "teacher"];
+    acceptedRoles = ["professor"];
   } else if (audienceType === "coordinators") {
-    roles = ["coordenador", "coordinator"];
+    acceptedRoles = ["coordenador"];
   } else if (audienceType === "secretaria") {
-    roles = ["secretaria", "secretary"];
+    acceptedRoles = ["secretaria"];
   } else {
-    roles = [
-      "diretor",
-      "director",
-      "coordenador",
-      "coordinator",
-      "secretaria",
-      "secretary",
-      "professor",
-      "teacher",
-      "admin",
-    ];
+    acceptedRoles = ["diretor", "coordenador", "secretaria", "professor", "admin"];
   }
 
-  const { data, error } = await supabaseAdmin
-    .from("school_users")
-    .select("user_id, role")
-    .eq("school_id", schoolId)
-    .eq("is_active", true)
-    .in("role", roles);
-
-  if (error) {
-    throw new Error("Erro ao buscar equipe escolar: " + error.message);
-  }
-
-  return (data || [])
-    .filter((row: any) => String(row.user_id || "").trim())
-    .map((row: any) => ({
-      recipient_type: recipientTypeFromRole(row.role),
-      recipient_id: String(row.user_id),
-    }));
-}
-
-function isParentAudience(type: AudienceType) {
-  return type === "all_parents" || type === "parent_individual" || type === "class";
-}
-
-function isStaffAudience(type: AudienceType) {
-  return (
-    type === "teachers" ||
-    type === "teachers_class" ||
-    type === "teacher_individual" ||
-    type === "coordinators" ||
-    type === "secretaria" ||
-    type === "staff"
+  const ids = Array.from(
+    new Set(
+      schoolUsers
+        .filter((row) => {
+          const role = normalizeRole(row.role);
+          return acceptedRoles.includes(role);
+        })
+        .map((row) => String(row.user_id || ""))
+        .filter(Boolean)
+    )
   );
+
+  return ids.map((id) => ({
+    recipient_type: "staff",
+    recipient_id: id,
+  }));
 }
 
-function getTargetRoleForMessage(params: {
+function getTargetRole(params: {
   audienceType: AudienceType;
-  isDisciplinary: boolean;
 }) {
-  const { audienceType, isDisciplinary } = params;
+  const { audienceType } = params;
 
-  if (isDisciplinary) return "advertencia_suspensao";
-  if (audienceType === "teachers") return "professor";
-  if (audienceType === "coordinators") return "coordenador";
-  if (audienceType === "secretaria") return "secretaria";
-  if (audienceType === "staff") return "equipe_escolar";
-  if (audienceType === "teacher_individual") return "professor";
-  if (audienceType === "teachers_class") return "professor";
-  if (audienceType === "school") return "toda_escola";
+  if (audienceType === "teachers" || audienceType === "teacher_individual") {
+    return "professor";
+  }
+
+  if (audienceType === "coordinators") {
+    return "coordenador";
+  }
+
+  if (audienceType === "secretaria") {
+    return "secretaria";
+  }
 
   return null;
 }
 
 export async function POST(req: Request) {
+  let createdMessageId: string | null = null;
+  let createdSchoolId: string | null = null;
+
   try {
     const authHeader = req.headers.get("authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
@@ -436,7 +561,12 @@ export async function POST(req: Request) {
     const rawBody = cleanText(body?.body);
     const audienceType = normalizeAudienceType(body?.audienceType || body?.audience_type);
 
-    const targetClassId = cleanText(body?.targetClassId || body?.target_class_id);
+    const targetClassId = cleanText(
+      body?.targetClassId ||
+        body?.target_class_id ||
+        body?.classId ||
+        body?.class_id
+    );
 
     const targetTeacherUserId = cleanText(
       body?.targetTeacherUserId ||
@@ -444,23 +574,36 @@ export async function POST(req: Request) {
         body?.targetUserId ||
         body?.target_user_id ||
         body?.targetStaffId ||
-        body?.target_staff_id
+        body?.target_staff_id ||
+        body?.teacherId ||
+        body?.teacher_id ||
+        body?.teacherUserId ||
+        body?.teacher_user_id
     );
 
     const targetParentId = cleanText(
       body?.targetParentId ||
         body?.target_parent_id ||
         body?.targetParentUserId ||
-        body?.target_parent_user_id
+        body?.target_parent_user_id ||
+        body?.parentId ||
+        body?.parent_id ||
+        body?.parentUserId ||
+        body?.parent_user_id
     );
 
     const category = cleanText(body?.category || body?.messageCategory || body?.message_category);
+    const type = cleanText(body?.type || body?.messageType || body?.message_type);
 
     const isDisciplinary =
       category === "disciplinary" ||
       category === "advertencia_suspensao" ||
       category === "advertencia" ||
-      category === "suspensao";
+      category === "suspensao" ||
+      type === "disciplinary" ||
+      type === "advertencia_suspensao" ||
+      type === "advertencia" ||
+      type === "suspensao";
 
     if (!title) {
       return jsonError("Informe o título do comunicado.", 422);
@@ -491,52 +634,9 @@ export async function POST(req: Request) {
     const schoolId = staffCheck.schoolId;
     const now = new Date().toISOString();
 
-    const { data: message, error: msgErr } = await supabaseAdmin
-      .from("messages")
-      .insert({
-        school_id: schoolId,
-        created_by: staffCheck.userId,
-        title: finalTitle,
-        body: finalBody,
-        status: "published",
-        audience_type: audienceType,
-        target_class_id:
-          audienceType === "class" || audienceType === "teachers_class" ? targetClassId : null,
-        target_role: getTargetRoleForMessage({
-          audienceType,
-          isDisciplinary,
-        }),
-        published_at: now,
-      })
-      .select(
-        "id, school_id, title, body, status, audience_type, target_class_id, target_role, published_at, created_at"
-      )
-      .single();
-
-    if (msgErr) {
-      return jsonError("Erro ao criar comunicado: " + msgErr.message, 500);
-    }
-
     let recipients: RecipientRow[] = [];
 
-    if (audienceType === "school") {
-      const [parentRecipients, staffRecipients] = await Promise.all([
-        getParentRecipients({
-          schoolId,
-          audienceType: "all_parents",
-          targetClassId,
-          targetParentId,
-        }),
-        getStaffRecipients({
-          schoolId,
-          audienceType: "staff",
-          targetClassId,
-          targetTeacherUserId,
-        }),
-      ]);
-
-      recipients = [...parentRecipients, ...staffRecipients];
-    } else if (isParentAudience(audienceType)) {
+    if (isParentAudience(audienceType)) {
       recipients = await getParentRecipients({
         schoolId,
         audienceType,
@@ -552,21 +652,48 @@ export async function POST(req: Request) {
       });
     }
 
-    const unique = new Map<string, RecipientRow>();
+    const uniqueRecipients = dedupeRecipients(recipients);
 
-    for (const rec of recipients) {
-      const recipientId = cleanText(rec.recipient_id);
-      const recipientType = cleanText(rec.recipient_type);
-
-      if (!recipientId || !recipientType) continue;
-
-      unique.set(`${recipientType}:${recipientId}`, {
-        recipient_type: recipientType,
-        recipient_id: recipientId,
-      });
+    if (uniqueRecipients.length === 0) {
+      return jsonError(
+        "Nenhum destinatário encontrado para este público. Verifique se existem responsáveis/professores/equipe vinculados à escola ou turma selecionada.",
+        422,
+        {
+          audienceType,
+          targetClassId: targetClassId || null,
+          targetTeacherUserId: targetTeacherUserId || null,
+          targetParentId: targetParentId || null,
+        }
+      );
     }
 
-    const rows = Array.from(unique.values()).map((rec) => ({
+    const { data: message, error: msgErr } = await supabaseAdmin
+      .from("messages")
+      .insert({
+        school_id: schoolId,
+        created_by: staffCheck.userId,
+        title: finalTitle,
+        body: finalBody,
+        status: "published",
+        audience_type: audienceType,
+        target_class_id:
+          audienceType === "class" || audienceType === "teachers_class" ? targetClassId : null,
+        target_role: getTargetRole({ audienceType }),
+        published_at: now,
+      })
+      .select(
+        "id, school_id, title, body, status, audience_type, target_class_id, target_role, published_at, created_at"
+      )
+      .single();
+
+    if (msgErr) {
+      return jsonError("Erro ao criar comunicado: " + msgErr.message, 500);
+    }
+
+    createdMessageId = String(message.id);
+    createdSchoolId = schoolId;
+
+    const rows = uniqueRecipients.map((rec) => ({
       school_id: schoolId,
       message_id: message.id,
       recipient_type: rec.recipient_type,
@@ -575,18 +702,19 @@ export async function POST(req: Request) {
       read_at: null,
     }));
 
-    if (rows.length > 0) {
-      const { error: recErr } = await supabaseAdmin.from("message_recipients").insert(rows);
+    const { error: recErr } = await supabaseAdmin.from("message_recipients").insert(rows);
 
-      if (recErr) {
-        await supabaseAdmin
-          .from("messages")
-          .delete()
-          .eq("id", message.id)
-          .eq("school_id", schoolId);
+    if (recErr) {
+      await supabaseAdmin
+        .from("messages")
+        .delete()
+        .eq("id", message.id)
+        .eq("school_id", schoolId);
 
-        return jsonError("Erro ao registrar destinatários: " + recErr.message, 500);
-      }
+      return jsonError("Erro ao registrar destinatários: " + recErr.message, 500, {
+        audienceType,
+        recipientsAttempted: rows.length,
+      });
     }
 
     return jsonOk(
@@ -597,6 +725,14 @@ export async function POST(req: Request) {
       201
     );
   } catch (e: any) {
+    if (createdMessageId && createdSchoolId) {
+      await supabaseAdmin
+        .from("messages")
+        .delete()
+        .eq("id", createdMessageId)
+        .eq("school_id", createdSchoolId);
+    }
+
     return jsonError(e?.message || "Erro interno ao publicar comunicado.", 500);
   }
 }
