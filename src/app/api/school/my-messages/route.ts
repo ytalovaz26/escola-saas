@@ -39,7 +39,33 @@ function normalizeRole(role?: string | null) {
   return r;
 }
 
-async function getTeacherFromToken(token: string): Promise<StaffCheckOk | any> {
+function roleLabel(role?: string | null) {
+  const r = normalizeRole(role);
+
+  if (r === "professor") return "Professor";
+  if (r === "diretor") return "Diretor";
+  if (r === "coordenador") return "Coordenador";
+  if (r === "secretaria") return "Secretaria";
+  if (r === "admin") return "Administrador";
+
+  return "Equipe escolar";
+}
+
+function possibleRecipientTypesForRole(role: string) {
+  const r = normalizeRole(role);
+
+  const base = ["staff", "school_user", "user"];
+
+  if (r === "professor") return ["professor", "teacher", ...base];
+  if (r === "diretor") return ["diretor", "director", ...base];
+  if (r === "coordenador") return ["coordenador", "coordinator", ...base];
+  if (r === "secretaria") return ["secretaria", "secretary", ...base];
+  if (r === "admin") return ["admin", ...base];
+
+  return base;
+}
+
+async function getStaffFromToken(token: string): Promise<StaffCheckOk | any> {
   const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
 
   if (userErr || !userData?.user) {
@@ -61,7 +87,7 @@ async function getTeacherFromToken(token: string): Promise<StaffCheckOk | any> {
     return {
       ok: false as const,
       status: 500,
-      error: "Erro ao validar professor: " + staffErr.message,
+      error: "Erro ao validar usuário escolar: " + staffErr.message,
     };
   }
 
@@ -75,11 +101,13 @@ async function getTeacherFromToken(token: string): Promise<StaffCheckOk | any> {
 
   const role = normalizeRole(staff.role);
 
-  if (role !== "professor") {
+  const allowed = ["diretor", "coordenador", "secretaria", "professor", "admin"];
+
+  if (!allowed.includes(role)) {
     return {
       ok: false as const,
       status: 403,
-      error: "Esta área é exclusiva para professores.",
+      error: "Sem permissão para acessar comunicados da equipe.",
     };
   }
 
@@ -108,29 +136,14 @@ function audienceLabel(message: any) {
   return "Comunicado escolar";
 }
 
-function formatRecipientType(role: string) {
-  const normalized = normalizeRole(role);
-
-  if (normalized === "professor") return "professor";
-  if (normalized === "diretor") return "diretor";
-  if (normalized === "coordenador") return "coordenador";
-  if (normalized === "secretaria") return "secretaria";
-  if (normalized === "admin") return "admin";
-
-  return normalized || "professor";
-}
-
-function possibleRecipientTypesForTeacher() {
-  return ["professor", "teacher", "staff", "school_user", "user"];
-}
-
-async function loadTeacherRecipients(params: {
+async function loadRecipients(params: {
   schoolId: string;
   userId: string;
+  role: string;
 }) {
-  const { schoolId, userId } = params;
+  const { schoolId, userId, role } = params;
 
-  const recipientTypes = possibleRecipientTypesForTeacher();
+  const recipientTypes = possibleRecipientTypesForRole(role);
 
   const { data, error } = await supabaseAdmin
     .from("message_recipients")
@@ -209,17 +222,18 @@ export async function GET(req: Request) {
 
     if (!token) return jsonError("Sessão não enviada.", 401);
 
-    const teacherCheck = await getTeacherFromToken(token);
+    const staffCheck = await getStaffFromToken(token);
 
-    if (!teacherCheck.ok) {
-      return jsonError(teacherCheck.error, teacherCheck.status);
+    if (!staffCheck.ok) {
+      return jsonError(staffCheck.error, staffCheck.status);
     }
 
-    const { userId, schoolId, role } = teacherCheck;
+    const { userId, schoolId, role } = staffCheck;
 
-    const recipients = await loadTeacherRecipients({
+    const recipients = await loadRecipients({
       schoolId,
       userId,
+      role,
     });
 
     const notDelivered = recipients
@@ -242,8 +256,9 @@ export async function GET(req: Request) {
     if (messageIds.length === 0) {
       return jsonOk({
         schoolId,
-        teacherUserId: userId,
-        role: formatRecipientType(role),
+        userId,
+        role,
+        roleLabel: roleLabel(role),
         messages: [],
         summary: {
           total: 0,
@@ -299,7 +314,7 @@ export async function GET(req: Request) {
           recipient: rec
             ? {
                 id: String(rec.id),
-                recipientType: rec.recipient_type || "professor",
+                recipientType: rec.recipient_type || role,
                 deliveredAt: rec.delivered_at || now,
                 readAt: rec.read_at || null,
               }
@@ -317,8 +332,9 @@ export async function GET(req: Request) {
 
     return jsonOk({
       schoolId,
-      teacherUserId: userId,
-      role: formatRecipientType(role),
+      userId,
+      role,
+      roleLabel: roleLabel(role),
       messages: rows,
       summary: {
         total: rows.length,
@@ -327,7 +343,7 @@ export async function GET(req: Request) {
       },
     });
   } catch (e: any) {
-    return jsonError(e?.message || "Erro interno ao carregar comunicados do professor.", 500);
+    return jsonError(e?.message || "Erro interno ao carregar comunicados da equipe.", 500);
   }
 }
 
@@ -338,10 +354,10 @@ export async function POST(req: Request) {
 
     if (!token) return jsonError("Sessão não enviada.", 401);
 
-    const teacherCheck = await getTeacherFromToken(token);
+    const staffCheck = await getStaffFromToken(token);
 
-    if (!teacherCheck.ok) {
-      return jsonError(teacherCheck.error, teacherCheck.status);
+    if (!staffCheck.ok) {
+      return jsonError(staffCheck.error, staffCheck.status);
     }
 
     const body = await req.json().catch(() => ({}));
@@ -354,19 +370,19 @@ export async function POST(req: Request) {
     const { data: existing, error: findErr } = await supabaseAdmin
       .from("message_recipients")
       .select("id, message_id, recipient_type, recipient_id, delivered_at, read_at")
-      .eq("school_id", teacherCheck.schoolId)
+      .eq("school_id", staffCheck.schoolId)
       .eq("message_id", messageId)
-      .eq("recipient_id", teacherCheck.userId)
-      .in("recipient_type", possibleRecipientTypesForTeacher())
+      .eq("recipient_id", staffCheck.userId)
+      .in("recipient_type", possibleRecipientTypesForRole(staffCheck.role))
       .limit(1)
       .maybeSingle();
 
     if (findErr) {
-      return jsonError("Erro ao localizar comunicado do professor: " + findErr.message, 500);
+      return jsonError("Erro ao localizar comunicado: " + findErr.message, 500);
     }
 
     if (!existing?.id) {
-      return jsonError("Comunicado não encontrado para este professor.", 404);
+      return jsonError("Comunicado não encontrado para este usuário.", 404);
     }
 
     const updatePayload = {
@@ -377,7 +393,7 @@ export async function POST(req: Request) {
     const { data, error } = await supabaseAdmin
       .from("message_recipients")
       .update(updatePayload)
-      .eq("school_id", teacherCheck.schoolId)
+      .eq("school_id", staffCheck.schoolId)
       .eq("id", existing.id)
       .select("id, message_id, recipient_type, recipient_id, delivered_at, read_at")
       .maybeSingle();
@@ -387,11 +403,11 @@ export async function POST(req: Request) {
     }
 
     if (!data?.id) {
-      return jsonError("Comunicado não encontrado para este professor.", 404);
+      return jsonError("Comunicado não encontrado para este usuário.", 404);
     }
 
     return jsonOk({ recipient: data });
   } catch (e: any) {
-    return jsonError(e?.message || "Erro interno ao marcar leitura do professor.", 500);
+    return jsonError(e?.message || "Erro interno ao marcar leitura.", 500);
   }
 }
