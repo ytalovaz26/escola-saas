@@ -78,11 +78,17 @@ type RecipientStatusRow = {
   id?: string;
   recipientId?: string;
   recipient_id?: string;
+  recipientUserId?: string | null;
+  recipient_user_id?: string | null;
   recipientType?: string;
   recipient_type?: string;
+  type?: string | null;
   name?: string | null;
+  displayName?: string | null;
   fullName?: string | null;
   full_name?: string | null;
+  recipientName?: string | null;
+  recipient_name?: string | null;
   email?: string | null;
   phone?: string | null;
   deliveredAt?: string | null;
@@ -223,10 +229,11 @@ function normalizeName(row: any) {
     cleanText(row?.fullName) ||
     cleanText(row?.full_name) ||
     cleanText(row?.name) ||
-    cleanText(row?.email) ||
-    cleanText(row?.phone) ||
+    cleanText(row?.displayName) ||
     cleanText(row?.recipientName) ||
     cleanText(row?.recipient_name) ||
+    cleanText(row?.email) ||
+    cleanText(row?.phone) ||
     cleanText(row?.recipientId) ||
     cleanText(row?.recipient_id) ||
     "Destinatário"
@@ -431,7 +438,7 @@ function RecipientModalView({
                   const deliveredAt = row.deliveredAt || row.delivered_at || null;
                   const readAt = row.readAt || row.read_at || null;
                   const typeLabel = normalizeRecipientType(
-                    row.recipientType || row.recipient_type || row.status
+                    row.type || row.recipientType || row.recipient_type || row.status
                   );
 
                   return (
@@ -506,7 +513,7 @@ function RecipientModalView({
                         const deliveredAt = row.deliveredAt || row.delivered_at || null;
                         const readAt = row.readAt || row.read_at || null;
                         const typeLabel = normalizeRecipientType(
-                          row.recipientType || row.recipient_type || row.status
+                          row.type || row.recipientType || row.recipient_type || row.status
                         );
 
                         return (

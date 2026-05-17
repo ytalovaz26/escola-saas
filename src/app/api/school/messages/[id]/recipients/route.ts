@@ -99,6 +99,10 @@ function normalizeRecipientType(value: unknown) {
     return "Diretor";
   }
 
+  if (raw.includes("admin") || raw.includes("administrador")) {
+    return "Administrador";
+  }
+
   if (
     raw.includes("staff") ||
     raw.includes("school_user") ||
@@ -124,7 +128,13 @@ function isGenericTypeLabel(value: unknown) {
     raw === "destinatario" ||
     raw === "recipient" ||
     raw === "pessoa" ||
-    raw === "person"
+    raw === "person" ||
+    raw === "staff" ||
+    raw === "school_staff" ||
+    raw === "school user" ||
+    raw === "school_user" ||
+    raw === "equipe" ||
+    raw === "equipe escolar"
   );
 }
 
@@ -816,17 +826,20 @@ function chooseDisplayType(params: {
 }) {
   const { rowType, resolvedType } = params;
 
-  if (rowType && !isGenericTypeLabel(rowType) && rowType !== "Destinatário") {
-    return rowType;
+  const safeResolved = cleanText(resolvedType);
+  const safeRow = cleanText(rowType);
+
+  if (safeResolved && !isGenericTypeLabel(safeResolved)) {
+    return safeResolved;
   }
 
-  if (resolvedType && !isGenericTypeLabel(resolvedType)) {
-    return resolvedType;
+  if (safeRow && !isGenericTypeLabel(safeRow) && safeRow !== "Destinatário") {
+    return safeRow;
   }
 
-  if (resolvedType) return resolvedType;
+  if (safeResolved) return safeResolved;
 
-  return rowType || "Destinatário";
+  return safeRow || "Destinatário";
 }
 
 function buildRecipientOutput(params: {
