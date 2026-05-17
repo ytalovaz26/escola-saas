@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
@@ -22,10 +23,10 @@ function normalizeRole(role?: string | null) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
-  if (r === "diretor" || r === "director") return "diretor";
-  if (r === "coordenador" || r === "coordinator") return "coordenador";
-  if (r === "secretaria" || r === "secretary") return "secretaria";
-  if (r === "professor" || r === "teacher") return "professor";
+  if (r === "diretor" || r === "director" || r === "diretora") return "diretor";
+  if (r === "coordenador" || r === "coordinator" || r === "coordenadora") return "coordenador";
+  if (r === "secretaria" || r === "secretary" || r === "secretario") return "secretaria";
+  if (r === "professor" || r === "teacher" || r === "professora") return "professor";
   if (r === "admin" || r === "administrador") return "admin";
 
   return r;
@@ -55,6 +56,8 @@ function staffNameFromAuthUser(user: any) {
     cleanText(meta.full_name) ||
     cleanText(meta.fullName) ||
     cleanText(meta.name) ||
+    cleanText(meta.display_name) ||
+    cleanText(meta.displayName) ||
     cleanText(meta.nome) ||
     cleanText(user?.email) ||
     "Usuário escolar"
@@ -185,7 +188,7 @@ async function loadSelectableStaff(schoolId: string) {
 
   return (schoolUsers || [])
     .map((row: any) => {
-      const userId = String(row.user_id);
+      const userId = String(row.user_id || "");
       const authUser = authUsersById.get(userId) || null;
       const role = normalizeRole(row.role);
       const fullName = staffNameFromAuthUser(authUser);
@@ -225,9 +228,7 @@ export async function GET(req: Request) {
     const authHeader = req.headers.get("authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
-    if (!token) {
-      return jsonError("Sessão não enviada.", 401);
-    }
+    if (!token) return jsonError("Sessão não enviada.", 401);
 
     const staffCheck = await getStaffFromToken(token);
 
