@@ -965,6 +965,14 @@ export default function SchoolMessagesPage() {
 
               <button
                 type="button"
+                onClick={() => router.push("/school/my-messages")}
+                className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Meus comunicados
+              </button>
+
+              <button
+                type="button"
                 onClick={() => router.push("/school")}
                 className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
               >
