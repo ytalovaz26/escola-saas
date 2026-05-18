@@ -1,287 +1,362 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-function parseHashParams(hash: string) {
-  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
-  return new URLSearchParams(raw);
+function validatePassword(password: string, confirmPassword: string) {
+  if (!password) return "Informe a nova senha.";
+
+  if (password.length < 8) {
+    return "A nova senha precisa ter pelo menos 8 caracteres.";
+  }
+
+  if (password.length > 72) {
+    return "A nova senha precisa ter no máximo 72 caracteres.";
+  }
+
+  if (!/[A-Za-zÀ-ÿ]/.test(password)) {
+    return "A nova senha precisa conter pelo menos uma letra.";
+  }
+
+  if (!/[0-9]/.test(password)) {
+    return "A nova senha precisa conter pelo menos um número.";
+  }
+
+  if (password !== confirmPassword) {
+    return "A confirmação de senha não confere.";
+  }
+
+  return null;
 }
 
-function ResetPasswordPageContent() {
+function passwordStrength(password: string) {
+  const value = String(password || "");
+
+  let score = 0;
+
+  if (value.length >= 8) score++;
+  if (/[A-Za-zÀ-ÿ]/.test(value)) score++;
+  if (/[0-9]/.test(value)) score++;
+  if (/[^A-Za-zÀ-ÿ0-9]/.test(value)) score++;
+  if (value.length >= 12) score++;
+
+  if (!value) {
+    return {
+      label: "Aguardando senha",
+      className: "bg-slate-100 text-slate-500 border-slate-200",
+      percent: 0,
+    };
+  }
+
+  if (score <= 2) {
+    return {
+      label: "Senha fraca",
+      className: "bg-red-50 text-red-700 border-red-200",
+      percent: 35,
+    };
+  }
+
+  if (score <= 4) {
+    return {
+      label: "Senha média",
+      className: "bg-amber-50 text-amber-700 border-amber-200",
+      percent: 70,
+    };
+  }
+
+  return {
+    label: "Senha forte",
+    className: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    percent: 100,
+  };
+}
+
+export default function ResetPasswordPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
-  const [password, setPassword] = useState("");
+  const [checking, setChecking] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [hasSession, setHasSession] = useState(false);
+
+  const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [checkingLink, setCheckingLink] = useState(true);
-  const [ready, setReady] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  const handledRef = useRef(false);
+  const strength = useMemo(() => passwordStrength(newPassword), [newPassword]);
 
-  const code = useMemo(() => searchParams.get("code"), [searchParams]);
-  const tokenHash = useMemo(() => searchParams.get("token_hash"), [searchParams]);
-  const type = useMemo(() => searchParams.get("type"), [searchParams]);
+  const canSubmit = useMemo(() => {
+    return !saving && !validatePassword(newPassword, confirmPassword);
+  }, [confirmPassword, newPassword, saving]);
 
-  useEffect(() => {
-    async function prepareRecoverySession() {
-      if (handledRef.current) return;
-      handledRef.current = true;
-
-      setCheckingLink(true);
-      setError(null);
-      setMessage(null);
-
-      try {
-        if (typeof window !== "undefined") {
-          const hash = window.location.hash || "";
-          if (hash) {
-            const params = parseHashParams(hash);
-
-            const accessToken = params.get("access_token");
-            const refreshToken = params.get("refresh_token");
-            const hashType = params.get("type");
-            const errorCode = params.get("error_code");
-            const errorDescription = params.get("error_description");
-
-            if (errorCode || errorDescription) {
-              if (errorCode === "otp_expired") {
-                setError("O link de recuperação expirou. Solicite um novo email de redefinição.");
-              } else {
-                setError(
-                  decodeURIComponent(
-                    errorDescription || "Não foi possível validar o link de recuperação."
-                  )
-                );
-              }
-              setReady(false);
-              return;
-            }
-
-            if (hashType === "recovery" && accessToken && refreshToken) {
-              const { error } = await supabase.auth.setSession({
-                access_token: accessToken,
-                refresh_token: refreshToken,
-              });
-
-              if (error) {
-                setError(error.message || "Não foi possível validar a sessão de recuperação.");
-                setReady(false);
-                return;
-              }
-
-              window.history.replaceState({}, document.title, "/reset-password");
-              setReady(true);
-              setMessage("Link validado. Agora defina sua nova senha.");
-              return;
-            }
-          }
-        }
-
-        if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-
-          if (error) {
-            setError(error.message || "Não foi possível validar o link de recuperação.");
-            setReady(false);
-            return;
-          }
-
-          if (typeof window !== "undefined") {
-            window.history.replaceState({}, document.title, "/reset-password");
-          }
-
-          setReady(true);
-          setMessage("Link validado. Agora defina sua nova senha.");
-          return;
-        }
-
-        if (tokenHash && type) {
-          const { error } = await supabase.auth.verifyOtp({
-            token_hash: tokenHash,
-            type: type as any,
-          });
-
-          if (error) {
-            setError(error.message || "Não foi possível validar o link de recuperação.");
-            setReady(false);
-            return;
-          }
-
-          if (typeof window !== "undefined") {
-            window.history.replaceState({}, document.title, "/reset-password");
-          }
-
-          setReady(true);
-          setMessage("Link validado. Agora defina sua nova senha.");
-          return;
-        }
-
-        const { data } = await supabase.auth.getSession();
-        if (data.session) {
-          setReady(true);
-          setMessage("Sessão de recuperação pronta. Defina sua nova senha.");
-          return;
-        }
-
-        setError("Link inválido ou expirado. Solicite uma nova recuperação de senha.");
-        setReady(false);
-      } catch (err: any) {
-        setError(err?.message || "Erro inesperado ao validar o link.");
-        setReady(false);
-      } finally {
-        setCheckingLink(false);
-      }
-    }
-
-    prepareRecoverySession();
-  }, [code, tokenHash, type]);
-
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function checkRecoverySession() {
+    setChecking(true);
     setError(null);
-    setMessage(null);
-
-    if (!password || !confirmPassword) {
-      setError("Preencha os dois campos de senha.");
-      return;
-    }
-
-    if (password.length < 6) {
-      setError("A nova senha deve ter pelo menos 6 caracteres.");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError("As senhas não coincidem.");
-      return;
-    }
-
-    setLoading(true);
 
     try {
-      const { error } = await supabase.auth.updateUser({
-        password,
-      });
+      const { data, error: sessionErr } = await supabase.auth.getSession();
 
-      if (error) {
-        setError(error.message || "Não foi possível alterar a senha.");
+      if (sessionErr) {
+        setError("Não foi possível validar o link de recuperação.");
+        setHasSession(false);
         return;
       }
 
-      setMessage("Senha alterada com sucesso! Redirecionando para o login...");
+      if (!data.session) {
+        setHasSession(false);
+        setError(
+          "Link inválido ou expirado. Solicite um novo link em “Esqueci minha senha”."
+        );
+        return;
+      }
+
+      setHasSession(true);
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao validar link de recuperação.");
+      setHasSession(false);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function updatePassword() {
+    setError(null);
+    setSuccess(null);
+
+    const validationError = validatePassword(newPassword, confirmPassword);
+
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const { error: updateErr } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (updateErr) {
+        setError("Não foi possível alterar a senha. Solicite um novo link e tente novamente.");
+        return;
+      }
+
+      setNewPassword("");
+      setConfirmPassword("");
+
+      setSuccess("Senha redefinida com sucesso. Você já pode entrar com a nova senha.");
 
       setTimeout(async () => {
         await supabase.auth.signOut();
         router.replace("/login");
-      }, 1200);
-    } catch (err: any) {
-      setError(err?.message || "Erro inesperado ao alterar a senha.");
+      }, 1800);
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao redefinir senha.");
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
 
-  if (checkingLink) {
+  useEffect(() => {
+    checkRecoverySession();
+  }, []);
+
+  if (checking) {
     return (
-      <div className="min-h-[70vh] flex items-start justify-center p-6">
-        <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
-          <h1 className="text-2xl font-semibold text-slate-900">Redefinir senha</h1>
-          <p className="mt-2 text-sm text-slate-600">Validando o link de recuperação...</p>
-        </div>
-      </div>
+      <main className="min-h-screen bg-slate-100 p-4 md:p-6">
+        <section className="mx-auto flex min-h-[calc(100vh-48px)] max-w-3xl items-center justify-center">
+          <div className="w-full rounded-[36px] border border-slate-200 bg-white p-8 text-center shadow-sm">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-950 text-2xl text-white">
+              🔐
+            </div>
+
+            <h1 className="mt-5 text-2xl font-semibold text-slate-950">
+              Validando link...
+            </h1>
+
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Aguarde enquanto verificamos sua sessão de recuperação.
+            </p>
+          </div>
+        </section>
+      </main>
     );
   }
 
   return (
-    <div className="min-h-[70vh] flex items-start justify-center p-6">
-      <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm space-y-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Redefinir senha</h1>
-          <p className="mt-1 text-sm text-slate-600">
-            Defina uma nova senha para acessar o sistema.
-          </p>
-        </div>
-
-        {message && (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-            {message}
-          </div>
-        )}
-
-        {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
-
-        {!ready ? (
-          <div className="space-y-3">
-            <button
-              type="button"
-              onClick={() => router.replace("/login")}
-              className="w-full rounded-md bg-black px-4 py-2 text-sm text-white hover:opacity-90"
-            >
-              Voltar para o login
-            </button>
-          </div>
-        ) : (
-          <form onSubmit={onSubmit} className="space-y-3">
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">Nova senha</label>
-              <input
-                className="w-full rounded-md border px-3 py-2 text-sm"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="new-password"
-                type="password"
-                required
-              />
+    <main className="min-h-screen bg-slate-100 p-4 md:p-6">
+      <div className="mx-auto flex min-h-[calc(100vh-48px)] max-w-4xl items-center justify-center">
+        <section className="w-full overflow-hidden rounded-[40px] border border-slate-200 bg-white shadow-xl">
+          <div className="bg-slate-950 p-6 text-white md:p-8">
+            <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
+              Redefinição de senha
             </div>
 
-            <div>
-              <label className="block text-xs text-gray-600 mb-1">Confirmar nova senha</label>
-              <input
-                className="w-full rounded-md border px-3 py-2 text-sm"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                autoComplete="new-password"
-                type="password"
-                required
-              />
-            </div>
+            <h1 className="mt-4 text-3xl font-semibold tracking-tight md:text-5xl">
+              Criar nova senha
+            </h1>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-md bg-black px-4 py-2 text-sm text-white hover:opacity-90 disabled:opacity-60"
-            >
-              {loading ? "Salvando..." : "Salvar nova senha"}
-            </button>
-          </form>
-        )}
+            <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300 md:text-base">
+              Defina uma senha segura para recuperar o acesso à plataforma.
+            </p>
+          </div>
+
+          <div className="p-6 md:p-8">
+            {error ? (
+              <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+                {error}
+              </div>
+            ) : null}
+
+            {success ? (
+              <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-800">
+                {success}
+              </div>
+            ) : null}
+
+            {!hasSession ? (
+              <div className="space-y-4">
+                <p className="text-sm leading-6 text-slate-600">
+                  O link de recuperação não está ativo. Solicite um novo link de
+                  redefinição de senha.
+                </p>
+
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={() => router.push("/forgot-password")}
+                    className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90"
+                  >
+                    Solicitar novo link
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/login")}
+                    className="rounded-2xl border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Voltar ao login
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
+                      Informe sua nova senha
+                    </h2>
+
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      Depois de salvar, você será redirecionado para o login.
+                    </p>
+                  </div>
+
+                  <div
+                    className={`rounded-full border px-4 py-2 text-xs font-semibold ${strength.className}`}
+                  >
+                    {strength.label}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Nova senha *
+                  </label>
+
+                  <div className="flex overflow-hidden rounded-2xl border border-slate-300 bg-white focus-within:border-slate-500 focus-within:ring-4 focus-within:ring-slate-100">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={newPassword}
+                      onChange={(e) => {
+                        setNewPassword(e.target.value);
+                        setError(null);
+                        setSuccess(null);
+                      }}
+                      className="min-w-0 flex-1 px-4 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                      placeholder="Digite a nova senha"
+                      disabled={saving}
+                      autoComplete="new-password"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      className="shrink-0 border-l border-slate-200 px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+                    >
+                      {showPassword ? "Ocultar" : "Mostrar"}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Confirmar nova senha *
+                  </label>
+
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={confirmPassword}
+                    onChange={(e) => {
+                      setConfirmPassword(e.target.value);
+                      setError(null);
+                      setSuccess(null);
+                    }}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                    placeholder="Repita a nova senha"
+                    disabled={saving}
+                    autoComplete="new-password"
+                  />
+                </div>
+
+                <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5">
+                  <div className="text-sm font-semibold text-slate-900">
+                    Segurança da senha
+                  </div>
+
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200">
+                    <div
+                      className="h-full rounded-full bg-slate-950 transition-all"
+                      style={{ width: `${strength.percent}%` }}
+                    />
+                  </div>
+
+                  <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-600">
+                    <li>• Pelo menos 8 caracteres.</li>
+                    <li>• Pelo menos uma letra.</li>
+                    <li>• Pelo menos um número.</li>
+                    <li>• Recomendado: símbolo e letras maiúsculas.</li>
+                  </ul>
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={updatePassword}
+                    disabled={!canSubmit}
+                    className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+                  >
+                    {saving ? "Salvando nova senha..." : "Salvar nova senha"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/login")}
+                    disabled={saving}
+                    className="rounded-2xl border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Voltar ao login
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
       </div>
-    </div>
-  );
-}
-
-export default function ResetPasswordPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-[70vh] flex items-start justify-center p-6">
-          <div className="w-full max-w-md rounded-2xl border bg-white p-6 shadow-sm">
-            <h1 className="text-2xl font-semibold text-slate-900">Redefinir senha</h1>
-            <p className="mt-2 text-sm text-slate-600">Carregando...</p>
-          </div>
-        </div>
-      }
-    >
-      <ResetPasswordPageContent />
-    </Suspense>
+    </main>
   );
 }
