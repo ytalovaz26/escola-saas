@@ -9,21 +9,51 @@ type TeacherProfileMetadata = {
   name?: string;
   nome?: string;
   display_name?: string;
+
   phone?: string;
   telefone?: string;
-  avatar_url?: string;
-  photo_url?: string;
-  photoUrl?: string;
-  picture?: string;
-  teacher_photo_url?: string;
+
+  address?: string;
+  endereco?: string;
+
+  emergency_contact_name?: string;
+  emergencyContactName?: string;
+
+  emergency_contact_phone?: string;
+  emergencyContactPhone?: string;
+
+  emergency_contact_relation?: string;
+  emergencyContactRelation?: string;
+
+  avatar_url?: string | null;
+  photo_url?: string | null;
+  photoUrl?: string | null;
+  picture?: string | null;
+  teacher_photo_url?: string | null;
 };
 
 function jsonOk(body: any, status = 200) {
-  return NextResponse.json({ ok: true, ...body }, { status });
+  return NextResponse.json(
+    { ok: true, ...body },
+    {
+      status,
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    }
+  );
 }
 
 function jsonError(message: string, status = 400, extra?: any) {
-  return NextResponse.json({ ok: false, error: message, ...extra }, { status });
+  return NextResponse.json(
+    { ok: false, error: message, ...extra },
+    {
+      status,
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    }
+  );
 }
 
 function cleanText(value: unknown) {
@@ -102,6 +132,34 @@ function getPhoneFromMetadata(metadata: TeacherProfileMetadata) {
   return cleanText(metadata.phone) || cleanText(metadata.telefone) || "";
 }
 
+function getAddressFromMetadata(metadata: TeacherProfileMetadata) {
+  return cleanText(metadata.address) || cleanText(metadata.endereco) || "";
+}
+
+function getEmergencyContactNameFromMetadata(metadata: TeacherProfileMetadata) {
+  return (
+    cleanText(metadata.emergency_contact_name) ||
+    cleanText(metadata.emergencyContactName) ||
+    ""
+  );
+}
+
+function getEmergencyContactPhoneFromMetadata(metadata: TeacherProfileMetadata) {
+  return (
+    cleanText(metadata.emergency_contact_phone) ||
+    cleanText(metadata.emergencyContactPhone) ||
+    ""
+  );
+}
+
+function getEmergencyContactRelationFromMetadata(metadata: TeacherProfileMetadata) {
+  return (
+    cleanText(metadata.emergency_contact_relation) ||
+    cleanText(metadata.emergencyContactRelation) ||
+    ""
+  );
+}
+
 function getPhotoFromMetadata(metadata: TeacherProfileMetadata) {
   return (
     cleanText(metadata.avatar_url) ||
@@ -156,11 +214,15 @@ async function ensureTeacherPhotosBucket() {
     if (exists) return bucketName;
   }
 
-  await supabaseAdmin.storage.createBucket(bucketName, {
+  const { error: createErr } = await supabaseAdmin.storage.createBucket(bucketName, {
     public: true,
     fileSizeLimit: 5 * 1024 * 1024,
     allowedMimeTypes: ["image/jpeg", "image/png", "image/webp", "image/gif"],
   });
+
+  if (createErr && !createErr.message.toLowerCase().includes("already exists")) {
+    throw new Error("Falha ao preparar armazenamento de fotos: " + createErr.message);
+  }
 
   return bucketName;
 }
@@ -271,29 +333,51 @@ async function getTeacherContext(req: Request) {
   };
 }
 
+function buildProfile(params: {
+  user: any;
+  schoolId: string;
+  role: string;
+  metadata: TeacherProfileMetadata;
+}) {
+  const email = cleanText(params.user.email);
+  const fullName = getNameFromMetadata(params.metadata, email);
+  const phone = getPhoneFromMetadata(params.metadata);
+  const address = getAddressFromMetadata(params.metadata);
+  const emergencyContactName = getEmergencyContactNameFromMetadata(params.metadata);
+  const emergencyContactPhone = getEmergencyContactPhoneFromMetadata(params.metadata);
+  const emergencyContactRelation = getEmergencyContactRelationFromMetadata(params.metadata);
+  const photoUrl = getPhotoFromMetadata(params.metadata);
+
+  return {
+    userId: params.user.id,
+    schoolId: params.schoolId,
+    role: params.role,
+    email,
+    fullName,
+    phone,
+    address,
+    emergencyContactName,
+    emergencyContactPhone,
+    emergencyContactRelation,
+    photoUrl,
+    initials: getInitials(fullName),
+  };
+}
+
 export async function GET(req: Request) {
   const ctx = await getTeacherContext(req);
 
   if (!ctx.ok) return ctx.response;
 
   const metadata = ((ctx.user.user_metadata || {}) as TeacherProfileMetadata) || {};
-  const email = cleanText(ctx.user.email);
-
-  const fullName = getNameFromMetadata(metadata, email);
-  const phone = getPhoneFromMetadata(metadata);
-  const photoUrl = getPhotoFromMetadata(metadata);
 
   return jsonOk({
-    profile: {
-      userId: ctx.user.id,
+    profile: buildProfile({
+      user: ctx.user,
       schoolId: ctx.schoolId,
       role: ctx.role,
-      email,
-      fullName,
-      phone,
-      photoUrl,
-      initials: getInitials(fullName),
-    },
+      metadata,
+    }),
   });
 }
 
@@ -307,6 +391,20 @@ export async function PATCH(req: Request) {
 
     const fullName = cleanText(body?.fullName || body?.name || body?.nome);
     const phone = cleanText(body?.phone || body?.telefone);
+    const address = cleanText(body?.address || body?.endereco);
+
+    const emergencyContactName = cleanText(
+      body?.emergencyContactName || body?.emergency_contact_name
+    );
+
+    const emergencyContactPhone = cleanText(
+      body?.emergencyContactPhone || body?.emergency_contact_phone
+    );
+
+    const emergencyContactRelation = cleanText(
+      body?.emergencyContactRelation || body?.emergency_contact_relation
+    );
+
     const photoDataUrl = cleanText(body?.photoDataUrl);
     const removePhoto = Boolean(body?.removePhoto);
 
@@ -326,15 +424,29 @@ export async function PATCH(req: Request) {
       return jsonError("O telefone precisa ter no máximo 40 caracteres.", 400);
     }
 
+    if (address.length > 240) {
+      return jsonError("O endereço precisa ter no máximo 240 caracteres.", 400);
+    }
+
+    if (emergencyContactName.length > 120) {
+      return jsonError("O nome do contato de emergência precisa ter no máximo 120 caracteres.", 400);
+    }
+
+    if (emergencyContactPhone.length > 40) {
+      return jsonError("O telefone do contato de emergência precisa ter no máximo 40 caracteres.", 400);
+    }
+
+    if (emergencyContactRelation.length > 80) {
+      return jsonError("O parentesco/observação precisa ter no máximo 80 caracteres.", 400);
+    }
+
     const currentMetadata = ((ctx.user.user_metadata || {}) as TeacherProfileMetadata) || {};
 
     let nextPhotoUrl = getPhotoFromMetadata(currentMetadata);
 
     if (removePhoto) {
       nextPhotoUrl = null;
-    }
-
-    if (photoDataUrl) {
+    } else if (photoDataUrl) {
       nextPhotoUrl = await uploadTeacherPhoto({
         schoolId: ctx.schoolId,
         userId: ctx.user.id,
@@ -342,15 +454,30 @@ export async function PATCH(req: Request) {
       });
     }
 
-    const nextMetadata = {
+    const nextMetadata: TeacherProfileMetadata = {
       ...currentMetadata,
+
       full_name: fullName,
       fullName,
       name: fullName,
       nome: fullName,
       display_name: fullName,
+
       phone,
       telefone: phone,
+
+      address,
+      endereco: address,
+
+      emergency_contact_name: emergencyContactName,
+      emergencyContactName,
+
+      emergency_contact_phone: emergencyContactPhone,
+      emergencyContactPhone,
+
+      emergency_contact_relation: emergencyContactRelation,
+      emergencyContactRelation,
+
       avatar_url: nextPhotoUrl,
       photo_url: nextPhotoUrl,
       photoUrl: nextPhotoUrl,
@@ -367,23 +494,16 @@ export async function PATCH(req: Request) {
       return jsonError("Falha ao atualizar perfil: " + updateErr.message, 500);
     }
 
-    const metadata = ((updated?.user?.user_metadata || nextMetadata) as TeacherProfileMetadata) || {};
-    const email = cleanText(updated?.user?.email || ctx.user.email);
-    const finalName = getNameFromMetadata(metadata, email);
-    const finalPhone = getPhoneFromMetadata(metadata);
-    const finalPhoto = getPhotoFromMetadata(metadata);
+    const metadata =
+      ((updated?.user?.user_metadata || nextMetadata) as TeacherProfileMetadata) || {};
 
     return jsonOk({
-      profile: {
-        userId: ctx.user.id,
+      profile: buildProfile({
+        user: updated?.user || ctx.user,
         schoolId: ctx.schoolId,
         role: ctx.role,
-        email,
-        fullName: finalName,
-        phone: finalPhone,
-        photoUrl: finalPhoto,
-        initials: getInitials(finalName),
-      },
+        metadata,
+      }),
     });
   } catch (e: any) {
     return jsonError(e?.message || "Erro interno ao atualizar perfil do professor.", 500);

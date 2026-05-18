@@ -11,6 +11,10 @@ type TeacherProfile = {
   email: string;
   fullName: string;
   phone: string;
+  address: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
+  emergencyContactRelation: string;
   photoUrl: string | null;
   initials: string;
 };
@@ -94,6 +98,26 @@ function ProfileAvatar({
   );
 }
 
+function InfoBox({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </div>
+
+      <div className="mt-2 break-words text-sm font-medium text-slate-700">
+        {value || "—"}
+      </div>
+    </div>
+  );
+}
+
 export default function TeacherProfilePage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -105,6 +129,10 @@ export default function TeacherProfilePage() {
 
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [emergencyContactName, setEmergencyContactName] = useState("");
+  const [emergencyContactPhone, setEmergencyContactPhone] = useState("");
+  const [emergencyContactRelation, setEmergencyContactRelation] = useState("");
 
   const [photoDataUrl, setPhotoDataUrl] = useState("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -113,16 +141,32 @@ export default function TeacherProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const visiblePhotoUrl = removePhoto ? null : profile?.photoUrl || null;
+
   const hasChanges = useMemo(() => {
     if (!profile) return false;
 
     return (
       cleanText(fullName) !== cleanText(profile.fullName) ||
       cleanText(phone) !== cleanText(profile.phone) ||
+      cleanText(address) !== cleanText(profile.address) ||
+      cleanText(emergencyContactName) !== cleanText(profile.emergencyContactName) ||
+      cleanText(emergencyContactPhone) !== cleanText(profile.emergencyContactPhone) ||
+      cleanText(emergencyContactRelation) !== cleanText(profile.emergencyContactRelation) ||
       Boolean(photoDataUrl) ||
       removePhoto
     );
-  }, [fullName, phone, photoDataUrl, removePhoto, profile]);
+  }, [
+    fullName,
+    phone,
+    address,
+    emergencyContactName,
+    emergencyContactPhone,
+    emergencyContactRelation,
+    photoDataUrl,
+    removePhoto,
+    profile,
+  ]);
 
   async function getToken() {
     const { data } = await supabase.auth.getSession();
@@ -134,6 +178,24 @@ export default function TeacherProfilePage() {
     }
 
     return token;
+  }
+
+  function fillForm(nextProfile: TeacherProfile) {
+    setProfile(nextProfile);
+    setFullName(nextProfile.fullName || "");
+    setPhone(nextProfile.phone || "");
+    setAddress(nextProfile.address || "");
+    setEmergencyContactName(nextProfile.emergencyContactName || "");
+    setEmergencyContactPhone(nextProfile.emergencyContactPhone || "");
+    setEmergencyContactRelation(nextProfile.emergencyContactRelation || "");
+
+    setPhotoDataUrl("");
+    setPreviewUrl(null);
+    setRemovePhoto(false);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   }
 
   async function loadProfile() {
@@ -163,13 +225,7 @@ export default function TeacherProfilePage() {
 
       const nextProfile = json.profile as TeacherProfile;
 
-      setProfile(nextProfile);
-      setFullName(nextProfile.fullName || "");
-      setPhone(nextProfile.phone || "");
-
-      setPhotoDataUrl("");
-      setPreviewUrl(null);
-      setRemovePhoto(false);
+      fillForm(nextProfile);
     } catch (e: any) {
       setError(e?.message || "Erro inesperado ao carregar perfil.");
     } finally {
@@ -203,6 +259,10 @@ export default function TeacherProfilePage() {
         body: JSON.stringify({
           fullName: fullName.trim(),
           phone: phone.trim(),
+          address: address.trim(),
+          emergencyContactName: emergencyContactName.trim(),
+          emergencyContactPhone: emergencyContactPhone.trim(),
+          emergencyContactRelation: emergencyContactRelation.trim(),
           photoDataUrl: photoDataUrl || null,
           removePhoto,
         }),
@@ -217,20 +277,19 @@ export default function TeacherProfilePage() {
 
       const nextProfile = json.profile as TeacherProfile;
 
-      setProfile(nextProfile);
-      setFullName(nextProfile.fullName || "");
-      setPhone(nextProfile.phone || "");
-      setPhotoDataUrl("");
-      setPreviewUrl(null);
-      setRemovePhoto(false);
+      fillForm(nextProfile);
 
-      setMessage("Perfil atualizado com sucesso. Ao voltar ao painel, sua foto e nome serão exibidos.");
+      setMessage("Perfil atualizado com sucesso. Sua foto e seus dados foram salvos.");
 
       try {
         await supabase.auth.refreshSession();
       } catch {
         // Não bloqueia a experiência.
       }
+
+      setTimeout(() => {
+        loadProfile();
+      }, 300);
     } catch (e: any) {
       setError(e?.message || "Erro inesperado ao salvar perfil.");
     } finally {
@@ -365,8 +424,9 @@ export default function TeacherProfilePage() {
             </h1>
 
             <p className="mt-3 max-w-3xl break-words text-sm leading-7 text-slate-300 md:text-base">
-              Atualize seu nome, telefone e foto de perfil. Essas informações aparecem no
-              seu painel do professor.
+              Atualize seu nome, telefone, endereço, contato de emergência e foto de
+              perfil. Essas informações ajudam a escola a manter seu cadastro docente
+              completo.
             </p>
           </div>
 
@@ -399,7 +459,7 @@ export default function TeacherProfilePage() {
           <div className="mt-5 flex flex-col items-center rounded-[32px] border border-slate-200 bg-slate-50 p-6 text-center">
             <ProfileAvatar
               name={fullName || profile.fullName}
-              photoUrl={removePhoto ? null : profile.photoUrl}
+              photoUrl={visiblePhotoUrl}
               previewUrl={previewUrl}
             />
 
@@ -453,6 +513,12 @@ export default function TeacherProfilePage() {
               Use uma foto nítida, preferencialmente de rosto. Tamanho máximo: 5MB.
             </p>
           </div>
+
+          <div className="mt-5 grid grid-cols-1 gap-3">
+            <InfoBox label="E-mail de acesso" value={profile.email} />
+            <InfoBox label="Função" value={formatRole(profile.role)} />
+            <InfoBox label="Escola vinculada" value={profile.schoolId} />
+          </div>
         </div>
 
         <div className="rounded-[36px] border border-slate-200 bg-white p-6 shadow-sm">
@@ -467,7 +533,7 @@ export default function TeacherProfilePage() {
               </h2>
 
               <p className="mt-2 break-words text-sm leading-6 text-slate-500">
-                Mantenha seus dados atualizados para identificação no portal docente.
+                Mantenha seus dados atualizados para identificação e contato da escola.
               </p>
             </div>
 
@@ -493,7 +559,7 @@ export default function TeacherProfilePage() {
 
             <div>
               <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Telefone
+                Telefone principal
               </label>
 
               <input
@@ -503,6 +569,74 @@ export default function TeacherProfilePage() {
                 placeholder="Ex: (64) 9xxxx-xxxx"
                 disabled={saving}
               />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Endereço completo
+              </label>
+
+              <textarea
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                className="min-h-[96px] w-full resize-y rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                placeholder="Rua, número, bairro, cidade e complemento"
+                disabled={saving}
+              />
+            </div>
+
+            <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5">
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                Contato adicional de emergência
+              </div>
+
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Informe uma pessoa que a escola pode acionar em uma situação urgente.
+              </p>
+
+              <div className="mt-5 grid grid-cols-1 gap-4">
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Nome do contato
+                  </label>
+
+                  <input
+                    value={emergencyContactName}
+                    onChange={(e) => setEmergencyContactName(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                    placeholder="Ex: João da Silva"
+                    disabled={saving}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Telefone do contato
+                  </label>
+
+                  <input
+                    value={emergencyContactPhone}
+                    onChange={(e) => setEmergencyContactPhone(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                    placeholder="Ex: (64) 9xxxx-xxxx"
+                    disabled={saving}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Parentesco ou observação
+                  </label>
+
+                  <input
+                    value={emergencyContactRelation}
+                    onChange={(e) => setEmergencyContactRelation(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                    placeholder="Ex: Esposo, esposa, mãe, irmão, amigo..."
+                    disabled={saving}
+                  />
+                </div>
+              </div>
             </div>
 
             <div>
