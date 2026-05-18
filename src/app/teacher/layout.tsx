@@ -12,6 +12,31 @@ type Branding = {
   primaryColor: string | null;
 };
 
+type MePayload = {
+  ok: true;
+  user: {
+    id: string;
+    email: string | null;
+  };
+  isPlatformAdmin: boolean;
+  school?: {
+    schoolId: string;
+    role: string;
+  };
+  branding?: {
+    brandName: string | null;
+    brandLogoUrl: string | null;
+    brandIconUrl: string | null;
+  };
+  redirectTo: string;
+};
+
+type TeacherProfile = {
+  name: string;
+  email: string;
+  initials: string;
+};
+
 type NavItem = {
   label: string;
   href: string;
@@ -41,15 +66,18 @@ const navItems: NavItem[] = [
 ];
 
 function normalizeHexColor(c?: string | null) {
-  const s = (c || "").trim();
+  const s = String(c || "").trim();
+
   if (!s) return "#2563eb";
   if (/^#[0-9a-f]{6}$/i.test(s)) return s;
   if (/^#[0-9a-f]{3}$/i.test(s)) return s;
+
   return "#2563eb";
 }
 
 function hexToRgbTriplet(hex: string) {
   const h = hex.replace("#", "");
+
   const full =
     h.length === 3
       ? h
@@ -67,14 +95,41 @@ function hexToRgbTriplet(hex: string) {
   return `${r} ${g} ${b}`;
 }
 
-function getInitials(name?: string | null) {
-  const safe = String(name || "").trim();
-  if (!safe) return "PE";
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+function getInitials(name?: string | null, fallback = "PE") {
+  const safe = cleanText(name);
+
+  if (!safe) return fallback;
 
   const parts = safe.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
 
-  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase();
+}
+
+function nameFromEmail(email?: string | null) {
+  const safe = cleanText(email);
+
+  if (!safe) return "Professor";
+
+  const beforeAt = safe.split("@")[0] || safe;
+  const parts = beforeAt
+    .split(/[.\-_ ]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length === 0) return "Professor";
+
+  return parts
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
 }
 
 function isActive(pathname: string, href: string) {
@@ -82,17 +137,30 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+async function safeJson(res: Response) {
+  const text = await res.text();
+
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: false, error: text || "Resposta inválida do servidor" };
+  }
+}
+
 export default function TeacherLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
   const [branding, setBranding] = useState<Branding | null>(null);
+  const [me, setMe] = useState<MePayload | null>(null);
   const [loadingBranding, setLoadingBranding] = useState(true);
 
   useEffect(() => {
     let alive = true;
 
-    async function loadBranding() {
+    async function loadIdentity() {
       try {
         setLoadingBranding(true);
 
@@ -101,37 +169,82 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
 
         if (!token) return;
 
-        const res = await fetch("/api/branding", {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
+        const [meRes, brandingRes] = await Promise.all([
+          fetch("/api/me", {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          }),
+          fetch("/api/branding", {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          }),
+        ]);
 
-        const json = (await res.json().catch(() => null)) as any;
+        const meJson = (await safeJson(meRes)) as MePayload | any;
+        const brandingJson = (await safeJson(brandingRes)) as Branding | any;
 
         if (!alive) return;
 
-        if (res.ok && json?.ok) {
-          setBranding(json);
+        if (meRes.ok && meJson?.ok) {
+          setMe(meJson as MePayload);
+        }
+
+        if (brandingRes.ok && brandingJson?.ok) {
+          setBranding(brandingJson as Branding);
+          return;
+        }
+
+        if (meJson?.ok) {
+          setBranding({
+            ok: true,
+            schoolId: meJson?.school?.schoolId || "",
+            name: meJson?.branding?.brandName || "Portal do Professor",
+            logoUrl: meJson?.branding?.brandLogoUrl || meJson?.branding?.brandIconUrl || null,
+            primaryColor: "#2563eb",
+          });
         }
       } catch {
-        // não quebra o portal do professor
+        // Não quebra o portal do professor se a identidade falhar.
       } finally {
         if (alive) setLoadingBranding(false);
       }
     }
 
-    loadBranding();
+    loadIdentity();
 
     return () => {
       alive = false;
     };
   }, [pathname]);
 
-  const schoolLabel = branding?.name || (branding?.schoolId ? `Escola ${branding.schoolId}` : "Portal do Professor");
-  const logoUrl = branding?.logoUrl || null;
+  const schoolLabel =
+    branding?.name ||
+    me?.branding?.brandName ||
+    (branding?.schoolId ? `Escola ${branding.schoolId}` : "Portal do Professor");
 
-  const primary = useMemo(() => normalizeHexColor(branding?.primaryColor), [branding?.primaryColor]);
+  const logoUrl =
+    branding?.logoUrl ||
+    me?.branding?.brandLogoUrl ||
+    me?.branding?.brandIconUrl ||
+    null;
+
+  const primary = useMemo(
+    () => normalizeHexColor(branding?.primaryColor),
+    [branding?.primaryColor]
+  );
+
   const brandRgb = useMemo(() => hexToRgbTriplet(primary), [primary]);
+
+  const teacherProfile: TeacherProfile = useMemo(() => {
+    const email = me?.user?.email || "";
+    const name = nameFromEmail(email);
+
+    return {
+      name,
+      email: email || "Professor",
+      initials: getInitials(name, "PR"),
+    };
+  }, [me?.user?.email]);
 
   async function logout() {
     await supabase.auth.signOut();
@@ -153,7 +266,9 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
           className="absolute -left-32 -top-32 h-96 w-96 rounded-full opacity-20 blur-3xl"
           style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
         />
+
         <div className="absolute right-0 top-40 h-[420px] w-[420px] rounded-full bg-slate-300/30 blur-3xl" />
+
         <div className="absolute bottom-0 left-1/3 h-96 w-96 rounded-full bg-white blur-3xl" />
       </div>
 
@@ -171,12 +286,12 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                   <img
                     src={logoUrl}
                     alt={schoolLabel}
-                    className="h-16 w-16 rounded-3xl border border-slate-200 bg-white object-contain p-2"
+                    className="h-16 w-16 shrink-0 rounded-3xl border border-slate-200 bg-white object-contain p-2"
                     draggable={false}
                   />
                 ) : (
                   <div
-                    className="flex h-16 w-16 items-center justify-center rounded-3xl text-base font-bold text-white shadow-sm"
+                    className="flex h-16 w-16 shrink-0 items-center justify-center rounded-3xl text-base font-bold text-white shadow-sm"
                     style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
                   >
                     {getInitials(schoolLabel)}
@@ -187,14 +302,43 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                   <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                     Portal docente
                   </div>
+
                   <div className="mt-1 truncate text-base font-semibold text-slate-900">
                     {schoolLabel}
                   </div>
+
                   <div className="mt-1 truncate text-xs text-slate-500">
                     Área do Professor
                   </div>
                 </div>
               </button>
+            </div>
+
+            <div className="px-5 pb-4">
+              <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-sm"
+                    style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
+                  >
+                    {teacherProfile.initials}
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-slate-900">
+                      {teacherProfile.name}
+                    </div>
+
+                    <div className="mt-0.5 truncate text-xs text-slate-500">
+                      {teacherProfile.email}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs font-semibold text-slate-500 shadow-sm">
+                  Perfil: Professor
+                </div>
+              </div>
             </div>
 
             <div className="flex-1 px-4 pb-4">
@@ -234,6 +378,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                           <span className="block truncate text-sm font-semibold">
                             {item.label}
                           </span>
+
                           <span
                             className={[
                               "mt-0.5 block truncate text-xs",
@@ -254,9 +399,11 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                   Ambiente
                 </div>
 
-                <div className="mt-3 text-lg font-semibold">Rotina docente ativa</div>
+                <div className="mt-3 break-words text-lg font-semibold">
+                  Rotina docente ativa
+                </div>
 
-                <p className="mt-2 text-sm leading-6 text-slate-300">
+                <p className="mt-2 break-words text-sm leading-6 text-slate-300">
                   Acesse chamadas, diário pedagógico e comunicados em um painel centralizado.
                 </p>
 
@@ -271,7 +418,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
             </div>
 
             <div className="border-t border-slate-200 p-5">
-              <div className="text-xs leading-5 text-slate-500">
+              <div className="break-words text-xs leading-5 text-slate-500">
                 {loadingBranding ? "Carregando identidade..." : "Sistema escolar multi-tenant"}
               </div>
             </div>
@@ -286,31 +433,36 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                 <img
                   src={logoUrl}
                   alt={schoolLabel}
-                  className="h-12 w-12 rounded-2xl border border-slate-200 bg-white object-contain p-1.5"
+                  className="h-12 w-12 shrink-0 rounded-2xl border border-slate-200 bg-white object-contain p-1.5"
                   draggable={false}
                 />
               ) : (
                 <div
-                  className="flex h-12 w-12 items-center justify-center rounded-2xl text-xs font-bold text-white"
+                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-xs font-bold text-white"
                   style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
                 >
                   {getInitials(schoolLabel)}
                 </div>
               )}
 
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
                   Portal do Professor
                 </div>
+
                 <div className="truncate text-sm font-semibold text-slate-900">
                   {schoolLabel}
+                </div>
+
+                <div className="truncate text-xs text-slate-500">
+                  {teacherProfile.name}
                 </div>
               </div>
 
               <button
                 type="button"
                 onClick={logout}
-                className="ml-auto rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm"
+                className="shrink-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm"
               >
                 Sair
               </button>
@@ -340,14 +492,16 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                     type="button"
                     onClick={() => router.push(item.href)}
                     className={[
-                      "flex flex-col items-center justify-center rounded-2xl px-2 py-2 text-xs transition",
+                      "flex min-w-0 flex-col items-center justify-center rounded-2xl px-2 py-2 text-xs transition",
                       active
                         ? "bg-slate-950 text-white"
                         : "text-slate-500 hover:bg-slate-100",
                     ].join(" ")}
                   >
                     <span className="text-lg">{item.icon}</span>
-                    <span className="mt-1 font-semibold">{item.label}</span>
+                    <span className="mt-1 max-w-full truncate font-semibold">
+                      {item.label}
+                    </span>
                   </button>
                 );
               })}
