@@ -32,9 +32,14 @@ type MePayload = {
 };
 
 type TeacherProfile = {
+  userId?: string;
+  schoolId?: string;
+  role?: string;
   name: string;
   email: string;
+  phone?: string;
   initials: string;
+  photoUrl: string | null;
 };
 
 type NavItem = {
@@ -62,6 +67,12 @@ const navItems: NavItem[] = [
     href: "/teacher/messages",
     icon: "📩",
     description: "Avisos oficiais da escola",
+  },
+  {
+    label: "Meus dados",
+    href: "/teacher/profile",
+    icon: "🪪",
+    description: "Foto e informações pessoais",
   },
 ];
 
@@ -113,6 +124,14 @@ function getInitials(name?: string | null, fallback = "PE") {
   return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase();
 }
 
+function titleCaseWord(value: string) {
+  const safe = cleanText(value);
+
+  if (!safe) return "";
+
+  return safe.charAt(0).toUpperCase() + safe.slice(1).toLowerCase();
+}
+
 function nameFromEmail(email?: string | null) {
   const safe = cleanText(email);
 
@@ -126,10 +145,7 @@ function nameFromEmail(email?: string | null) {
 
   if (parts.length === 0) return "Professor";
 
-  return parts
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
+  return parts.slice(0, 2).map(titleCaseWord).join(" ");
 }
 
 function isActive(pathname: string, href: string) {
@@ -149,12 +165,44 @@ async function safeJson(res: Response) {
   }
 }
 
+function TeacherProfileAvatar({
+  profile,
+  brandRgb,
+}: {
+  profile: TeacherProfile;
+  brandRgb: string;
+}) {
+  if (profile.photoUrl) {
+    return (
+      <div className="h-12 w-12 shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={profile.photoUrl}
+          alt={`Foto de ${profile.name}`}
+          className="h-full w-full object-cover"
+          draggable={false}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-sm"
+      style={{ backgroundColor: `rgb(${brandRgb})` }}
+    >
+      {profile.initials}
+    </div>
+  );
+}
+
 export default function TeacherLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
   const [branding, setBranding] = useState<Branding | null>(null);
   const [me, setMe] = useState<MePayload | null>(null);
+  const [profile, setProfile] = useState<TeacherProfile | null>(null);
   const [loadingBranding, setLoadingBranding] = useState(true);
 
   useEffect(() => {
@@ -169,7 +217,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
 
         if (!token) return;
 
-        const [meRes, brandingRes] = await Promise.all([
+        const [meRes, brandingRes, profileRes] = await Promise.all([
           fetch("/api/me", {
             headers: { Authorization: `Bearer ${token}` },
             cache: "no-store",
@@ -178,15 +226,45 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
             headers: { Authorization: `Bearer ${token}` },
             cache: "no-store",
           }),
+          fetch("/api/teacher/profile", {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          }),
         ]);
 
         const meJson = (await safeJson(meRes)) as MePayload | any;
         const brandingJson = (await safeJson(brandingRes)) as Branding | any;
+        const profileJson = await safeJson(profileRes);
 
         if (!alive) return;
 
         if (meRes.ok && meJson?.ok) {
           setMe(meJson as MePayload);
+        }
+
+        if (profileRes.ok && profileJson?.ok && profileJson?.profile) {
+          const p = profileJson.profile;
+
+          setProfile({
+            userId: p.userId,
+            schoolId: p.schoolId,
+            role: p.role,
+            name: p.fullName || "Professor",
+            email: p.email || meJson?.user?.email || "Professor",
+            phone: p.phone || "",
+            initials: p.initials || getInitials(p.fullName || "Professor", "PR"),
+            photoUrl: p.photoUrl || null,
+          });
+        } else if (meJson?.ok) {
+          const email = meJson?.user?.email || "";
+          const fallbackName = nameFromEmail(email);
+
+          setProfile({
+            name: fallbackName,
+            email: email || "Professor",
+            initials: getInitials(fallbackName, "PR"),
+            photoUrl: null,
+          });
         }
 
         if (brandingRes.ok && brandingJson?.ok) {
@@ -236,6 +314,8 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
   const brandRgb = useMemo(() => hexToRgbTriplet(primary), [primary]);
 
   const teacherProfile: TeacherProfile = useMemo(() => {
+    if (profile) return profile;
+
     const email = me?.user?.email || "";
     const name = nameFromEmail(email);
 
@@ -243,8 +323,9 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
       name,
       email: email || "Professor",
       initials: getInitials(name, "PR"),
+      photoUrl: null,
     };
-  }, [me?.user?.email]);
+  }, [me?.user?.email, profile]);
 
   async function logout() {
     await supabase.auth.signOut();
@@ -315,14 +396,13 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
             </div>
 
             <div className="px-5 pb-4">
-              <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
+              <button
+                type="button"
+                onClick={() => router.push("/teacher/profile")}
+                className="w-full rounded-[28px] border border-slate-200 bg-slate-50 p-4 text-left transition hover:bg-white hover:shadow-sm"
+              >
                 <div className="flex items-center gap-3">
-                  <div
-                    className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-sm"
-                    style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
-                  >
-                    {teacherProfile.initials}
-                  </div>
+                  <TeacherProfileAvatar profile={teacherProfile} brandRgb={brandRgb} />
 
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-slate-900">
@@ -338,7 +418,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                 <div className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs font-semibold text-slate-500 shadow-sm">
                   Perfil: Professor
                 </div>
-              </div>
+              </button>
             </div>
 
             <div className="flex-1 px-4 pb-4">
@@ -459,6 +539,30 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                 </div>
               </div>
 
+              {teacherProfile.photoUrl ? (
+                <button
+                  type="button"
+                  onClick={() => router.push("/teacher/profile")}
+                  className="h-10 w-10 shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={teacherProfile.photoUrl}
+                    alt={teacherProfile.name}
+                    className="h-full w-full object-cover"
+                    draggable={false}
+                  />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => router.push("/teacher/profile")}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-xs font-bold text-white"
+                >
+                  {teacherProfile.initials}
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={logout}
@@ -477,12 +581,12 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
             />
           </header>
 
-          <main className="flex-1 px-4 pb-24 pt-5 md:px-6 xl:px-8 xl:pb-8">
+          <main className="flex-1 px-4 pb-28 pt-5 md:px-6 xl:px-8 xl:pb-8">
             <div className="mx-auto w-full max-w-[1500px]">{children}</div>
           </main>
 
           <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 py-2 backdrop-blur-xl xl:hidden">
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               {navItems.map((item) => {
                 const active = isActive(pathname, item.href);
 

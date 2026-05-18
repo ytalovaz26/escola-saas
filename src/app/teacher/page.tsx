@@ -51,6 +51,18 @@ async function fetchMeWithToken(accessToken: string): Promise<MeResp> {
   }
 }
 
+async function safeJson(res: Response) {
+  const text = await res.text();
+
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: false, error: text || "Resposta inválida do servidor." };
+  }
+}
+
 function cleanText(value: unknown) {
   return String(value || "").trim();
 }
@@ -143,6 +155,20 @@ function getTeacherIdentityFromSessionUser(user: any, fallbackEmail?: string | n
     firstName: firstNameFromFullName(name),
     email,
     initials: getInitials(name),
+    photoUrl,
+  };
+}
+
+function identityFromProfile(profile: any, fallbackEmail?: string | null): TeacherIdentity {
+  const email = cleanText(profile?.email) || cleanText(fallbackEmail) || "Professor";
+  const name = cleanText(profile?.fullName) || cleanText(profile?.name) || nameFromEmailOrId(email);
+  const photoUrl = cleanText(profile?.photoUrl) || null;
+
+  return {
+    name,
+    firstName: firstNameFromFullName(name),
+    email,
+    initials: cleanText(profile?.initials) || getInitials(name),
     photoUrl,
   };
 }
@@ -471,6 +497,26 @@ export default function TeacherHomePage() {
     }
   }
 
+  async function loadTeacherProfile(accessToken: string, fallbackIdentity: TeacherIdentity) {
+    try {
+      const res = await fetch("/api/teacher/profile", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+
+      const json = await safeJson(res);
+
+      if (res.ok && json?.ok && json?.profile) {
+        setTeacherIdentity(identityFromProfile(json.profile, fallbackIdentity.email));
+        return;
+      }
+
+      setTeacherIdentity(fallbackIdentity);
+    } catch {
+      setTeacherIdentity(fallbackIdentity);
+    }
+  }
+
   useEffect(() => {
     let alive = true;
 
@@ -507,14 +553,18 @@ export default function TeacherHomePage() {
         }
 
         const sessionUser = sessionData.session?.user || null;
-
-        setTeacherIdentity(
-          getTeacherIdentityFromSessionUser(sessionUser, (data as MeOk).user.email)
+        const fallbackIdentity = getTeacherIdentityFromSessionUser(
+          sessionUser,
+          (data as MeOk).user.email
         );
 
+        setTeacherIdentity(fallbackIdentity);
         setMe(data as MeOk);
 
-        await loadMessagesSummary(accessToken);
+        await Promise.all([
+          loadTeacherProfile(accessToken, fallbackIdentity),
+          loadMessagesSummary(accessToken),
+        ]);
       } catch (e: any) {
         if (!alive) return;
 
@@ -648,6 +698,14 @@ export default function TeacherHomePage() {
               >
                 Ver comunicados
               </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/teacher/profile")}
+                className="rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Meus dados
+              </button>
             </div>
           </div>
 
@@ -728,10 +786,10 @@ export default function TeacherHomePage() {
         />
 
         <StatCard
-          label="Diário"
-          value="Pedagógico"
-          help="Registro de conteúdos e observações do dia."
-          icon="📘"
+          label="Perfil"
+          value="Meus dados"
+          help="Atualize sua foto, nome e telefone no portal docente."
+          icon="🪪"
           tone="amber"
         />
       </section>
@@ -753,7 +811,7 @@ export default function TeacherHomePage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
           <FeatureCard
             href="/teacher/classes"
             title="Minhas turmas"
@@ -775,6 +833,13 @@ export default function TeacherHomePage() {
             description="Leia avisos oficiais enviados pela direção, coordenação ou secretaria."
             icon="📩"
             badge={messagesSummary.unread > 0 ? `${messagesSummary.unread} novo(s)` : undefined}
+          />
+
+          <FeatureCard
+            href="/teacher/profile"
+            title="Meus dados"
+            description="Atualize sua foto de perfil, nome e telefone para identificação no portal."
+            icon="🪪"
           />
         </div>
       </section>
@@ -829,6 +894,13 @@ export default function TeacherHomePage() {
               description="Veja avisos oficiais e confirme leitura automaticamente."
               href="/teacher/messages"
             />
+
+            <RoutineStep
+              number="05"
+              title="Atualizar meus dados"
+              description="Mantenha sua foto e informações pessoais atualizadas."
+              href="/teacher/profile"
+            />
           </div>
         </div>
 
@@ -871,10 +943,10 @@ export default function TeacherHomePage() {
             </div>
 
             <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-semibold text-slate-900">Multi-tenant</div>
+              <div className="text-sm font-semibold text-slate-900">Perfil docente</div>
 
               <p className="mt-2 break-words text-xs leading-5 text-slate-500">
-                Cada professor opera dentro da escola vinculada.
+                Foto, nome e telefone podem ser atualizados pelo professor.
               </p>
             </div>
 
