@@ -332,12 +332,12 @@ function GoogleIcon() {
 
 function BrandLogo() {
   return (
-    <div className="inline-flex rounded-[22px] bg-white px-[18px] py-[12px] shadow-[0_22px_48px_rgba(0,0,0,0.24)] ring-1 ring-white/70">
+    <div className="inline-flex rounded-[22px] bg-white px-[8px] py-[5px] shadow-[0_22px_48px_rgba(0,0,0,0.24)] ring-1 ring-white/70">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={OFFICIAL_LOGO_SRC}
         alt="Minha Escola - Gestão Escolar Inteligente"
-        className="h-[108px] w-[345px] object-contain"
+        className="h-[126px] w-[430px] object-contain"
         draggable={false}
       />
     </div>
@@ -346,12 +346,12 @@ function BrandLogo() {
 
 function MobileBrandLogo() {
   return (
-    <div className="inline-flex rounded-[24px] bg-white px-5 py-4 shadow-[0_20px_45px_rgba(15,23,42,0.13)] ring-1 ring-slate-200">
+    <div className="inline-flex rounded-[22px] bg-white px-[8px] py-[5px] shadow-[0_20px_45px_rgba(15,23,42,0.13)] ring-1 ring-slate-200">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={OFFICIAL_LOGO_SRC}
         alt="Minha Escola - Gestão Escolar Inteligente"
-        className="h-[76px] w-[310px] object-contain"
+        className="h-[88px] w-[330px] object-contain"
         draggable={false}
       />
     </div>
@@ -999,6 +999,24 @@ export default function LoginPage() {
                       {loading ? "Entrando..." : "Entrar na plataforma"}
                     </button>
                   </form>
+
+                  <div className="my-5 flex items-center gap-3">
+                    <div className="h-px flex-1 bg-slate-200" />
+                    <span className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                      ou continue com
+                    </span>
+                    <div className="h-px flex-1 bg-slate-200" />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleGoogleAuth}
+                    disabled={googleLoading}
+                    className="flex h-[54px] w-full items-center justify-center gap-3 rounded-[10px] border border-slate-300 bg-white px-5 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    <GoogleIcon />
+                    {googleLoading ? "Conectando com Google..." : "Entrar com Google"}
+                  </button>
 
                   <p className="mt-[20px] text-center text-[14px] font-medium text-slate-400">
                     Não possui uma conta? Fale com o diretor da sua escola.
