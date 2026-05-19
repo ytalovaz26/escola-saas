@@ -332,12 +332,12 @@ function GoogleIcon() {
 
 function BrandLogo() {
   return (
-    <div className="inline-flex rounded-[24px] bg-white px-[26px] py-[18px] shadow-[0_24px_55px_rgba(0,0,0,0.26)] ring-1 ring-white/70">
+    <div className="inline-flex rounded-[22px] bg-white px-[18px] py-[12px] shadow-[0_22px_48px_rgba(0,0,0,0.24)] ring-1 ring-white/70">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={OFFICIAL_LOGO_SRC}
         alt="Minha Escola - Gestão Escolar Inteligente"
-        className="h-[116px] w-[395px] object-contain"
+        className="h-[108px] w-[345px] object-contain"
         draggable={false}
       />
     </div>
