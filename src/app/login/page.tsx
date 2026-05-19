@@ -229,9 +229,9 @@ function IconEnter() {
   );
 }
 
-function IconShield() {
+function IconShield({ className = "h-8 w-8" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none">
+    <svg viewBox="0 0 24 24" className={className} fill="none">
       <path
         d="M12 3.5 19 6.4v5.3c0 4.3-2.75 8.1-7 9.55-4.25-1.45-7-5.25-7-9.55V6.4l7-2.9Z"
         stroke="currentColor"
@@ -332,12 +332,12 @@ function GoogleIcon() {
 
 function BrandLogo() {
   return (
-    <div className="inline-flex rounded-[26px] bg-white px-7 py-5 shadow-[0_26px_60px_rgba(0,0,0,0.28)] ring-1 ring-white/60">
+    <div className="inline-flex rounded-[24px] bg-white px-[26px] py-[18px] shadow-[0_24px_55px_rgba(0,0,0,0.26)] ring-1 ring-white/70">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={OFFICIAL_LOGO_SRC}
         alt="Minha Escola - Gestão Escolar Inteligente"
-        className="h-[96px] w-[390px] object-contain"
+        className="h-[116px] w-[395px] object-contain"
         draggable={false}
       />
     </div>
@@ -377,7 +377,7 @@ function FeatureCard({
         : "bg-gradient-to-br from-[#ffe145] to-[#f6b900] shadow-[0_14px_28px_rgba(246,185,0,0.35)]";
 
   return (
-    <div className="min-h-[108px] rounded-[14px] border border-white/16 bg-white/[0.055] px-4 py-4 backdrop-blur-sm">
+    <div className="min-h-[108px] rounded-[13px] border border-white/16 bg-white/[0.055] px-4 py-4 backdrop-blur-sm">
       <div className="flex items-center gap-4">
         <div
           className={[
@@ -393,7 +393,7 @@ function FeatureCard({
             {title}
           </h3>
 
-          <p className="mt-2 text-[12.5px] font-medium leading-[1.45] text-white/86">
+          <p className="mt-2 text-[12.2px] font-medium leading-[1.48] text-white/86">
             {description}
           </p>
         </div>
@@ -750,15 +750,18 @@ export default function LoginPage() {
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_12%,rgba(0,89,220,0.78),transparent_34%),radial-gradient(circle_at_88%_30%,rgba(0,167,123,0.55),transparent_36%),linear-gradient(135deg,#06174a_0%,#092c6d_42%,#006956_100%)]" />
 
           <div
-            className="absolute bottom-[18%] right-[-2%] top-[9%] w-[46%] bg-contain bg-center bg-no-repeat opacity-[0.60]"
+            className="absolute bottom-[18%] right-[-1%] top-[8%] w-[47%] bg-contain bg-center bg-no-repeat opacity-[0.58]"
             style={{ backgroundImage: `url(${STUDENTS_BG_SRC})` }}
           />
 
-          <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(4,15,52,0.05)_0%,rgba(4,15,52,0.10)_45%,rgba(0,113,93,0.08)_100%)]" />
+          <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(4,15,52,0.03)_0%,rgba(4,15,52,0.10)_45%,rgba(0,113,93,0.08)_100%)]" />
 
           <div className="absolute left-[22px] top-[24px] grid grid-cols-4 gap-[16px] opacity-45">
             {Array.from({ length: 24 }).map((_, index) => (
-              <span key={index} className="h-[4px] w-[4px] rounded-full bg-white/65" />
+              <span
+                key={index}
+                className="h-[4px] w-[4px] rounded-full bg-white/65"
+              />
             ))}
           </div>
 
@@ -769,10 +772,10 @@ export default function LoginPage() {
           <div className="absolute -right-[65px] -top-[90px] h-[260px] w-[260px] rounded-full border border-white/10" />
 
           <div className="relative z-10 flex w-full items-center justify-center px-10 py-10">
-            <div className="w-full max-w-[680px]">
+            <div className="w-full max-w-[660px]">
               <BrandLogo />
 
-              <h1 className="mt-[58px] text-[43px] font-black leading-[1.13] tracking-[-0.04em] text-white xl:text-[47px] 2xl:text-[52px]">
+              <h1 className="mt-[42px] text-[43px] font-black leading-[1.12] tracking-[-0.045em] text-white xl:text-[47px] 2xl:text-[51px]">
                 Gestão escolar inteligente
                 <br />
                 para escolas{" "}
@@ -781,7 +784,7 @@ export default function LoginPage() {
                 <span className="text-[#ffd400]">conectadas.</span>
               </h1>
 
-              <p className="mt-[22px] max-w-[555px] text-[16px] font-medium leading-[1.55] text-white/92">
+              <p className="mt-[20px] max-w-[555px] text-[16px] font-medium leading-[1.55] text-white/92">
                 Centralize a gestão da sua escola com eficiência e segurança.
                 <br />
                 Direção, professores, alunos e responsáveis conectados
@@ -789,7 +792,7 @@ export default function LoginPage() {
                 em um só lugar.
               </p>
 
-              <div className="mt-[24px] grid max-w-[600px] grid-cols-2 gap-[14px]">
+              <div className="mt-[22px] grid max-w-[600px] grid-cols-2 gap-[14px]">
                 <FeatureCard
                   icon={<IconBuilding />}
                   color="green"
@@ -819,7 +822,7 @@ export default function LoginPage() {
                 />
               </div>
 
-              <div className="mt-[21px] inline-flex min-w-[450px] items-center justify-center gap-3 rounded-[11px] border border-[#21d060]/45 bg-[#0b7247]/28 px-5 py-3 text-[14px] font-semibold text-[#a9ffc5]">
+              <div className="mt-[22px] inline-flex min-w-[450px] items-center justify-center gap-3 rounded-[10px] border border-[#21d060]/45 bg-[#0b7247]/28 px-5 py-3 text-[14px] font-semibold text-[#a9ffc5]">
                 <span className="text-[#27df68]">
                   <IconLock />
                 </span>
@@ -1141,7 +1144,9 @@ export default function LoginPage() {
                     className="flex h-[54px] w-full items-center justify-center gap-3 rounded-[10px] border border-slate-300 bg-white px-5 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
                   >
                     <GoogleIcon />
-                    {googleLoading ? "Conectando com Google..." : "Criar diretor com Google"}
+                    {googleLoading
+                      ? "Conectando com Google..."
+                      : "Criar diretor com Google"}
                   </button>
                 </>
               )}
@@ -1149,7 +1154,7 @@ export default function LoginPage() {
 
             <div className="mt-[54px] flex items-center justify-center gap-3 text-center text-[14px] font-medium text-slate-500">
               <span className="text-slate-500">
-                <IconShield />
+                <IconShield className="h-6 w-6" />
               </span>
               Tecnologia segura, educação conectada e futuro inteligente.
             </div>
