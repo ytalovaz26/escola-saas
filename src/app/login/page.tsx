@@ -79,7 +79,9 @@ function clearDirectorGoogleDraft() {
 function friendlyAuthError(message?: string) {
   const raw = String(message || "").trim();
 
-  if (!raw) return "Não foi possível entrar. Verifique e-mail e senha.";
+  if (!raw) {
+    return "Não foi possível entrar. Verifique e-mail e senha.";
+  }
 
   const lower = raw.toLowerCase();
 
@@ -102,51 +104,173 @@ function friendlyAuthError(message?: string) {
   return raw;
 }
 
-function OfficialLogo({
-  size = "large",
-  mode = "dark",
-}: {
-  size?: "small" | "medium" | "large" | "hero";
-  mode?: "dark" | "light";
-}) {
-  const sizeClass =
-    size === "hero"
-      ? "h-32 w-[420px] max-w-full md:h-40 md:w-[520px]"
-      : size === "large"
-        ? "h-24 w-[330px] max-w-full"
-        : size === "medium"
-          ? "h-20 w-[280px] max-w-full"
-          : "h-14 w-[210px] max-w-full";
-
+function IconBuilding() {
   return (
-    <div
-      className={[
-        "relative inline-flex items-center justify-center overflow-hidden rounded-[32px] border p-4 shadow-[0_24px_70px_rgba(2,6,23,0.22)] backdrop-blur-xl",
-        mode === "dark"
-          ? "border-white/15 bg-white/[0.08]"
-          : "border-slate-200 bg-white/90",
-      ].join(" ")}
-    >
-      <div
-        className={[
-          "absolute inset-0",
-          mode === "dark"
-            ? "bg-[radial-gradient(circle_at_20%_15%,rgba(59,130,246,0.40),transparent_38%),radial-gradient(circle_at_90%_70%,rgba(34,197,94,0.22),transparent_35%)]"
-            : "bg-[radial-gradient(circle_at_20%_15%,rgba(59,130,246,0.12),transparent_38%),radial-gradient(circle_at_90%_70%,rgba(34,197,94,0.10),transparent_35%)]",
-        ].join(" ")}
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none">
+      <path
+        d="M4 20V9.8L12 4l8 5.8V20"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
+      <path
+        d="M9 20v-6h6v6M7 12h2M15 12h2"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={OFFICIAL_LOGO_SRC}
-        alt="Minha Escola - Gestão Escolar Inteligente"
-        className={[
-          "relative object-contain drop-shadow-[0_12px_30px_rgba(0,0,0,0.35)]",
-          sizeClass,
-        ].join(" ")}
-        draggable={false}
+function IconShield() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none">
+      <path
+        d="M12 3l7 3v5.2c0 4.4-2.8 8.3-7 9.8-4.2-1.5-7-5.4-7-9.8V6l7-3Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
       />
-    </div>
+      <path
+        d="M9.5 12l1.7 1.7L15 10"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconChat() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none">
+      <path
+        d="M5 5h14v10H8l-3 3V5Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconChart() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none">
+      <path
+        d="M4 19h16M7 16v-5M12 16V8M17 16v-8"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M7 10l5-3 5 1"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconMail() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+      <path
+        d="M4 7h16v10H4V7Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M4 8l8 5 8-5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconLock() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+      <path
+        d="M7 11h10v8H7v-8Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 11V8a3 3 0 0 1 6 0v3"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function IconEye() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+      <path
+        d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+}
+
+function IconUser() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+      <path
+        d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 20a8 8 0 0 1 16 0"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function IconUserPlus() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+      <path
+        d="M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM3 20a7 7 0 0 1 12.5-4.3M19 14v6M16 17h6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function IconLogin() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none">
+      <path
+        d="M10 17l5-5-5-5M15 12H3M14 4h5a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -178,24 +302,71 @@ function GoogleIcon() {
   );
 }
 
+function BrandLogo() {
+  return (
+    <div className="inline-flex rounded-[30px] border border-white/35 bg-white px-6 py-5 shadow-[0_26px_70px_rgba(2,6,23,0.28)]">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={OFFICIAL_LOGO_SRC}
+        alt="Minha Escola - Gestão Escolar Inteligente"
+        className="h-[86px] w-[360px] object-contain md:h-[96px] md:w-[410px]"
+        draggable={false}
+      />
+    </div>
+  );
+}
+
+function MobileBrandLogo() {
+  return (
+    <div className="inline-flex rounded-[26px] border border-slate-200 bg-white px-5 py-4 shadow-[0_20px_50px_rgba(15,23,42,0.12)]">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={OFFICIAL_LOGO_SRC}
+        alt="Minha Escola - Gestão Escolar Inteligente"
+        className="h-[70px] w-[290px] object-contain"
+        draggable={false}
+      />
+    </div>
+  );
+}
+
 function FeatureCard({
   title,
   description,
   icon,
+  color,
 }: {
   title: string;
   description: string;
-  icon: string;
+  icon: React.ReactNode;
+  color: "green" | "blue" | "yellow";
 }) {
+  const colorClass =
+    color === "green"
+      ? "from-emerald-400 to-green-600 text-white shadow-emerald-950/25"
+      : color === "blue"
+        ? "from-blue-400 to-blue-700 text-white shadow-blue-950/25"
+        : "from-yellow-300 to-yellow-500 text-white shadow-yellow-950/20";
+
   return (
-    <div className="rounded-[28px] border border-white/10 bg-white/[0.08] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-xl">
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/12 text-xl">
-        {icon}
+    <div className="rounded-[22px] border border-white/14 bg-white/[0.07] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-xl md:p-5">
+      <div className="flex items-start gap-4">
+        <div
+          className={[
+            "flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br shadow-xl",
+            colorClass,
+          ].join(" ")}
+        >
+          {icon}
+        </div>
+
+        <div className="min-w-0">
+          <div className="text-sm font-extrabold text-white">{title}</div>
+          <div className="mt-1.5 text-xs leading-5 text-blue-50/82 md:text-[13px]">
+            {description}
+          </div>
+        </div>
       </div>
-
-      <div className="mt-4 text-sm font-bold text-white">{title}</div>
-
-      <div className="mt-2 text-sm leading-6 text-slate-300">{description}</div>
     </div>
   );
 }
@@ -217,6 +388,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [rememberAccess, setRememberAccess] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -225,11 +398,15 @@ export default function LoginPage() {
   async function redirectByMe() {
     const { data: sessionData, error: sessErr } = await supabase.auth.getSession();
 
-    if (sessErr) throw new Error(sessErr.message);
+    if (sessErr) {
+      throw new Error(sessErr.message);
+    }
 
     const token = sessionData.session?.access_token;
 
-    if (!token) throw new Error("Sessão não encontrada após login.");
+    if (!token) {
+      throw new Error("Sessão não encontrada após login.");
+    }
 
     const me = await callMe(token);
 
@@ -249,6 +426,7 @@ export default function LoginPage() {
 
     const hash = window.location.hash || "";
     const search = new URLSearchParams(window.location.search);
+
     const hashParams = parseHashParams(hash);
 
     const accessToken = hashParams.get("access_token");
@@ -323,6 +501,14 @@ export default function LoginPage() {
 
       const cleanEmail = email.trim().toLowerCase();
 
+      if (typeof window !== "undefined") {
+        if (rememberAccess) {
+          window.localStorage.setItem("login_email_hint", cleanEmail);
+        } else {
+          window.localStorage.removeItem("login_email_hint");
+        }
+      }
+
       const { data, error: signInErr } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password,
@@ -385,7 +571,9 @@ export default function LoginPage() {
 
       const res = await fetch("/api/auth/register-director", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           fullName: directorName.trim(),
           schoolName: schoolName.trim(),
@@ -479,6 +667,14 @@ export default function LoginPage() {
   useEffect(() => {
     (async () => {
       try {
+        if (typeof window !== "undefined") {
+          const savedEmail = window.localStorage.getItem("login_email_hint");
+          if (savedEmail) {
+            setEmail(savedEmail);
+            setRememberAccess(true);
+          }
+        }
+
         const handled = await handleRecoveryRedirect();
         if (handled) return;
 
@@ -499,11 +695,13 @@ export default function LoginPage() {
 
   if (checkingSession) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(135deg,#eff6ff,#f8fafc,#ecfdf5)] p-6">
-        <div className="w-full max-w-md rounded-[36px] border border-slate-200 bg-white/95 p-8 text-center shadow-[0_24px_90px_rgba(15,23,42,0.12)] backdrop-blur">
-          <OfficialLogo size="medium" mode="light" />
+      <div className="flex min-h-screen items-center justify-center bg-[#f4f8ff] p-6">
+        <div className="w-full max-w-md rounded-[34px] border border-slate-200 bg-white p-8 text-center shadow-[0_28px_90px_rgba(15,23,42,0.12)]">
+          <MobileBrandLogo />
 
-          <h1 className="mt-6 text-2xl font-semibold text-slate-900">Carregando...</h1>
+          <h1 className="mt-7 text-2xl font-extrabold text-slate-950">
+            Carregando...
+          </h1>
 
           <p className="mt-2 text-sm leading-6 text-slate-600">
             Validando sessão ou link de recuperação.
@@ -514,92 +712,90 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f7fb]">
-      <div className="grid min-h-screen lg:grid-cols-[1.06fr_0.94fr]">
-        <section className="relative hidden overflow-hidden lg:flex">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_18%,rgba(37,99,235,0.52),transparent_26%),radial-gradient(circle_at_84%_16%,rgba(22,163,74,0.28),transparent_25%),radial-gradient(circle_at_72%_86%,rgba(250,204,21,0.13),transparent_25%),linear-gradient(135deg,#020617_0%,#061434_46%,#0b251f_100%)]" />
-          <div className="absolute inset-0 opacity-[0.10] [background-image:linear-gradient(rgba(255,255,255,0.72)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.72)_1px,transparent_1px)] [background-size:36px_36px]" />
+    <main className="min-h-screen overflow-hidden bg-[#f4f8ff]">
+      <div className="grid min-h-screen lg:grid-cols-[1.02fr_0.98fr]">
+        <section className="relative hidden min-h-screen overflow-hidden bg-[#071b47] lg:flex">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_10%,rgba(34,99,235,0.70),transparent_28%),radial-gradient(circle_at_83%_18%,rgba(22,163,74,0.32),transparent_30%),linear-gradient(135deg,#071b47_0%,#07225a_45%,#053f38_100%)]" />
 
-          <div className="absolute -left-32 top-16 h-96 w-96 rounded-full bg-blue-500/24 blur-3xl" />
-          <div className="absolute bottom-0 right-0 h-[520px] w-[520px] rounded-full bg-emerald-500/12 blur-3xl" />
+          <div className="absolute inset-0 opacity-[0.10] [background-image:linear-gradient(rgba(255,255,255,0.85)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.85)_1px,transparent_1px)] [background-size:38px_38px]" />
 
-          <div className="relative z-10 flex w-full flex-col justify-between px-12 py-10 text-white 2xl:px-16">
-            <div>
-              <OfficialLogo size="hero" mode="dark" />
+          <div className="absolute -bottom-24 -left-24 h-96 w-96 rounded-full border border-emerald-300/20" />
+          <div className="absolute -bottom-36 -left-36 h-[520px] w-[520px] rounded-full border border-emerald-300/14" />
+          <div className="absolute -right-28 -top-28 h-80 w-80 rounded-full border border-white/10" />
+          <div className="absolute left-8 top-8 grid grid-cols-6 gap-4 opacity-25">
+            {Array.from({ length: 30 }).map((_, index) => (
+              <span key={index} className="h-1 w-1 rounded-full bg-white" />
+            ))}
+          </div>
 
-              <div className="mt-10 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-5 py-2.5 text-xs font-bold uppercase tracking-[0.20em] text-slate-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.10)] backdrop-blur">
-                <span className="h-2 w-2 rounded-full bg-emerald-300 shadow-[0_0_18px_rgba(110,231,183,0.85)]" />
-                Plataforma escolar inteligente
-              </div>
+          <div className="absolute right-0 top-0 h-full w-[46%] bg-[radial-gradient(circle_at_70%_25%,rgba(255,255,255,0.10),transparent_18%),linear-gradient(90deg,transparent,rgba(5,150,105,0.20))]" />
 
-              <h1 className="mt-9 max-w-3xl text-5xl font-black leading-[1.06] tracking-[-0.04em] 2xl:text-6xl">
-                Gestão escolar moderna para escolas que querem crescer.
+          <div className="relative z-10 flex w-full flex-col justify-center px-12 py-10 2xl:px-20">
+            <div className="max-w-[760px]">
+              <BrandLogo />
+
+              <h1 className="mt-14 text-[52px] font-black leading-[1.08] tracking-[-0.045em] text-white 2xl:text-[64px]">
+                Gestão escolar inteligente
+                <br />
+                para escolas{" "}
+                <span className="text-[#35c85a]">organizadas</span>
+                <br />e <span className="text-[#ffd400]">conectadas.</span>
               </h1>
 
-              <p className="mt-6 max-w-2xl text-base leading-8 text-slate-200 2xl:text-lg">
-                Organize direção, professores, alunos, responsáveis, comunicados,
-                presença e diário pedagógico em uma plataforma visual, segura e
-                profissional.
+              <p className="mt-6 max-w-[620px] text-[17px] leading-8 text-blue-50/90">
+                Centralize a gestão da sua escola com eficiência e segurança.
+                Direção, professores, alunos e responsáveis conectados em um só
+                lugar.
               </p>
 
-              <div className="mt-9 grid max-w-2xl grid-cols-2 gap-4">
+              <div className="mt-7 grid max-w-[690px] gap-4 md:grid-cols-2">
                 <FeatureCard
-                  icon="🏫"
-                  title="Operação centralizada"
-                  description="Rotina escolar, equipe, alunos e responsáveis em um ambiente único."
+                  icon={<IconBuilding />}
+                  color="green"
+                  title="Organização centralizada"
+                  description="Tenha todas as informações da sua escola em um só lugar, com mais controle e eficiência."
                 />
 
                 <FeatureCard
-                  icon="🔐"
-                  title="Controle seguro"
-                  description="Perfis de acesso para direção, professores, responsáveis e equipe."
+                  icon={<IconShield />}
+                  color="blue"
+                  title="Ambiente seguro"
+                  description="Seus dados protegidos com tecnologia de ponta e acesso seguro para cada usuário."
                 />
 
                 <FeatureCard
-                  icon="📣"
-                  title="Comunicados oficiais"
-                  description="Envios com acompanhamento de entrega e leitura por destinatário."
+                  icon={<IconChat />}
+                  color="yellow"
+                  title="Comunicação eficiente"
+                  description="Facilite o diálogo entre escola, professores, alunos e famílias de forma rápida."
                 />
 
                 <FeatureCard
-                  icon="📲"
-                  title="Portal conectado"
-                  description="Acesso simples para professores e famílias acompanharem a escola."
+                  icon={<IconChart />}
+                  color="green"
+                  title="Gestão pedagógica"
+                  description="Acompanhe o desempenho acadêmico e tome decisões com base em dados reais."
                 />
               </div>
-            </div>
 
-            <div className="mt-10">
-              <div className="max-w-2xl rounded-[30px] border border-white/10 bg-white/[0.06] p-5 backdrop-blur-xl">
-                <p className="text-sm leading-6 text-slate-100">
-                  “Minha Escola transforma a gestão escolar em uma experiência mais
-                  clara, conectada e profissional.”
-                </p>
-              </div>
-
-              <div className="mt-5 flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
-                <span>Seguro</span>
-                <span>•</span>
-                <span>Multi-tenant</span>
-                <span>•</span>
-                <span>Premium UI</span>
-                <span>•</span>
-                <span>Gestão Inteligente</span>
+              <div className="mt-7 inline-flex items-center gap-2 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-100">
+                <IconLock />
+                Plataforma segura, organizada e pronta para crescer.
               </div>
             </div>
           </div>
         </section>
 
-        <section className="relative flex items-center justify-center overflow-hidden p-5 md:p-10">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(37,99,235,0.10),transparent_32%),radial-gradient(circle_at_bottom,rgba(34,197,94,0.08),transparent_32%),linear-gradient(180deg,#f8fafc,#eef4ff,#f8fafc)]" />
+        <section className="relative flex min-h-screen items-center justify-center overflow-hidden p-5 md:p-8">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(37,99,235,0.10),transparent_34%),linear-gradient(180deg,#ffffff_0%,#f4f8ff_52%,#edf5ff_100%)]" />
 
           <div className="relative w-full max-w-[560px]">
             <div className="mb-6 flex justify-center lg:hidden">
-              <OfficialLogo size="medium" mode="light" />
+              <MobileBrandLogo />
             </div>
 
-            <div className="rounded-[42px] border border-white/80 bg-white/92 p-5 shadow-[0_30px_100px_rgba(15,23,42,0.14)] ring-1 ring-slate-200/70 backdrop-blur-2xl md:p-8">
-              <div className="mb-7 flex rounded-2xl bg-slate-100 p-1.5">
+            <div className="rounded-[40px] border border-white bg-white/92 p-6 shadow-[0_28px_90px_rgba(15,23,42,0.13)] ring-1 ring-blue-950/5 backdrop-blur-xl md:p-8">
+              <div className="mb-8 grid grid-cols-2 overflow-hidden rounded-[18px] border border-slate-200 bg-slate-50 shadow-sm">
                 <button
                   type="button"
                   onClick={() => {
@@ -607,13 +803,18 @@ export default function LoginPage() {
                     setError(null);
                     setMessage(null);
                   }}
-                  className={`flex-1 rounded-xl px-4 py-3 text-sm font-bold transition ${
+                  className={[
+                    "relative flex items-center justify-center gap-2 px-4 py-5 text-sm font-extrabold transition",
                     mode === "login"
-                      ? "bg-white text-slate-950 shadow-sm"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
+                      ? "bg-white text-blue-700 shadow-sm"
+                      : "text-slate-500 hover:bg-white/70 hover:text-slate-800",
+                  ].join(" ")}
                 >
+                  <IconUser />
                   Entrar
+                  {mode === "login" && (
+                    <span className="absolute bottom-0 left-0 h-1 w-full bg-blue-600" />
+                  )}
                 </button>
 
                 <button
@@ -623,133 +824,179 @@ export default function LoginPage() {
                     setError(null);
                     setMessage(null);
                   }}
-                  className={`flex-1 rounded-xl px-4 py-3 text-sm font-bold transition ${
+                  className={[
+                    "relative flex items-center justify-center gap-2 px-4 py-5 text-sm font-extrabold transition",
                     mode === "signup"
-                      ? "bg-white text-slate-950 shadow-sm"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
+                      ? "bg-white text-blue-700 shadow-sm"
+                      : "text-slate-500 hover:bg-white/70 hover:text-slate-800",
+                  ].join(" ")}
                 >
+                  <IconUserPlus />
                   Criar diretor
+                  {mode === "signup" && (
+                    <span className="absolute bottom-0 left-0 h-1 w-full bg-blue-600" />
+                  )}
                 </button>
               </div>
 
               {mode === "login" ? (
                 <>
-                  <div>
-                    <div className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-blue-700">
-                      Acesso seguro
+                  <div className="mb-7 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600">
+                        <IconShield />
+                      </div>
+
+                      <div>
+                        <div className="font-extrabold text-slate-900">
+                          Acesso seguro
+                        </div>
+                        <div className="text-sm text-slate-500">
+                          Seus dados sempre protegidos
+                        </div>
+                      </div>
                     </div>
-
-                    <h2 className="mt-4 text-3xl font-black tracking-[-0.03em] text-slate-950 md:text-4xl">
-                      Entrar na plataforma
-                    </h2>
-
-                    <p className="mt-2 text-sm leading-6 text-slate-500">
-                      Use seu e-mail e senha cadastrados para acessar o painel da escola.
-                    </p>
                   </div>
 
                   {error && (
-                    <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+                    <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
                       {error}
                     </div>
                   )}
 
                   {message && (
-                    <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-700">
+                    <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-700">
                       {message}
                     </div>
                   )}
 
-                  <form onSubmit={onSubmitLogin} className="mt-6 space-y-4">
+                  <form onSubmit={onSubmitLogin} className="space-y-5">
                     <div>
-                      <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-500">
+                      <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-950">
                         E-mail
                       </label>
 
-                      <input
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        autoComplete="email"
-                        type="email"
-                        required
-                        placeholder="voce@escola.com"
-                      />
+                      <div className="relative">
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                          <IconMail />
+                        </div>
+
+                        <input
+                          className="w-full rounded-2xl border border-slate-300 bg-white px-12 py-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          autoComplete="email"
+                          type="email"
+                          required
+                          placeholder="voce@escola.com"
+                        />
+                      </div>
                     </div>
 
                     <div>
-                      <div className="mb-2 flex items-center justify-between gap-3">
-                        <label className="block text-xs font-black uppercase tracking-wide text-slate-500">
-                          Senha
-                        </label>
+                      <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-950">
+                        Senha
+                      </label>
+
+                      <div className="relative">
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                          <IconLock />
+                        </div>
+
+                        <input
+                          className="w-full rounded-2xl border border-slate-300 bg-white px-12 py-4 pr-14 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          autoComplete="current-password"
+                          type={showPassword ? "text" : "password"}
+                          required
+                          placeholder="Sua senha"
+                        />
 
                         <button
                           type="button"
-                          onClick={() => router.push("/forgot-password")}
-                          className="text-xs font-black text-blue-700 transition hover:text-blue-900 hover:underline"
+                          onClick={() => setShowPassword((value) => !value)}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-700"
+                          aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
                         >
-                          Esqueci minha senha
+                          <IconEye />
                         </button>
                       </div>
+                    </div>
 
-                      <input
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        autoComplete="current-password"
-                        type="password"
-                        required
-                        placeholder="Digite sua senha"
-                      />
+                    <div className="flex items-center justify-between gap-4">
+                      <label className="flex cursor-pointer items-center gap-3 text-sm font-medium text-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={rememberAccess}
+                          onChange={(e) => setRememberAccess(e.target.checked)}
+                          className="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        Lembrar meu acesso
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={() => router.push("/forgot-password")}
+                        className="text-sm font-extrabold text-blue-700 transition hover:text-blue-900 hover:underline"
+                      >
+                        Esqueci minha senha
+                      </button>
                     </div>
 
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full rounded-2xl bg-slate-950 px-4 py-3.5 text-sm font-black text-white shadow-[0_20px_45px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:opacity-95 disabled:translate-y-0 disabled:opacity-60"
+                      className="flex w-full items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-blue-700 to-blue-600 px-5 py-4 text-sm font-black text-white shadow-[0_22px_46px_rgba(37,99,235,0.30)] transition hover:-translate-y-0.5 hover:shadow-[0_26px_56px_rgba(37,99,235,0.38)] disabled:translate-y-0 disabled:opacity-60"
                     >
-                      {loading ? "Entrando..." : "Entrar"}
+                      <IconLogin />
+                      {loading ? "Entrando..." : "Entrar na plataforma"}
                     </button>
                   </form>
+
+                  <p className="mt-6 text-center text-sm font-medium text-slate-400">
+                    Não possui uma conta? Fale com o diretor da sua escola.
+                  </p>
                 </>
               ) : (
                 <>
-                  <div>
-                    <div className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-emerald-700">
-                      Primeira implantação
+                  <div className="mb-7 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4">
+                    <div className="flex items-center gap-4">
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-100 text-blue-700">
+                        <IconUserPlus />
+                      </div>
+
+                      <div>
+                        <div className="font-extrabold text-slate-900">
+                          Primeira implantação
+                        </div>
+                        <div className="text-sm text-slate-500">
+                          Cadastre a escola e o primeiro diretor.
+                        </div>
+                      </div>
                     </div>
-
-                    <h2 className="mt-4 text-3xl font-black tracking-[-0.03em] text-slate-950 md:text-4xl">
-                      Criar conta de diretor
-                    </h2>
-
-                    <p className="mt-2 text-sm leading-6 text-slate-500">
-                      Cadastre a escola e o primeiro usuário diretor para iniciar a
-                      configuração.
-                    </p>
                   </div>
 
                   {error && (
-                    <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
+                    <div className="mb-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
                       {error}
                     </div>
                   )}
 
                   {message && (
-                    <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-700">
+                    <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-700">
                       {message}
                     </div>
                   )}
 
-                  <form onSubmit={onSubmitDirectorSignup} className="mt-6 space-y-4">
+                  <form onSubmit={onSubmitDirectorSignup} className="space-y-4">
                     <div>
-                      <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-500">
+                      <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-950">
                         Nome do diretor
                       </label>
 
                       <input
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                         value={directorName}
                         onChange={(e) => setDirectorName(e.target.value)}
                         type="text"
@@ -759,12 +1006,12 @@ export default function LoginPage() {
                     </div>
 
                     <div>
-                      <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-500">
+                      <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-950">
                         Nome da escola
                       </label>
 
                       <input
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                         value={schoolName}
                         onChange={(e) => setSchoolName(e.target.value)}
                         type="text"
@@ -774,12 +1021,12 @@ export default function LoginPage() {
                     </div>
 
                     <div>
-                      <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-500">
+                      <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-950">
                         E-mail
                       </label>
 
                       <input
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                         value={directorEmail}
                         onChange={(e) => setDirectorEmail(e.target.value)}
                         autoComplete="email"
@@ -791,12 +1038,12 @@ export default function LoginPage() {
 
                     <div className="grid gap-4 md:grid-cols-2">
                       <div>
-                        <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-500">
+                        <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-950">
                           Senha
                         </label>
 
                         <input
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                           value={directorPassword}
                           onChange={(e) => setDirectorPassword(e.target.value)}
                           autoComplete="new-password"
@@ -807,12 +1054,12 @@ export default function LoginPage() {
                       </div>
 
                       <div>
-                        <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-500">
+                        <label className="mb-2 block text-xs font-black uppercase tracking-wide text-slate-950">
                           Confirmar senha
                         </label>
 
                         <input
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
+                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-4 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-100"
                           value={confirmPassword}
                           onChange={(e) => setConfirmPassword(e.target.value)}
                           autoComplete="new-password"
@@ -826,8 +1073,9 @@ export default function LoginPage() {
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full rounded-2xl bg-slate-950 px-4 py-3.5 text-sm font-black text-white shadow-[0_20px_45px_rgba(15,23,42,0.22)] transition hover:-translate-y-0.5 hover:opacity-95 disabled:translate-y-0 disabled:opacity-60"
+                      className="flex w-full items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-blue-700 to-blue-600 px-5 py-4 text-sm font-black text-white shadow-[0_22px_46px_rgba(37,99,235,0.30)] transition hover:-translate-y-0.5 hover:shadow-[0_26px_56px_rgba(37,99,235,0.38)] disabled:translate-y-0 disabled:opacity-60"
                     >
+                      <IconUserPlus />
                       {loading ? "Criando conta..." : "Criar diretor"}
                     </button>
                   </form>
@@ -848,7 +1096,7 @@ export default function LoginPage() {
                 type="button"
                 onClick={handleGoogleAuth}
                 disabled={googleLoading}
-                className="flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                className="flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-300 bg-white px-5 py-4 text-sm font-black text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
               >
                 <GoogleIcon />
 
@@ -858,10 +1106,13 @@ export default function LoginPage() {
                     ? "Criar diretor com Google"
                     : "Entrar com Google"}
               </button>
+            </div>
 
-              <div className="mt-6 rounded-2xl bg-slate-50 px-4 py-3 text-center text-xs font-semibold text-slate-400">
-                Minha Escola • Gestão Escolar Inteligente • Seguro • Multi-tenant
+            <div className="mt-9 flex items-center justify-center gap-2 text-center text-sm font-medium text-slate-500">
+              <div className="text-slate-400">
+                <IconShield />
               </div>
+              Tecnologia segura, educação conectada e futuro inteligente.
             </div>
           </div>
         </section>
