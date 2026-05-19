@@ -16,6 +16,7 @@ type MeResponse =
   | { ok: false; error?: string; status?: number };
 
 const DIRECTOR_GOOGLE_DRAFT_KEY = "director_signup_google_draft";
+const OFFICIAL_LOGO_SRC = "/brand/minha-escola-logo.png";
 
 type DirectorGoogleDraft = {
   fullName: string;
@@ -106,73 +107,61 @@ function friendlyAuthError(message?: string) {
 function BrandLogo({
   compact = false,
   light = false,
+  centered = false,
 }: {
   compact?: boolean;
   light?: boolean;
+  centered?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3">
+    <div
+      className={[
+        "flex min-w-0 items-center",
+        compact ? "gap-3" : "gap-4",
+        centered ? "justify-center" : "",
+      ].join(" ")}
+    >
       <div
         className={[
-          "relative overflow-hidden rounded-2xl backdrop-blur",
-          compact ? "h-11 w-11" : "h-14 w-14",
-          light
-            ? "border border-slate-200 bg-slate-50"
-            : "border border-white/15 bg-white/10",
+          "relative shrink-0 overflow-hidden rounded-[26px] bg-white shadow-[0_18px_45px_rgba(15,23,42,0.22)] ring-1",
+          compact ? "h-16 w-16" : "h-24 w-24",
+          light ? "ring-slate-200" : "ring-white/20",
         ].join(" ")}
       >
-        <div
-          className={
-            light
-              ? "absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.9),transparent_35%),linear-gradient(135deg,#2563eb,#0f172a,#0b1120)]"
-              : "absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,0.28),transparent_35%),linear-gradient(135deg,#1d4ed8,#0f172a,#0b1120)]"
-          }
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-emerald-50" />
+
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={OFFICIAL_LOGO_SRC}
+          alt="Minha Escola - Gestão Escolar Inteligente"
+          className="relative h-full w-full object-contain p-1.5"
+          draggable={false}
         />
-        <div
-          className={[
-            "absolute inset-[1px] rounded-[15px]",
-            light ? "border border-white/20" : "border border-white/10",
-          ].join(" ")}
-        />
-        <div className="relative flex h-full w-full items-center justify-center">
-          <svg
-            viewBox="0 0 64 64"
-            className={compact ? "h-6 w-6" : "h-8 w-8"}
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path
-              d="M18 45V23.5C18 21.567 19.567 20 21.5 20H42.5C44.433 20 46 21.567 46 23.5V45"
-              stroke="white"
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path d="M14 46H50" stroke="white" strokeWidth="3" strokeLinecap="round" />
-            <path d="M24 28H40" stroke="white" strokeWidth="3" strokeLinecap="round" />
-            <path d="M24 35H40" stroke="white" strokeWidth="3" strokeLinecap="round" />
-            <path
-              d="M27 20V15.5C27 14.1193 28.1193 13 29.5 13H34.5C35.8807 13 37 14.1193 37 15.5V20"
-              stroke="white"
-              strokeWidth="3"
-              strokeLinecap="round"
-            />
-          </svg>
-        </div>
       </div>
 
       <div className="min-w-0">
         <div
           className={[
-            "font-semibold tracking-tight",
-            compact ? "text-base" : "text-lg",
-            light ? "text-slate-900" : "text-white",
+            "font-extrabold leading-none tracking-tight",
+            compact ? "text-2xl" : "text-4xl",
+            light ? "text-slate-950" : "text-white",
           ].join(" ")}
         >
-          Escola SaaS
+          <span>minha</span>
+          <br />
+          <span className={light ? "text-emerald-700" : "text-emerald-300"}>
+            escola
+          </span>
         </div>
-        <div className={light ? "text-xs text-slate-500" : "text-xs text-slate-300"}>
-          Gestão escolar premium
+
+        <div
+          className={[
+            "mt-2 font-semibold uppercase tracking-[0.18em]",
+            compact ? "text-[9px]" : "text-xs",
+            light ? "text-slate-500" : "text-slate-300",
+          ].join(" ")}
+        >
+          Gestão Escolar Inteligente
         </div>
       </div>
     </div>
@@ -204,6 +193,28 @@ function GoogleIcon() {
         fill="#EA4335"
       />
     </svg>
+  );
+}
+
+function FeatureCard({
+  title,
+  description,
+  icon,
+}: {
+  title: string;
+  description: string;
+  icon: string;
+}) {
+  return (
+    <div className="rounded-[28px] border border-white/10 bg-white/10 p-5 backdrop-blur-xl">
+      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/15 text-xl">
+        {icon}
+      </div>
+
+      <div className="mt-4 text-sm font-bold text-white">{title}</div>
+
+      <div className="mt-2 text-sm leading-6 text-slate-300">{description}</div>
+    </div>
   );
 }
 
@@ -513,10 +524,15 @@ export default function LoginPage() {
 
   if (checkingSession) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
-        <div className="w-full max-w-md rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
+      <div className="flex min-h-screen items-center justify-center bg-[linear-gradient(135deg,#eff6ff,#f8fafc,#ecfdf5)] p-6">
+        <div className="w-full max-w-md rounded-[36px] border border-slate-200 bg-white/95 p-8 text-center shadow-[0_24px_90px_rgba(15,23,42,0.12)] backdrop-blur">
+          <div className="mx-auto mb-6 flex justify-center">
+            <BrandLogo compact light centered />
+          </div>
+
           <h1 className="text-2xl font-semibold text-slate-900">Carregando...</h1>
-          <p className="mt-2 text-sm text-slate-600">
+
+          <p className="mt-2 text-sm leading-6 text-slate-600">
             Validando sessão ou link de recuperação.
           </p>
         </div>
@@ -526,58 +542,77 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef2ff_35%,#f8fafc_100%)]">
-      <div className="grid min-h-screen lg:grid-cols-2">
+      <div className="grid min-h-screen lg:grid-cols-[1.08fr_0.92fr]">
         <section className="relative hidden overflow-hidden lg:flex">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.28),_transparent_28%),radial-gradient(circle_at_80%_20%,_rgba(147,197,253,0.16),_transparent_22%),radial-gradient(circle_at_bottom_right,_rgba(99,102,241,0.20),_transparent_32%),linear-gradient(135deg,#020617,#0f172a,#1e293b)]" />
-          <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(rgba(255,255,255,0.6)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.6)_1px,transparent_1px)] [background-size:34px_34px]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_16%,rgba(37,99,235,0.38),transparent_28%),radial-gradient(circle_at_78%_24%,rgba(22,163,74,0.20),transparent_26%),radial-gradient(circle_at_70%_92%,rgba(250,204,21,0.16),transparent_26%),linear-gradient(135deg,#020617,#071328_42%,#0f172a)]" />
 
-          <div className="relative z-10 flex w-full flex-col justify-between p-12 text-white">
+          <div className="absolute inset-0 opacity-[0.10] [background-image:linear-gradient(rgba(255,255,255,0.70)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.70)_1px,transparent_1px)] [background-size:34px_34px]" />
+
+          <div className="absolute -left-28 top-24 h-72 w-72 rounded-full bg-blue-500/20 blur-3xl" />
+          <div className="absolute bottom-0 right-10 h-96 w-96 rounded-full bg-emerald-500/10 blur-3xl" />
+
+          <div className="relative z-10 flex w-full flex-col justify-between p-12 text-white 2xl:p-16">
             <div>
               <BrandLogo />
 
-              <div className="mt-8 inline-flex rounded-full border border-white/10 bg-white/10 px-4 py-2 text-xs font-medium backdrop-blur">
-                Plataforma escolar multi-tenant
+              <div className="mt-9 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-200 backdrop-blur">
+                <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                Plataforma escolar inteligente
               </div>
 
-              <h1 className="mt-8 max-w-xl text-5xl font-semibold leading-tight tracking-tight">
-                Sua escola digital com gestão premium, segura e pronta para crescer.
+              <h1 className="mt-8 max-w-2xl text-5xl font-extrabold leading-tight tracking-tight 2xl:text-6xl">
+                Sua escola organizada, conectada e pronta para crescer.
               </h1>
 
-              <p className="mt-5 max-w-xl text-base leading-7 text-slate-200">
-                Centralize direção, professores, alunos, responsáveis, presença, diário de
-                classe e evolução financeira em uma experiência elegante e profissional.
+              <p className="mt-6 max-w-2xl text-base leading-8 text-slate-200 2xl:text-lg">
+                Centralize direção, professores, alunos, responsáveis, comunicados,
+                presença, diário pedagógico e gestão escolar em uma experiência moderna,
+                segura e profissional.
               </p>
 
-              <div className="mt-8 grid max-w-xl grid-cols-2 gap-4">
-                <div className="rounded-3xl border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <div className="text-sm font-medium text-white">Multi-tenant</div>
-                  <div className="mt-1 text-sm text-slate-300">
-                    Cada escola isolada com segurança e identidade própria.
-                  </div>
-                </div>
+              <div className="mt-9 grid max-w-2xl grid-cols-2 gap-4">
+                <FeatureCard
+                  icon="🏫"
+                  title="Gestão centralizada"
+                  description="A escola acompanha rotinas, equipes, alunos e responsáveis em um só lugar."
+                />
 
-                <div className="rounded-3xl border border-white/10 bg-white/10 p-5 backdrop-blur">
-                  <div className="text-sm font-medium text-white">Operação rápida</div>
-                  <div className="mt-1 text-sm text-slate-300">
-                    Cadastro do diretor e início prático da implantação.
-                  </div>
-                </div>
+                <FeatureCard
+                  icon="🔐"
+                  title="Ambiente seguro"
+                  description="Cada escola opera isolada com identidade própria e controle de acesso."
+                />
+
+                <FeatureCard
+                  icon="📣"
+                  title="Comunicação oficial"
+                  description="Comunicados com confirmação de entrega e visualização por destinatário."
+                />
+
+                <FeatureCard
+                  icon="📲"
+                  title="Portal conectado"
+                  description="Professores e responsáveis acessam informações importantes com facilidade."
+                />
               </div>
             </div>
 
-            <div className="space-y-4">
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur">
-                <div className="text-sm text-slate-100">
-                  “Organizamos toda a escola em poucos dias.”
+            <div className="mt-10 space-y-4">
+              <div className="max-w-2xl rounded-[30px] border border-white/10 bg-white/5 p-5 backdrop-blur-xl">
+                <div className="text-sm leading-6 text-slate-100">
+                  “Uma plataforma feita para dar clareza à gestão e aproximar escola,
+                  professores e famílias.”
                 </div>
               </div>
 
-              <div className="flex gap-3 text-xs text-slate-300">
-                <span>Sistema escolar</span>
+              <div className="flex flex-wrap gap-3 text-xs font-medium text-slate-300">
+                <span>Gestão escolar</span>
                 <span>•</span>
                 <span>Seguro</span>
                 <span>•</span>
                 <span>Multi-tenant</span>
+                <span>•</span>
+                <span>Comunicação inteligente</span>
                 <span>•</span>
                 <span>2026</span>
               </div>
@@ -585,17 +620,17 @@ export default function LoginPage() {
           </div>
         </section>
 
-        <section className="relative flex items-center justify-center p-6 md:p-10">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.10),transparent_30%),linear-gradient(180deg,#f8fafc,#eef2ff,#f8fafc)] lg:hidden" />
+        <section className="relative flex items-center justify-center p-5 md:p-10">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.10),transparent_30%),radial-gradient(circle_at_bottom,_rgba(34,197,94,0.08),transparent_30%),linear-gradient(180deg,#f8fafc,#eef2ff,#f8fafc)] lg:hidden" />
 
           <div className="relative w-full max-w-xl">
             <div className="mb-6 flex justify-center lg:hidden">
-              <div className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
+              <div className="rounded-[28px] border border-slate-200 bg-white/95 px-5 py-4 shadow-sm backdrop-blur">
                 <BrandLogo compact light />
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-[36px] border border-slate-200/80 bg-white/95 p-6 shadow-[0_20px_80px_rgba(15,23,42,0.10)] backdrop-blur md:p-8">
+            <div className="overflow-hidden rounded-[38px] border border-slate-200/80 bg-white/95 p-6 shadow-[0_24px_90px_rgba(15,23,42,0.12)] backdrop-blur md:p-8">
               <div className="mb-6 flex rounded-2xl bg-slate-100 p-1">
                 <button
                   type="button"
@@ -604,9 +639,9 @@ export default function LoginPage() {
                     setError(null);
                     setMessage(null);
                   }}
-                  className={`flex-1 rounded-xl px-4 py-3 text-sm font-medium transition ${
+                  className={`flex-1 rounded-xl px-4 py-3 text-sm font-semibold transition ${
                     mode === "login"
-                      ? "bg-white text-slate-900 shadow-sm"
+                      ? "bg-white text-slate-950 shadow-sm"
                       : "text-slate-500 hover:text-slate-700"
                   }`}
                 >
@@ -620,9 +655,9 @@ export default function LoginPage() {
                     setError(null);
                     setMessage(null);
                   }}
-                  className={`flex-1 rounded-xl px-4 py-3 text-sm font-medium transition ${
+                  className={`flex-1 rounded-xl px-4 py-3 text-sm font-semibold transition ${
                     mode === "signup"
-                      ? "bg-white text-slate-900 shadow-sm"
+                      ? "bg-white text-slate-950 shadow-sm"
                       : "text-slate-500 hover:text-slate-700"
                   }`}
                 >
@@ -633,33 +668,39 @@ export default function LoginPage() {
               {mode === "login" ? (
                 <>
                   <div>
-                    <h2 className="text-3xl font-semibold tracking-tight text-slate-900">
+                    <div className="inline-flex rounded-full bg-blue-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-blue-700">
+                      Acesso seguro
+                    </div>
+
+                    <h2 className="mt-4 text-3xl font-extrabold tracking-tight text-slate-950">
                       Entrar na plataforma
                     </h2>
-                    <p className="mt-2 text-sm text-slate-500">
-                      Use seu e-mail e senha cadastrados.
+
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      Use seu e-mail e senha cadastrados para acessar o painel da escola.
                     </p>
                   </div>
 
                   {error && (
-                    <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
                       {error}
                     </div>
                   )}
 
                   {message && (
-                    <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                    <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-700">
                       {message}
                     </div>
                   )}
 
                   <form onSubmit={onSubmitLogin} className="mt-6 space-y-4">
                     <div>
-                      <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
                         E-mail
                       </label>
+
                       <input
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-200/60"
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         autoComplete="email"
@@ -670,11 +711,22 @@ export default function LoginPage() {
                     </div>
 
                     <div>
-                      <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
-                        Senha
-                      </label>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <label className="block text-xs font-bold uppercase tracking-wide text-slate-500">
+                          Senha
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => router.push("/forgot-password")}
+                          className="text-xs font-bold text-blue-700 transition hover:text-blue-900 hover:underline"
+                        >
+                          Esqueci minha senha
+                        </button>
+                      </div>
+
                       <input
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-200/60"
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-blue-400 focus:ring-4 focus:ring-blue-100"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         autoComplete="current-password"
@@ -687,7 +739,7 @@ export default function LoginPage() {
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-60"
+                      className="w-full rounded-2xl bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:opacity-95 disabled:translate-y-0 disabled:opacity-60"
                     >
                       {loading ? "Entrando..." : "Entrar"}
                     </button>
@@ -696,33 +748,40 @@ export default function LoginPage() {
               ) : (
                 <>
                   <div>
-                    <h2 className="text-3xl font-semibold tracking-tight text-slate-900">
+                    <div className="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-emerald-700">
+                      Primeira implantação
+                    </div>
+
+                    <h2 className="mt-4 text-3xl font-extrabold tracking-tight text-slate-950">
                       Criar conta de diretor
                     </h2>
-                    <p className="mt-2 text-sm text-slate-500">
-                      Cadastre a escola e o primeiro usuário diretor.
+
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      Cadastre a escola e o primeiro usuário diretor para iniciar a
+                      configuração da plataforma.
                     </p>
                   </div>
 
                   {error && (
-                    <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
                       {error}
                     </div>
                   )}
 
                   {message && (
-                    <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                    <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-700">
                       {message}
                     </div>
                   )}
 
                   <form onSubmit={onSubmitDirectorSignup} className="mt-6 space-y-4">
                     <div>
-                      <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
                         Nome do diretor
                       </label>
+
                       <input
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-200/60"
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                         value={directorName}
                         onChange={(e) => setDirectorName(e.target.value)}
                         type="text"
@@ -732,25 +791,27 @@ export default function LoginPage() {
                     </div>
 
                     <div>
-                      <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
                         Nome da escola
                       </label>
+
                       <input
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-200/60"
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                         value={schoolName}
                         onChange={(e) => setSchoolName(e.target.value)}
                         type="text"
                         required
-                        placeholder="Ex: Colégio Horizonte"
+                        placeholder="Ex: Escola Canaã"
                       />
                     </div>
 
                     <div>
-                      <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                      <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
                         E-mail
                       </label>
+
                       <input
-                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-200/60"
+                        className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                         value={directorEmail}
                         onChange={(e) => setDirectorEmail(e.target.value)}
                         autoComplete="email"
@@ -762,11 +823,12 @@ export default function LoginPage() {
 
                     <div className="grid gap-4 md:grid-cols-2">
                       <div>
-                        <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
                           Senha
                         </label>
+
                         <input
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-200/60"
+                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                           value={directorPassword}
                           onChange={(e) => setDirectorPassword(e.target.value)}
                           autoComplete="new-password"
@@ -777,11 +839,12 @@ export default function LoginPage() {
                       </div>
 
                       <div>
-                        <label className="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                        <label className="mb-2 block text-xs font-bold uppercase tracking-wide text-slate-500">
                           Confirmar senha
                         </label>
+
                         <input
-                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-200/60"
+                          className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100"
                           value={confirmPassword}
                           onChange={(e) => setConfirmPassword(e.target.value)}
                           autoComplete="new-password"
@@ -795,7 +858,7 @@ export default function LoginPage() {
                     <button
                       type="submit"
                       disabled={loading}
-                      className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-60"
+                      className="w-full rounded-2xl bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-[0_18px_40px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:opacity-95 disabled:translate-y-0 disabled:opacity-60"
                     >
                       {loading ? "Criando conta..." : "Criar diretor"}
                     </button>
@@ -805,9 +868,11 @@ export default function LoginPage() {
 
               <div className="my-6 flex items-center gap-3">
                 <div className="h-px flex-1 bg-slate-200" />
-                <span className="text-xs uppercase tracking-wide text-slate-400">
+
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                   ou continue com
                 </span>
+
                 <div className="h-px flex-1 bg-slate-200" />
               </div>
 
@@ -815,9 +880,10 @@ export default function LoginPage() {
                 type="button"
                 onClick={handleGoogleAuth}
                 disabled={googleLoading}
-                className="flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                className="flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
               >
                 <GoogleIcon />
+
                 {googleLoading
                   ? "Conectando com Google..."
                   : mode === "signup"
@@ -825,8 +891,8 @@ export default function LoginPage() {
                     : "Entrar com Google"}
               </button>
 
-              <div className="mt-6 rounded-2xl bg-slate-50 px-4 py-3 text-center text-xs text-slate-400">
-                Sistema escolar • Seguro • Multi-tenant • Premium UI
+              <div className="mt-6 rounded-2xl bg-slate-50 px-4 py-3 text-center text-xs font-medium text-slate-400">
+                Minha Escola • Gestão Escolar Inteligente • Seguro • Multi-tenant
               </div>
             </div>
           </div>
