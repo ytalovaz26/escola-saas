@@ -22,9 +22,7 @@ function jsonOk(body: Record<string, any> = {}, status = 200) {
     { ok: true, ...body },
     {
       status,
-      headers: {
-        "Cache-Control": "no-store",
-      },
+      headers: { "Cache-Control": "no-store" },
     }
   );
 }
@@ -34,9 +32,7 @@ function jsonError(message: string, status = 400, extra: Record<string, any> = {
     { ok: false, error: message, ...extra },
     {
       status,
-      headers: {
-        "Cache-Control": "no-store",
-      },
+      headers: { "Cache-Control": "no-store" },
     }
   );
 }
@@ -81,11 +77,7 @@ function getBearerToken(req: Request) {
 
 function parseWeekday(value: unknown) {
   const n = Number(value);
-
-  if (!Number.isInteger(n) || n < 0 || n > 6) {
-    return null;
-  }
-
+  if (!Number.isInteger(n) || n < 0 || n > 6) return null;
   return n;
 }
 
@@ -93,12 +85,8 @@ function normalizeTime(value: unknown) {
   const safe = cleanText(value);
 
   if (!safe) return "";
-
   if (/^([01]\d|2[0-3]):[0-5]\d$/.test(safe)) return safe;
-
-  if (/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(safe)) {
-    return safe.slice(0, 5);
-  }
+  if (/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(safe)) return safe.slice(0, 5);
 
   return safe;
 }
@@ -117,12 +105,12 @@ function classNameFromRow(cls: any) {
   return cleanText(cls?.name) || "Turma";
 }
 
-function teacherNameFromRow(teacher: any) {
-  const email = cleanText(teacher?.email);
+function teacherNameFromEmail(email: string | null) {
+  const safeEmail = cleanText(email);
 
-  if (!email) return "Professor";
+  if (!safeEmail) return "Professor";
 
-  const beforeAt = email.split("@")[0] || email;
+  const beforeAt = safeEmail.split("@")[0] || safeEmail;
 
   const pretty = beforeAt
     .split(/[.\-_ ]+/)
@@ -131,7 +119,37 @@ function teacherNameFromRow(teacher: any) {
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(" ");
 
-  return pretty || email;
+  return pretty || safeEmail;
+}
+
+async function getAuthUserEmail(userId: string) {
+  try {
+    const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
+
+    if (error || !data?.user) return null;
+
+    return data.user.email || null;
+  } catch {
+    return null;
+  }
+}
+
+async function getAuthUsersMap(userIds: string[]) {
+  const uniqueIds = Array.from(new Set(userIds.map(cleanText).filter(Boolean)));
+  const map = new Map<string, { email: string | null; name: string }>();
+
+  await Promise.all(
+    uniqueIds.map(async (userId) => {
+      const email = await getAuthUserEmail(userId);
+
+      map.set(userId, {
+        email,
+        name: teacherNameFromEmail(email),
+      });
+    })
+  );
+
+  return map;
 }
 
 async function getStaffContext(req: Request): Promise<StaffContext> {
@@ -159,10 +177,9 @@ async function getStaffContext(req: Request): Promise<StaffContext> {
 
   const { data: schoolUser, error: suErr } = await supabaseAdmin
     .from("school_users")
-    .select("school_id, role, is_active, created_at")
+    .select("school_id, role, is_active")
     .eq("user_id", user.id)
     .eq("is_active", true)
-    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -204,9 +221,7 @@ async function assertClassBelongsToSchool(classId: string, schoolId: string) {
     .eq("school_id", schoolId)
     .maybeSingle();
 
-  if (error) {
-    throw new Error("Falha ao validar turma: " + error.message);
-  }
+  if (error) throw new Error("Falha ao validar turma: " + error.message);
 
   return Boolean(data?.id);
 }
@@ -220,9 +235,7 @@ async function assertTeacherBelongsToSchool(teacherUserId: string, schoolId: str
     .eq("is_active", true)
     .maybeSingle();
 
-  if (error) {
-    throw new Error("Falha ao validar professor: " + error.message);
-  }
+  if (error) throw new Error("Falha ao validar professor: " + error.message);
 
   if (!data?.user_id) return false;
 
@@ -237,9 +250,7 @@ async function assertSubjectBelongsToSchool(subjectId: string, schoolId: string)
     .eq("school_id", schoolId)
     .maybeSingle();
 
-  if (error) {
-    throw new Error("Falha ao validar disciplina: " + error.message);
-  }
+  if (error) throw new Error("Falha ao validar disciplina: " + error.message);
 
   return Boolean(data?.id);
 }
@@ -254,10 +265,9 @@ async function loadOptions(schoolId: string) {
 
     supabaseAdmin
       .from("school_users")
-      .select("user_id, email, role, is_active, school_id, created_at")
+      .select("user_id, role, is_active, school_id")
       .eq("school_id", schoolId)
-      .eq("is_active", true)
-      .order("created_at", { ascending: false }),
+      .eq("is_active", true),
 
     supabaseAdmin
       .from("subjects")
@@ -278,20 +288,30 @@ async function loadOptions(schoolId: string) {
     throw new Error("Falha ao buscar disciplinas: " + subjectsRes.error.message);
   }
 
+  const teacherRows = (teachersRes.data || []).filter((teacher: any) =>
+    isTeacherRole(teacher.role)
+  );
+
+  const teacherIds = teacherRows.map((teacher: any) => String(teacher.user_id));
+  const authUsersMap = await getAuthUsersMap(teacherIds);
+
   const classes = (classesRes.data || []).map((cls: any) => ({
     id: String(cls.id),
     name: classNameFromRow(cls),
     rawName: cleanText(cls.name) || "Turma",
   }));
 
-  const teachers = (teachersRes.data || [])
-    .filter((teacher: any) => isTeacherRole(teacher.role))
-    .map((teacher: any) => ({
-      userId: String(teacher.user_id),
-      name: teacherNameFromRow(teacher),
-      email: cleanText(teacher.email) || null,
+  const teachers = teacherRows.map((teacher: any) => {
+    const userId = String(teacher.user_id);
+    const authInfo = authUsersMap.get(userId);
+
+    return {
+      userId,
+      name: authInfo?.name || "Professor",
+      email: authInfo?.email || null,
       role: cleanText(teacher.role) || "professor",
-    }));
+    };
+  });
 
   const subjects = (subjectsRes.data || []).map((subject: any) => ({
     id: String(subject.id),
@@ -330,9 +350,7 @@ async function loadSchedule(schoolId: string) {
     .order("weekday", { ascending: true })
     .order("start_time", { ascending: true });
 
-  if (error) {
-    throw new Error("Falha ao buscar grade: " + error.message);
-  }
+  if (error) throw new Error("Falha ao buscar grade: " + error.message);
 
   const rows = data || [];
 
@@ -348,30 +366,20 @@ async function loadSchedule(schoolId: string) {
     new Set(rows.map((row: any) => cleanText(row.subject_id)).filter(Boolean))
   );
 
-  const [classesRes, teachersRes, subjectsRes] = await Promise.all([
+  const [classesRes, subjectsRes, authUsersMap] = await Promise.all([
     classIds.length
       ? supabaseAdmin.from("classes").select("id, name").in("id", classIds)
-      : Promise.resolve({ data: [], error: null } as any),
-
-    teacherIds.length
-      ? supabaseAdmin
-          .from("school_users")
-          .select("user_id, email, role")
-          .in("user_id", teacherIds)
-          .eq("school_id", schoolId)
       : Promise.resolve({ data: [], error: null } as any),
 
     subjectIds.length
       ? supabaseAdmin.from("subjects").select("id, name").in("id", subjectIds)
       : Promise.resolve({ data: [], error: null } as any),
+
+    getAuthUsersMap(teacherIds),
   ]);
 
   if (classesRes.error) {
     throw new Error("Falha ao buscar turmas da grade: " + classesRes.error.message);
-  }
-
-  if (teachersRes.error) {
-    throw new Error("Falha ao buscar professores da grade: " + teachersRes.error.message);
   }
 
   if (subjectsRes.error) {
@@ -379,15 +387,10 @@ async function loadSchedule(schoolId: string) {
   }
 
   const classesById = new Map<string, any>();
-  const teachersById = new Map<string, any>();
   const subjectsById = new Map<string, any>();
 
   for (const cls of classesRes.data || []) {
     classesById.set(String(cls.id), cls);
-  }
-
-  for (const teacher of teachersRes.data || []) {
-    teachersById.set(String(teacher.user_id), teacher);
   }
 
   for (const subject of subjectsRes.data || []) {
@@ -395,18 +398,19 @@ async function loadSchedule(schoolId: string) {
   }
 
   return rows.map((row: any) => {
+    const teacherUserId = String(row.teacher_user_id);
     const cls = classesById.get(String(row.class_id));
-    const teacher = teachersById.get(String(row.teacher_user_id));
     const subject = row.subject_id ? subjectsById.get(String(row.subject_id)) : null;
+    const authTeacher = authUsersMap.get(teacherUserId);
 
     return {
       id: String(row.id),
       schoolId: String(row.school_id),
       classId: String(row.class_id),
       className: classNameFromRow(cls),
-      teacherUserId: String(row.teacher_user_id),
-      teacherName: teacherNameFromRow(teacher),
-      teacherEmail: cleanText(teacher?.email) || null,
+      teacherUserId,
+      teacherName: authTeacher?.name || "Professor",
+      teacherEmail: authTeacher?.email || null,
       subjectId: row.subject_id ? String(row.subject_id) : null,
       subjectName: cleanText(subject?.name) || null,
       weekday: Number(row.weekday),
@@ -453,9 +457,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
 
-    if (!body) {
-      return jsonError("Body JSON inválido.", 400);
-    }
+    if (!body) return jsonError("Body JSON inválido.", 400);
 
     const classId = cleanText(body.classId || body.class_id);
     const teacherUserId = cleanText(body.teacherUserId || body.teacher_user_id);
@@ -484,20 +486,16 @@ export async function POST(req: Request) {
       return jsonError("O horário final precisa ser maior que o horário inicial.", 400);
     }
 
-    const classOk = await assertClassBelongsToSchool(classId, ctx.schoolId);
+    if (!(await assertClassBelongsToSchool(classId, ctx.schoolId))) {
+      return jsonError("Turma não encontrada nesta escola.", 404);
+    }
 
-    if (!classOk) return jsonError("Turma não encontrada nesta escola.", 404);
+    if (!(await assertTeacherBelongsToSchool(teacherUserId, ctx.schoolId))) {
+      return jsonError("Professor não encontrado nesta escola.", 404);
+    }
 
-    const teacherOk = await assertTeacherBelongsToSchool(teacherUserId, ctx.schoolId);
-
-    if (!teacherOk) return jsonError("Professor não encontrado nesta escola.", 404);
-
-    if (subjectId) {
-      const subjectOk = await assertSubjectBelongsToSchool(subjectId, ctx.schoolId);
-
-      if (!subjectOk) {
-        return jsonError("Disciplina não encontrada nesta escola.", 404);
-      }
+    if (subjectId && !(await assertSubjectBelongsToSchool(subjectId, ctx.schoolId))) {
+      return jsonError("Disciplina não encontrada nesta escola.", 404);
     }
 
     const { data, error } = await supabaseAdmin
@@ -548,9 +546,7 @@ export async function PATCH(req: Request) {
   try {
     const body = await req.json().catch(() => null);
 
-    if (!body) {
-      return jsonError("Body JSON inválido.", 400);
-    }
+    if (!body) return jsonError("Body JSON inválido.", 400);
 
     const id = cleanText(body.id);
 
@@ -706,9 +702,7 @@ export async function DELETE(req: Request) {
 
     const { error } = await supabaseAdmin
       .from("school_class_schedule")
-      .update({
-        is_active: false,
-      })
+      .update({ is_active: false })
       .eq("id", id)
       .eq("school_id", ctx.schoolId);
 
