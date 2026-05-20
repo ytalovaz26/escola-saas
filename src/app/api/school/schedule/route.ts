@@ -118,7 +118,20 @@ function classNameFromRow(cls: any) {
 }
 
 function teacherNameFromRow(teacher: any) {
-  return cleanText(teacher?.name) || cleanText(teacher?.email) || "Professor";
+  const email = cleanText(teacher?.email);
+
+  if (!email) return "Professor";
+
+  const beforeAt = email.split("@")[0] || email;
+
+  const pretty = beforeAt
+    .split(/[.\-_ ]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+
+  return pretty || email;
 }
 
 async function getStaffContext(req: Request): Promise<StaffContext> {
@@ -241,7 +254,7 @@ async function loadOptions(schoolId: string) {
 
     supabaseAdmin
       .from("school_users")
-      .select("user_id, name, email, role, is_active, school_id, created_at")
+      .select("user_id, email, role, is_active, school_id, created_at")
       .eq("school_id", schoolId)
       .eq("is_active", true)
       .order("created_at", { ascending: false }),
@@ -343,7 +356,7 @@ async function loadSchedule(schoolId: string) {
     teacherIds.length
       ? supabaseAdmin
           .from("school_users")
-          .select("user_id, name, email, role")
+          .select("user_id, email, role")
           .in("user_id", teacherIds)
           .eq("school_id", schoolId)
       : Promise.resolve({ data: [], error: null } as any),
