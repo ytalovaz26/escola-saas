@@ -38,6 +38,7 @@ type NavItem = {
 const SUBJECTS_HREF = "/school/subjects";
 const BRANDING_HREF = "/school/settings/branding";
 const STAFF_HREF = "/school/staff";
+const SCHEDULE_HREF = "/school/schedule";
 
 function safeJson(text: string) {
   if (!text) return null;
@@ -227,6 +228,13 @@ export default function SchoolLayout({
         roles: ["diretor", "coordenador", "admin"],
       },
       {
+        label: "Horários",
+        href: SCHEDULE_HREF,
+        icon: "🗓️",
+        section: "operacao",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
         label: "Presença",
         href: "/school/attendance",
         icon: "✅",
@@ -290,6 +298,8 @@ export default function SchoolLayout({
   const canOpenStaff = role === "diretor" || role === "coordenador" || role === "admin";
   const canOpenSubjects = role === "diretor" || role === "coordenador" || role === "admin";
   const canOpenBranding = role === "diretor" || role === "admin";
+  const canOpenSchedule =
+    role === "diretor" || role === "coordenador" || role === "secretaria" || role === "admin";
 
   useEffect(() => {
     (async () => {
@@ -501,6 +511,16 @@ export default function SchoolLayout({
                     className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                   >
                     Disciplinas
+                  </button>
+                ) : null}
+
+                {canOpenSchedule ? (
+                  <button
+                    type="button"
+                    onClick={() => go(SCHEDULE_HREF)}
+                    className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Horários
                   </button>
                 ) : null}
 
