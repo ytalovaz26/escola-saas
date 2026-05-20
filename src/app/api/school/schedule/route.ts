@@ -114,18 +114,11 @@ function timeToMinutes(value: string) {
 }
 
 function classNameFromRow(cls: any) {
-  return [cleanText(cls?.name), cleanText(cls?.grade), cleanText(cls?.section), cleanText(cls?.shift)]
-    .filter(Boolean)
-    .join(" • ");
+  return cleanText(cls?.name) || "Turma";
 }
 
 function teacherNameFromRow(teacher: any) {
-  return (
-    cleanText(teacher?.full_name) ||
-    cleanText(teacher?.name) ||
-    cleanText(teacher?.email) ||
-    "Professor"
-  );
+  return cleanText(teacher?.name) || cleanText(teacher?.email) || "Professor";
 }
 
 async function getStaffContext(req: Request): Promise<StaffContext> {
@@ -198,7 +191,9 @@ async function assertClassBelongsToSchool(classId: string, schoolId: string) {
     .eq("school_id", schoolId)
     .maybeSingle();
 
-  if (error) throw new Error("Falha ao validar turma: " + error.message);
+  if (error) {
+    throw new Error("Falha ao validar turma: " + error.message);
+  }
 
   return Boolean(data?.id);
 }
@@ -212,7 +207,9 @@ async function assertTeacherBelongsToSchool(teacherUserId: string, schoolId: str
     .eq("is_active", true)
     .maybeSingle();
 
-  if (error) throw new Error("Falha ao validar professor: " + error.message);
+  if (error) {
+    throw new Error("Falha ao validar professor: " + error.message);
+  }
 
   if (!data?.user_id) return false;
 
@@ -227,7 +224,9 @@ async function assertSubjectBelongsToSchool(subjectId: string, schoolId: string)
     .eq("school_id", schoolId)
     .maybeSingle();
 
-  if (error) throw new Error("Falha ao validar disciplina: " + error.message);
+  if (error) {
+    throw new Error("Falha ao validar disciplina: " + error.message);
+  }
 
   return Boolean(data?.id);
 }
@@ -236,13 +235,13 @@ async function loadOptions(schoolId: string) {
   const [classesRes, teachersRes, subjectsRes] = await Promise.all([
     supabaseAdmin
       .from("classes")
-      .select("id, name, grade, section, shift, school_id")
+      .select("id, name, school_id")
       .eq("school_id", schoolId)
       .order("name", { ascending: true }),
 
     supabaseAdmin
       .from("school_users")
-      .select("user_id, full_name, name, email, role, is_active, school_id")
+      .select("user_id, name, email, role, is_active, school_id, created_at")
       .eq("school_id", schoolId)
       .eq("is_active", true)
       .order("created_at", { ascending: false }),
@@ -268,11 +267,8 @@ async function loadOptions(schoolId: string) {
 
   const classes = (classesRes.data || []).map((cls: any) => ({
     id: String(cls.id),
-    name: classNameFromRow(cls) || "Turma",
+    name: classNameFromRow(cls),
     rawName: cleanText(cls.name) || "Turma",
-    grade: cleanText(cls.grade) || null,
-    section: cleanText(cls.section) || null,
-    shift: cleanText(cls.shift) || null,
   }));
 
   const teachers = (teachersRes.data || [])
@@ -341,16 +337,13 @@ async function loadSchedule(schoolId: string) {
 
   const [classesRes, teachersRes, subjectsRes] = await Promise.all([
     classIds.length
-      ? supabaseAdmin
-          .from("classes")
-          .select("id, name, grade, section, shift")
-          .in("id", classIds)
+      ? supabaseAdmin.from("classes").select("id, name").in("id", classIds)
       : Promise.resolve({ data: [], error: null } as any),
 
     teacherIds.length
       ? supabaseAdmin
           .from("school_users")
-          .select("user_id, full_name, name, email, role")
+          .select("user_id, name, email, role")
           .in("user_id", teacherIds)
           .eq("school_id", schoolId)
       : Promise.resolve({ data: [], error: null } as any),
@@ -397,7 +390,7 @@ async function loadSchedule(schoolId: string) {
       id: String(row.id),
       schoolId: String(row.school_id),
       classId: String(row.class_id),
-      className: classNameFromRow(cls) || "Turma",
+      className: classNameFromRow(cls),
       teacherUserId: String(row.teacher_user_id),
       teacherName: teacherNameFromRow(teacher),
       teacherEmail: cleanText(teacher?.email) || null,
@@ -447,7 +440,9 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
 
-    if (!body) return jsonError("Body JSON inválido.", 400);
+    if (!body) {
+      return jsonError("Body JSON inválido.", 400);
+    }
 
     const classId = cleanText(body.classId || body.class_id);
     const teacherUserId = cleanText(body.teacherUserId || body.teacher_user_id);
@@ -487,7 +482,9 @@ export async function POST(req: Request) {
     if (subjectId) {
       const subjectOk = await assertSubjectBelongsToSchool(subjectId, ctx.schoolId);
 
-      if (!subjectOk) return jsonError("Disciplina não encontrada nesta escola.", 404);
+      if (!subjectOk) {
+        return jsonError("Disciplina não encontrada nesta escola.", 404);
+      }
     }
 
     const { data, error } = await supabaseAdmin
@@ -538,7 +535,9 @@ export async function PATCH(req: Request) {
   try {
     const body = await req.json().catch(() => null);
 
-    if (!body) return jsonError("Body JSON inválido.", 400);
+    if (!body) {
+      return jsonError("Body JSON inválido.", 400);
+    }
 
     const id = cleanText(body.id);
 
@@ -563,19 +562,25 @@ export async function PATCH(req: Request) {
 
     if ("classId" in body || "class_id" in body) {
       const classId = cleanText(body.classId || body.class_id);
+
       if (!classId) return jsonError("Informe a turma.", 400);
+
       if (!(await assertClassBelongsToSchool(classId, ctx.schoolId))) {
         return jsonError("Turma não encontrada nesta escola.", 404);
       }
+
       update.class_id = classId;
     }
 
     if ("teacherUserId" in body || "teacher_user_id" in body) {
       const teacherUserId = cleanText(body.teacherUserId || body.teacher_user_id);
+
       if (!teacherUserId) return jsonError("Informe o professor.", 400);
+
       if (!(await assertTeacherBelongsToSchool(teacherUserId, ctx.schoolId))) {
         return jsonError("Professor não encontrado nesta escola.", 404);
       }
+
       update.teacher_user_id = teacherUserId;
     }
 
@@ -591,23 +596,29 @@ export async function PATCH(req: Request) {
 
     if ("weekday" in body) {
       const weekday = parseWeekday(body.weekday);
+
       if (weekday === null) return jsonError("Informe um dia da semana válido.", 400);
+
       update.weekday = weekday;
     }
 
     if ("startTime" in body || "start_time" in body) {
       const startTime = normalizeTime(body.startTime || body.start_time);
+
       if (!isTime(startTime)) {
         return jsonError("Informe um horário inicial válido no formato HH:mm.", 400);
       }
+
       update.start_time = startTime;
     }
 
     if ("endTime" in body || "end_time" in body) {
       const endTime = normalizeTime(body.endTime || body.end_time);
+
       if (!isTime(endTime)) {
         return jsonError("Informe um horário final válido no formato HH:mm.", 400);
       }
+
       update.end_time = endTime;
     }
 
