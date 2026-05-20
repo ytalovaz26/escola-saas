@@ -130,7 +130,10 @@ function getInitials(name?: string | null) {
   return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase();
 }
 
-function getTeacherIdentityFromSessionUser(user: any, fallbackEmail?: string | null): TeacherIdentity {
+function getTeacherIdentityFromSessionUser(
+  user: any,
+  fallbackEmail?: string | null
+): TeacherIdentity {
   const metadata = user?.user_metadata || user?.raw_user_meta_data || {};
   const email = cleanText(user?.email) || cleanText(fallbackEmail) || "Professor";
 
@@ -591,7 +594,8 @@ export default function TeacherHomePage() {
             <div className="h-10 w-80 max-w-full rounded-2xl bg-slate-200" />
             <div className="h-4 w-[520px] max-w-full rounded-2xl bg-slate-100" />
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+              <div className="h-36 rounded-[32px] bg-slate-100" />
               <div className="h-36 rounded-[32px] bg-slate-100" />
               <div className="h-36 rounded-[32px] bg-slate-100" />
               <div className="h-36 rounded-[32px] bg-slate-100" />
@@ -658,8 +662,9 @@ export default function TeacherHomePage() {
                 </h1>
 
                 <p className="mt-3 max-w-3xl break-words text-sm leading-7 text-slate-300 md:text-base">
-                  Este é seu painel de rotina docente. Acesse turmas, chamada,
-                  diário pedagógico e comunicados oficiais da escola em poucos cliques.
+                  Este é seu painel de rotina docente. Acesse agenda, turmas,
+                  chamada, diário pedagógico e comunicados oficiais da escola em
+                  poucos cliques.
                 </p>
 
                 <div className="mt-5 flex flex-wrap gap-2 text-xs text-slate-300">
@@ -682,11 +687,19 @@ export default function TeacherHomePage() {
               </div>
             </div>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+              <button
+                type="button"
+                onClick={() => router.push("/teacher/calendar")}
+                className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:opacity-90"
+              >
+                Minha agenda
+              </button>
+
               <button
                 type="button"
                 onClick={() => router.push("/teacher/classes")}
-                className="rounded-2xl bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:opacity-90"
+                className="rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/15"
               >
                 Abrir minhas turmas
               </button>
@@ -760,7 +773,15 @@ export default function TeacherHomePage() {
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-5">
+        <StatCard
+          label="Agenda"
+          value="Minha agenda"
+          help="Visualize sua rotina diária, semanal e mensal."
+          icon="📅"
+          tone="blue"
+        />
+
         <StatCard
           label="Turmas"
           value="Minhas turmas"
@@ -811,13 +832,20 @@ export default function TeacherHomePage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+          <FeatureCard
+            href="/teacher/calendar"
+            title="Agenda"
+            description="Veja sua rotina diária, semanal e mensal, com aulas previstas e planejamento."
+            icon="📅"
+            primary
+          />
+
           <FeatureCard
             href="/teacher/classes"
             title="Minhas turmas"
             description="Entre nas turmas vinculadas, visualize alunos e acesse as ações principais do professor."
             icon="🏫"
-            primary
           />
 
           <FeatureCard
@@ -869,34 +897,41 @@ export default function TeacherHomePage() {
           <div className="mt-5 space-y-3">
             <RoutineStep
               number="01"
+              title="Abrir agenda"
+              description="Confira as aulas previstas, planejamento e rotina do dia."
+              href="/teacher/calendar"
+            />
+
+            <RoutineStep
+              number="02"
               title="Abrir turmas"
               description="Confira as turmas vinculadas ao seu usuário professor."
               href="/teacher/classes"
             />
 
             <RoutineStep
-              number="02"
+              number="03"
               title="Realizar chamada"
               description="Entre na turma desejada e registre a presença dos alunos."
               href="/teacher/classes"
             />
 
             <RoutineStep
-              number="03"
+              number="04"
               title="Lançar diário pedagógico"
               description="Registre conteúdos trabalhados e observações importantes."
               href="/teacher/classes"
             />
 
             <RoutineStep
-              number="04"
+              number="05"
               title="Conferir comunicados"
               description="Veja avisos oficiais e confirme leitura automaticamente."
               href="/teacher/messages"
             />
 
             <RoutineStep
-              number="05"
+              number="06"
               title="Atualizar meus dados"
               description="Mantenha sua foto e informações pessoais atualizadas."
               href="/teacher/profile"
@@ -927,6 +962,14 @@ export default function TeacherHomePage() {
 
           <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-2">
             <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Agenda docente</div>
+
+              <p className="mt-2 break-words text-xs leading-5 text-slate-500">
+                A rotina diária, semanal e mensal fica acessível ao professor.
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-sm font-semibold text-slate-900">Foco na aula</div>
 
               <p className="mt-2 break-words text-xs leading-5 text-slate-500">
@@ -947,14 +990,6 @@ export default function TeacherHomePage() {
 
               <p className="mt-2 break-words text-xs leading-5 text-slate-500">
                 Foto, nome e telefone podem ser atualizados pelo professor.
-              </p>
-            </div>
-
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-semibold text-slate-900">Mobile first</div>
-
-              <p className="mt-2 break-words text-xs leading-5 text-slate-500">
-                A navegação inferior facilita o uso pelo celular.
               </p>
             </div>
           </div>
