@@ -68,6 +68,11 @@ function isAllowedStaffRole(role: unknown) {
   ].includes(r);
 }
 
+function isTeacherRole(role: unknown) {
+  const r = normalizeRole(role);
+  return r === "professor" || r === "teacher";
+}
+
 function getBearerToken(req: Request) {
   const auth = req.headers.get("authorization") || "";
   const match = auth.match(/^Bearer\s+(.+)$/i);
@@ -106,6 +111,21 @@ function isTime(value: unknown) {
 function timeToMinutes(value: string) {
   const [h, m] = value.split(":").map(Number);
   return h * 60 + m;
+}
+
+function classNameFromRow(cls: any) {
+  return [cleanText(cls?.name), cleanText(cls?.grade), cleanText(cls?.section), cleanText(cls?.shift)]
+    .filter(Boolean)
+    .join(" • ");
+}
+
+function teacherNameFromRow(teacher: any) {
+  return (
+    cleanText(teacher?.full_name) ||
+    cleanText(teacher?.name) ||
+    cleanText(teacher?.email) ||
+    "Professor"
+  );
 }
 
 async function getStaffContext(req: Request): Promise<StaffContext> {
@@ -178,9 +198,7 @@ async function assertClassBelongsToSchool(classId: string, schoolId: string) {
     .eq("school_id", schoolId)
     .maybeSingle();
 
-  if (error) {
-    throw new Error("Falha ao validar turma: " + error.message);
-  }
+  if (error) throw new Error("Falha ao validar turma: " + error.message);
 
   return Boolean(data?.id);
 }
@@ -194,14 +212,11 @@ async function assertTeacherBelongsToSchool(teacherUserId: string, schoolId: str
     .eq("is_active", true)
     .maybeSingle();
 
-  if (error) {
-    throw new Error("Falha ao validar professor: " + error.message);
-  }
+  if (error) throw new Error("Falha ao validar professor: " + error.message);
 
   if (!data?.user_id) return false;
 
-  const role = normalizeRole(data.role);
-  return role === "professor" || role === "teacher";
+  return isTeacherRole(data.role);
 }
 
 async function assertSubjectBelongsToSchool(subjectId: string, schoolId: string) {
@@ -212,11 +227,73 @@ async function assertSubjectBelongsToSchool(subjectId: string, schoolId: string)
     .eq("school_id", schoolId)
     .maybeSingle();
 
-  if (error) {
-    throw new Error("Falha ao validar disciplina: " + error.message);
-  }
+  if (error) throw new Error("Falha ao validar disciplina: " + error.message);
 
   return Boolean(data?.id);
+}
+
+async function loadOptions(schoolId: string) {
+  const [classesRes, teachersRes, subjectsRes] = await Promise.all([
+    supabaseAdmin
+      .from("classes")
+      .select("id, name, grade, section, shift, school_id")
+      .eq("school_id", schoolId)
+      .order("name", { ascending: true }),
+
+    supabaseAdmin
+      .from("school_users")
+      .select("user_id, full_name, name, email, role, is_active, school_id")
+      .eq("school_id", schoolId)
+      .eq("is_active", true)
+      .order("created_at", { ascending: false }),
+
+    supabaseAdmin
+      .from("subjects")
+      .select("id, name, school_id")
+      .eq("school_id", schoolId)
+      .order("name", { ascending: true }),
+  ]);
+
+  if (classesRes.error) {
+    throw new Error("Falha ao buscar turmas: " + classesRes.error.message);
+  }
+
+  if (teachersRes.error) {
+    throw new Error("Falha ao buscar professores: " + teachersRes.error.message);
+  }
+
+  if (subjectsRes.error) {
+    throw new Error("Falha ao buscar disciplinas: " + subjectsRes.error.message);
+  }
+
+  const classes = (classesRes.data || []).map((cls: any) => ({
+    id: String(cls.id),
+    name: classNameFromRow(cls) || "Turma",
+    rawName: cleanText(cls.name) || "Turma",
+    grade: cleanText(cls.grade) || null,
+    section: cleanText(cls.section) || null,
+    shift: cleanText(cls.shift) || null,
+  }));
+
+  const teachers = (teachersRes.data || [])
+    .filter((teacher: any) => isTeacherRole(teacher.role))
+    .map((teacher: any) => ({
+      userId: String(teacher.user_id),
+      name: teacherNameFromRow(teacher),
+      email: cleanText(teacher.email) || null,
+      role: cleanText(teacher.role) || "professor",
+    }));
+
+  const subjects = (subjectsRes.data || []).map((subject: any) => ({
+    id: String(subject.id),
+    name: cleanText(subject.name) || "Disciplina",
+  }));
+
+  return {
+    classes,
+    teachers,
+    subjects,
+  };
 }
 
 async function loadSchedule(schoolId: string) {
@@ -279,10 +356,7 @@ async function loadSchedule(schoolId: string) {
       : Promise.resolve({ data: [], error: null } as any),
 
     subjectIds.length
-      ? supabaseAdmin
-          .from("subjects")
-          .select("id, name")
-          .in("id", subjectIds)
+      ? supabaseAdmin.from("subjects").select("id, name").in("id", subjectIds)
       : Promise.resolve({ data: [], error: null } as any),
   ]);
 
@@ -319,28 +393,13 @@ async function loadSchedule(schoolId: string) {
     const teacher = teachersById.get(String(row.teacher_user_id));
     const subject = row.subject_id ? subjectsById.get(String(row.subject_id)) : null;
 
-    const className = [
-      cleanText(cls?.name),
-      cleanText(cls?.grade),
-      cleanText(cls?.section),
-      cleanText(cls?.shift),
-    ]
-      .filter(Boolean)
-      .join(" • ");
-
-    const teacherName =
-      cleanText(teacher?.full_name) ||
-      cleanText(teacher?.name) ||
-      cleanText(teacher?.email) ||
-      "Professor";
-
     return {
       id: String(row.id),
       schoolId: String(row.school_id),
       classId: String(row.class_id),
-      className: className || "Turma",
+      className: classNameFromRow(cls) || "Turma",
       teacherUserId: String(row.teacher_user_id),
-      teacherName,
+      teacherName: teacherNameFromRow(teacher),
       teacherEmail: cleanText(teacher?.email) || null,
       subjectId: row.subject_id ? String(row.subject_id) : null,
       subjectName: cleanText(subject?.name) || null,
@@ -362,11 +421,18 @@ export async function GET(req: Request) {
   if (!ctx.ok) return ctx.response;
 
   try {
-    const schedule = await loadSchedule(ctx.schoolId);
+    const url = new URL(req.url);
+    const includeOptions = url.searchParams.get("includeOptions") === "1";
+
+    const [schedule, options] = await Promise.all([
+      loadSchedule(ctx.schoolId),
+      includeOptions ? loadOptions(ctx.schoolId) : Promise.resolve(null),
+    ]);
 
     return jsonOk({
       schedule,
       total: schedule.length,
+      options,
     });
   } catch (e: any) {
     return jsonError(e?.message || "Erro interno ao carregar grade.", 500);
@@ -381,9 +447,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
 
-    if (!body) {
-      return jsonError("Body JSON inválido.", 400);
-    }
+    if (!body) return jsonError("Body JSON inválido.", 400);
 
     const classId = cleanText(body.classId || body.class_id);
     const teacherUserId = cleanText(body.teacherUserId || body.teacher_user_id);
@@ -396,17 +460,9 @@ export async function POST(req: Request) {
     const room = cleanText(body.room) || null;
     const notes = cleanText(body.notes) || null;
 
-    if (!classId) {
-      return jsonError("Informe a turma.", 400);
-    }
-
-    if (!teacherUserId) {
-      return jsonError("Informe o professor.", 400);
-    }
-
-    if (weekday === null) {
-      return jsonError("Informe um dia da semana válido.", 400);
-    }
+    if (!classId) return jsonError("Informe a turma.", 400);
+    if (!teacherUserId) return jsonError("Informe o professor.", 400);
+    if (weekday === null) return jsonError("Informe um dia da semana válido.", 400);
 
     if (!isTime(startTime)) {
       return jsonError("Informe um horário inicial válido no formato HH:mm.", 400);
@@ -422,22 +478,16 @@ export async function POST(req: Request) {
 
     const classOk = await assertClassBelongsToSchool(classId, ctx.schoolId);
 
-    if (!classOk) {
-      return jsonError("Turma não encontrada nesta escola.", 404);
-    }
+    if (!classOk) return jsonError("Turma não encontrada nesta escola.", 404);
 
     const teacherOk = await assertTeacherBelongsToSchool(teacherUserId, ctx.schoolId);
 
-    if (!teacherOk) {
-      return jsonError("Professor não encontrado nesta escola.", 404);
-    }
+    if (!teacherOk) return jsonError("Professor não encontrado nesta escola.", 404);
 
     if (subjectId) {
       const subjectOk = await assertSubjectBelongsToSchool(subjectId, ctx.schoolId);
 
-      if (!subjectOk) {
-        return jsonError("Disciplina não encontrada nesta escola.", 404);
-      }
+      if (!subjectOk) return jsonError("Disciplina não encontrada nesta escola.", 404);
     }
 
     const { data, error } = await supabaseAdmin
@@ -461,13 +511,17 @@ export async function POST(req: Request) {
       return jsonError("Falha ao criar horário: " + error.message, 500);
     }
 
-    const schedule = await loadSchedule(ctx.schoolId);
+    const [schedule, options] = await Promise.all([
+      loadSchedule(ctx.schoolId),
+      loadOptions(ctx.schoolId),
+    ]);
 
     return jsonOk(
       {
         id: data.id,
         schedule,
         total: schedule.length,
+        options,
       },
       201
     );
@@ -484,15 +538,11 @@ export async function PATCH(req: Request) {
   try {
     const body = await req.json().catch(() => null);
 
-    if (!body) {
-      return jsonError("Body JSON inválido.", 400);
-    }
+    if (!body) return jsonError("Body JSON inválido.", 400);
 
     const id = cleanText(body.id);
 
-    if (!id) {
-      return jsonError("Informe o ID do horário.", 400);
-    }
+    if (!id) return jsonError("Informe o ID do horário.", 400);
 
     const { data: existing, error: existingErr } = await supabaseAdmin
       .from("school_class_schedule")
@@ -513,45 +563,27 @@ export async function PATCH(req: Request) {
 
     if ("classId" in body || "class_id" in body) {
       const classId = cleanText(body.classId || body.class_id);
-
-      if (!classId) {
-        return jsonError("Informe a turma.", 400);
-      }
-
-      const classOk = await assertClassBelongsToSchool(classId, ctx.schoolId);
-
-      if (!classOk) {
+      if (!classId) return jsonError("Informe a turma.", 400);
+      if (!(await assertClassBelongsToSchool(classId, ctx.schoolId))) {
         return jsonError("Turma não encontrada nesta escola.", 404);
       }
-
       update.class_id = classId;
     }
 
     if ("teacherUserId" in body || "teacher_user_id" in body) {
       const teacherUserId = cleanText(body.teacherUserId || body.teacher_user_id);
-
-      if (!teacherUserId) {
-        return jsonError("Informe o professor.", 400);
-      }
-
-      const teacherOk = await assertTeacherBelongsToSchool(teacherUserId, ctx.schoolId);
-
-      if (!teacherOk) {
+      if (!teacherUserId) return jsonError("Informe o professor.", 400);
+      if (!(await assertTeacherBelongsToSchool(teacherUserId, ctx.schoolId))) {
         return jsonError("Professor não encontrado nesta escola.", 404);
       }
-
       update.teacher_user_id = teacherUserId;
     }
 
     if ("subjectId" in body || "subject_id" in body) {
       const subjectId = cleanText(body.subjectId || body.subject_id) || null;
 
-      if (subjectId) {
-        const subjectOk = await assertSubjectBelongsToSchool(subjectId, ctx.schoolId);
-
-        if (!subjectOk) {
-          return jsonError("Disciplina não encontrada nesta escola.", 404);
-        }
+      if (subjectId && !(await assertSubjectBelongsToSchool(subjectId, ctx.schoolId))) {
+        return jsonError("Disciplina não encontrada nesta escola.", 404);
       }
 
       update.subject_id = subjectId;
@@ -559,31 +591,23 @@ export async function PATCH(req: Request) {
 
     if ("weekday" in body) {
       const weekday = parseWeekday(body.weekday);
-
-      if (weekday === null) {
-        return jsonError("Informe um dia da semana válido.", 400);
-      }
-
+      if (weekday === null) return jsonError("Informe um dia da semana válido.", 400);
       update.weekday = weekday;
     }
 
     if ("startTime" in body || "start_time" in body) {
       const startTime = normalizeTime(body.startTime || body.start_time);
-
       if (!isTime(startTime)) {
         return jsonError("Informe um horário inicial válido no formato HH:mm.", 400);
       }
-
       update.start_time = startTime;
     }
 
     if ("endTime" in body || "end_time" in body) {
       const endTime = normalizeTime(body.endTime || body.end_time);
-
       if (!isTime(endTime)) {
         return jsonError("Informe um horário final válido no formato HH:mm.", 400);
       }
-
       update.end_time = endTime;
     }
 
@@ -593,13 +617,8 @@ export async function PATCH(req: Request) {
       }
     }
 
-    if ("room" in body) {
-      update.room = cleanText(body.room) || null;
-    }
-
-    if ("notes" in body) {
-      update.notes = cleanText(body.notes) || null;
-    }
+    if ("room" in body) update.room = cleanText(body.room) || null;
+    if ("notes" in body) update.notes = cleanText(body.notes) || null;
 
     if ("isActive" in body || "is_active" in body) {
       update.is_active = Boolean(body.isActive ?? body.is_active);
@@ -619,12 +638,16 @@ export async function PATCH(req: Request) {
       return jsonError("Falha ao atualizar horário: " + error.message, 500);
     }
 
-    const schedule = await loadSchedule(ctx.schoolId);
+    const [schedule, options] = await Promise.all([
+      loadSchedule(ctx.schoolId),
+      loadOptions(ctx.schoolId),
+    ]);
 
     return jsonOk({
       id,
       schedule,
       total: schedule.length,
+      options,
     });
   } catch (e: any) {
     return jsonError(e?.message || "Erro interno ao atualizar horário.", 500);
@@ -640,9 +663,7 @@ export async function DELETE(req: Request) {
     const url = new URL(req.url);
     const id = cleanText(url.searchParams.get("id"));
 
-    if (!id) {
-      return jsonError("Informe o ID do horário.", 400);
-    }
+    if (!id) return jsonError("Informe o ID do horário.", 400);
 
     const { data: existing, error: existingErr } = await supabaseAdmin
       .from("school_class_schedule")
@@ -671,12 +692,16 @@ export async function DELETE(req: Request) {
       return jsonError("Falha ao remover horário: " + error.message, 500);
     }
 
-    const schedule = await loadSchedule(ctx.schoolId);
+    const [schedule, options] = await Promise.all([
+      loadSchedule(ctx.schoolId),
+      loadOptions(ctx.schoolId),
+    ]);
 
     return jsonOk({
       id,
       schedule,
       total: schedule.length,
+      options,
     });
   } catch (e: any) {
     return jsonError(e?.message || "Erro interno ao remover horário.", 500);
