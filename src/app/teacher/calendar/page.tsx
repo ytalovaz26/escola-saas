@@ -7,9 +7,6 @@ import { supabase } from "@/lib/supabaseClient";
 type CalendarClass = {
   id: string;
   name: string;
-  grade?: string | null;
-  section?: string | null;
-  shift?: string | null;
 };
 
 type CalendarEvent = {
@@ -22,6 +19,10 @@ type CalendarEvent = {
   endTime: string;
   classId?: string | null;
   className?: string | null;
+  subjectId?: string | null;
+  subjectName?: string | null;
+  room?: string | null;
+  notes?: string | null;
   status: "scheduled" | "pending" | "done";
 };
 
@@ -124,10 +125,6 @@ function typeStyle(type: CalendarEvent["type"]) {
   return "border-emerald-200 bg-emerald-50 text-emerald-700";
 }
 
-function cleanText(value: unknown) {
-  return String(value || "").trim();
-}
-
 function groupEventsByDate(events: CalendarEvent[]) {
   return events.reduce<Record<string, CalendarEvent[]>>((acc, event) => {
     if (!acc[event.date]) acc[event.date] = [];
@@ -175,6 +172,12 @@ function EventCard({ event }: { event: CalendarEvent }) {
             <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
               {statusLabel(event.status)}
             </span>
+
+            {event.room ? (
+              <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                Sala: {event.room}
+              </span>
+            ) : null}
           </div>
 
           <h3 className="mt-3 break-words text-lg font-bold text-slate-950">
@@ -277,7 +280,7 @@ export default function TeacherCalendarPage() {
       const json = await safeJson(res);
 
       if (!res.ok || !json?.ok) {
-        setError(json?.error || "Falha ao carregar agenda.");
+        setError(json?.error || "Falha ao carregar horários.");
         return;
       }
 
@@ -289,7 +292,7 @@ export default function TeacherCalendarPage() {
         meta: json.meta,
       });
     } catch (e: any) {
-      setError(e?.message || "Erro inesperado ao carregar agenda.");
+      setError(e?.message || "Erro inesperado ao carregar horários.");
     } finally {
       setLoading(false);
     }
@@ -319,16 +322,16 @@ export default function TeacherCalendarPage() {
         <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
-              Agenda docente
+              Grade oficial
             </div>
 
             <h1 className="mt-4 break-words text-3xl font-semibold tracking-tight md:text-5xl">
-              Minha agenda
+              Meus horários
             </h1>
 
             <p className="mt-3 max-w-3xl break-words text-sm leading-7 text-slate-300 md:text-base">
-              Acompanhe sua rotina de aulas, turmas vinculadas e planejamento diário.
-              Esta é a primeira versão da agenda interna do professor.
+              Acompanhe a grade oficial cadastrada pela direção da escola. As aulas
+              aparecem aqui conforme turma, disciplina, dia da semana e horário.
             </p>
           </div>
 
@@ -386,7 +389,7 @@ export default function TeacherCalendarPage() {
 
               <div className="rounded-3xl bg-slate-50 p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Eventos
+                  Aulas
                 </div>
 
                 <div className="mt-2 text-2xl font-bold text-slate-950">
@@ -413,8 +416,7 @@ export default function TeacherCalendarPage() {
                     </div>
 
                     <div className="mt-1 text-xs text-slate-500">
-                      {[cls.grade, cls.section, cls.shift].filter(Boolean).join(" • ") ||
-                        "Turma vinculada"}
+                      Grade oficial vinculada ao professor
                     </div>
                   </div>
                 ))
@@ -428,13 +430,12 @@ export default function TeacherCalendarPage() {
 
           <div className="rounded-[36px] border border-blue-200 bg-blue-50 p-6 shadow-sm">
             <div className="text-sm font-bold text-blue-900">
-              Próxima evolução
+              Integração ativa
             </div>
 
             <p className="mt-2 text-sm leading-6 text-blue-800">
-              Depois desta tela validada, vamos criar a grade oficial de horários por
-              turma, disciplina e professor. A integração com Google Agenda fica como
-              próxima fase.
+              Esta tela agora usa a grade oficial cadastrada pela direção. Se a direção
+              alterar ou remover um horário, a agenda do professor será atualizada.
             </p>
           </div>
         </div>
@@ -553,8 +554,8 @@ export default function TeacherCalendarPage() {
                 </div>
               ) : (
                 <EmptyState
-                  title="Nenhum evento neste dia"
-                  description="Ainda não há aulas ou atividades previstas para a data selecionada."
+                  title="Nenhuma aula neste dia"
+                  description="Não existe aula cadastrada na grade oficial para esta data."
                 />
               )
             ) : view === "week" ? (
@@ -576,7 +577,7 @@ export default function TeacherCalendarPage() {
                         </div>
 
                         <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">
-                          {dateEvents.length} evento(s)
+                          {dateEvents.length} aula(s)
                         </span>
                       </div>
 
@@ -588,7 +589,7 @@ export default function TeacherCalendarPage() {
                         </div>
                       ) : (
                         <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-4 text-sm text-slate-500">
-                          Sem eventos.
+                          Sem aulas.
                         </div>
                       )}
                     </div>
@@ -630,7 +631,7 @@ export default function TeacherCalendarPage() {
                             : "bg-white text-slate-500"
                         }`}
                       >
-                        {dateEvents.length} evento(s)
+                        {dateEvents.length} aula(s)
                       </div>
                     </button>
                   );

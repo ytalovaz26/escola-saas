@@ -63,6 +63,12 @@ const navItems: NavItem[] = [
     description: "Alunos, chamada e diário",
   },
   {
+    label: "Horários",
+    href: "/teacher/calendar",
+    icon: "📅",
+    description: "Grade oficial de aulas",
+  },
+  {
     label: "Comunicados",
     href: "/teacher/messages",
     icon: "📩",
@@ -484,7 +490,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                 </div>
 
                 <p className="mt-2 break-words text-sm leading-6 text-slate-300">
-                  Acesse chamadas, diário pedagógico e comunicados em um painel centralizado.
+                  Acesse chamadas, diário pedagógico, comunicados e grade oficial em um painel centralizado.
                 </p>
 
                 <button
@@ -508,22 +514,13 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-40 border-b border-white/70 bg-white/80 backdrop-blur-xl xl:hidden">
             <div className="flex items-center gap-3 px-4 py-3">
-              {logoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={logoUrl}
-                  alt={schoolLabel}
-                  className="h-12 w-12 shrink-0 rounded-2xl border border-slate-200 bg-white object-contain p-1.5"
-                  draggable={false}
-                />
-              ) : (
-                <div
-                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-xs font-bold text-white"
-                  style={{ backgroundColor: "rgb(var(--brand-rgb))" }}
-                >
-                  {getInitials(schoolLabel)}
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={() => router.push("/teacher")}
+                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-xl shadow-sm"
+              >
+                ☰
+              </button>
 
               <div className="min-w-0 flex-1">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
@@ -532,10 +529,6 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
 
                 <div className="truncate text-sm font-semibold text-slate-900">
                   {schoolLabel}
-                </div>
-
-                <div className="truncate text-xs text-slate-500">
-                  {teacherProfile.name}
                 </div>
               </div>
 
@@ -562,14 +555,6 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                   {teacherProfile.initials}
                 </button>
               )}
-
-              <button
-                type="button"
-                onClick={logout}
-                className="shrink-0 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm"
-              >
-                Sair
-              </button>
             </div>
 
             <div
@@ -586,7 +571,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
           </main>
 
           <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 px-3 py-2 backdrop-blur-xl xl:hidden">
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-5 gap-1">
               {navItems.map((item) => {
                 const active = isActive(pathname, item.href);
 
@@ -596,7 +581,7 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
                     type="button"
                     onClick={() => router.push(item.href)}
                     className={[
-                      "flex min-w-0 flex-col items-center justify-center rounded-2xl px-2 py-2 text-xs transition",
+                      "flex min-w-0 flex-col items-center justify-center rounded-2xl px-1 py-2 text-[11px] transition",
                       active
                         ? "bg-slate-950 text-white"
                         : "text-slate-500 hover:bg-slate-100",

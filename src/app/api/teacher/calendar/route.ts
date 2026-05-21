@@ -2,13 +2,11 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type CalendarClass = {
   id: string;
   name: string;
-  grade?: string | null;
-  section?: string | null;
-  shift?: string | null;
 };
 
 type CalendarEvent = {
@@ -21,6 +19,10 @@ type CalendarEvent = {
   endTime: string;
   classId?: string | null;
   className?: string | null;
+  subjectId?: string | null;
+  subjectName?: string | null;
+  room?: string | null;
+  notes?: string | null;
   status: "scheduled" | "pending" | "done";
 };
 
@@ -84,15 +86,31 @@ function getWeekday(date: string) {
   return new Date(`${date}T12:00:00`).getDay();
 }
 
-function classDisplayName(cls: CalendarClass) {
-  const parts = [
-    cleanText(cls.name),
-    cleanText(cls.grade),
-    cleanText(cls.section),
-    cleanText(cls.shift),
-  ].filter(Boolean);
+function normalizeTime(value: unknown) {
+  const safe = cleanText(value);
 
-  return parts.length ? parts.join(" • ") : "Turma";
+  if (!safe) return "";
+  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(safe)) return safe;
+  if (/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(safe)) return safe.slice(0, 5);
+
+  return safe;
+}
+
+function teacherNameFromEmail(email?: string | null) {
+  const safe = cleanText(email);
+
+  if (!safe) return "Professor";
+
+  const beforeAt = safe.split("@")[0] || safe;
+
+  const pretty = beforeAt
+    .split(/[.\-_ ]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+
+  return pretty || "Professor";
 }
 
 async function getTeacherContext(req: Request) {
@@ -120,10 +138,9 @@ async function getTeacherContext(req: Request) {
 
   const { data: schoolUser, error: suErr } = await supabaseAdmin
     .from("school_users")
-    .select("school_id, role, is_active, created_at")
+    .select("school_id, role, is_active")
     .eq("user_id", user.id)
     .eq("is_active", true)
-    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -156,132 +173,165 @@ async function getTeacherContext(req: Request) {
   };
 }
 
-async function getTeacherClasses(params: {
-  teacherUserId: string;
-  schoolId: string;
-}) {
-  const { data: links, error: linksErr } = await supabaseAdmin
+async function getTeacherLinkedClassIds(teacherUserId: string) {
+  const { data, error } = await supabaseAdmin
     .from("teacher_classes")
     .select("class_id")
-    .eq("teacher_user_id", params.teacherUserId);
+    .eq("teacher_user_id", teacherUserId);
 
-  if (linksErr) {
-    throw new Error("Falha ao buscar turmas do professor: " + linksErr.message);
+  if (error) {
+    throw new Error("Falha ao buscar turmas vinculadas ao professor: " + error.message);
   }
 
-  const classIds = Array.from(
-    new Set(
-      (links || [])
-        .map((item: any) => cleanText(item.class_id))
-        .filter(Boolean)
-    )
+  return Array.from(
+    new Set((data || []).map((item: any) => cleanText(item.class_id)).filter(Boolean))
   );
+}
 
-  if (classIds.length === 0) {
-    return [];
+async function getOfficialSchedule(params: {
+  schoolId: string;
+  teacherUserId: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("school_class_schedule")
+    .select(
+      `
+      id,
+      school_id,
+      class_id,
+      teacher_user_id,
+      subject_id,
+      weekday,
+      start_time,
+      end_time,
+      room,
+      notes,
+      is_active
+    `
+    )
+    .eq("school_id", params.schoolId)
+    .eq("teacher_user_id", params.teacherUserId)
+    .eq("is_active", true)
+    .order("weekday", { ascending: true })
+    .order("start_time", { ascending: true });
+
+  if (error) {
+    throw new Error("Falha ao buscar grade oficial do professor: " + error.message);
   }
 
-  const { data: classesBasic, error: classesBasicErr } = await supabaseAdmin
+  return data || [];
+}
+
+async function getClassesByIds(params: {
+  schoolId: string;
+  classIds: string[];
+}) {
+  const ids = Array.from(new Set(params.classIds.map(cleanText).filter(Boolean)));
+
+  if (ids.length === 0) return new Map<string, CalendarClass>();
+
+  const { data, error } = await supabaseAdmin
     .from("classes")
-    .select("id, name, grade, section, shift, school_id")
-    .in("id", classIds)
+    .select("id, name, school_id")
+    .in("id", ids)
     .eq("school_id", params.schoolId)
     .order("name", { ascending: true });
 
-  if (!classesBasicErr && Array.isArray(classesBasic)) {
-    return classesBasic.map((cls: any) => ({
+  if (error) {
+    throw new Error("Falha ao buscar dados das turmas: " + error.message);
+  }
+
+  const map = new Map<string, CalendarClass>();
+
+  for (const cls of data || []) {
+    map.set(String(cls.id), {
       id: String(cls.id),
       name: cleanText(cls.name) || "Turma",
-      grade: cleanText(cls.grade) || null,
-      section: cleanText(cls.section) || null,
-      shift: cleanText(cls.shift) || null,
-    })) as CalendarClass[];
+    });
   }
 
-  const { data: classesFallback, error: classesFallbackErr } = await supabaseAdmin
-    .from("classes")
-    .select("id, name")
-    .in("id", classIds)
-    .order("name", { ascending: true });
-
-  if (classesFallbackErr) {
-    throw new Error("Falha ao buscar dados das turmas: " + classesFallbackErr.message);
-  }
-
-  return (classesFallback || []).map((cls: any) => ({
-    id: String(cls.id),
-    name: cleanText(cls.name) || "Turma",
-    grade: null,
-    section: null,
-    shift: null,
-  })) as CalendarClass[];
+  return map;
 }
 
-function buildInternalAgenda(params: {
-  classes: CalendarClass[];
+async function getSubjectsByIds(params: {
+  schoolId: string;
+  subjectIds: string[];
+}) {
+  const ids = Array.from(new Set(params.subjectIds.map(cleanText).filter(Boolean)));
+
+  if (ids.length === 0) return new Map<string, { id: string; name: string }>();
+
+  const { data, error } = await supabaseAdmin
+    .from("subjects")
+    .select("id, name, school_id")
+    .in("id", ids)
+    .eq("school_id", params.schoolId)
+    .order("name", { ascending: true });
+
+  if (error) {
+    throw new Error("Falha ao buscar disciplinas da grade: " + error.message);
+  }
+
+  const map = new Map<string, { id: string; name: string }>();
+
+  for (const subject of data || []) {
+    map.set(String(subject.id), {
+      id: String(subject.id),
+      name: cleanText(subject.name) || "Disciplina",
+    });
+  }
+
+  return map;
+}
+
+function buildOfficialEvents(params: {
+  scheduleRows: any[];
+  classesById: Map<string, CalendarClass>;
+  subjectsById: Map<string, { id: string; name: string }>;
   startDate: string;
   days: number;
 }) {
   const events: CalendarEvent[] = [];
 
-  const usefulWeekdays = [1, 2, 3, 4, 5];
-
-  const timeSlots = [
-    ["07:00", "07:50"],
-    ["07:50", "08:40"],
-    ["08:40", "09:30"],
-    ["09:50", "10:40"],
-    ["10:40", "11:30"],
-    ["13:00", "13:50"],
-    ["13:50", "14:40"],
-    ["14:40", "15:30"],
-    ["15:50", "16:40"],
-    ["16:40", "17:30"],
-  ];
-
-  const classes = params.classes.slice(0, 10);
-
   for (let i = 0; i < params.days; i++) {
     const date = addDaysISO(params.startDate, i);
     const weekday = getWeekday(date);
 
-    if (!usefulWeekdays.includes(weekday)) continue;
+    const dayRows = params.scheduleRows.filter((row) => Number(row.weekday) === weekday);
 
-    classes.forEach((cls, index) => {
-      const slot = timeSlots[(index + weekday) % timeSlots.length];
-      const className = classDisplayName(cls);
+    for (const row of dayRows) {
+      const classId = cleanText(row.class_id);
+      const subjectId = cleanText(row.subject_id) || null;
+
+      const cls = params.classesById.get(classId);
+      const subject = subjectId ? params.subjectsById.get(subjectId) : null;
+
+      const className = cls?.name || "Turma";
+      const subjectName = subject?.name || "Aula";
+
+      const startTime = normalizeTime(row.start_time);
+      const endTime = normalizeTime(row.end_time);
 
       events.push({
-        id: `internal-${date}-${cls.id}-${index}`,
+        id: `official-${row.id}-${date}`,
         type: "class",
-        title: `Aula prevista • ${className}`,
+        title: `${subjectName} • ${className}`,
         description:
-          "Agenda interna inicial baseada nas turmas vinculadas ao professor. Na próxima etapa, estes horários serão conectados à grade oficial da escola.",
+          cleanText(row.notes) ||
+          "Aula cadastrada na grade oficial da escola pelo painel da direção.",
         date,
-        startTime: slot[0],
-        endTime: slot[1],
-        classId: cls.id,
+        startTime,
+        endTime,
+        classId,
         className,
+        subjectId,
+        subjectName,
+        room: cleanText(row.room) || null,
+        notes: cleanText(row.notes) || null,
         status: "scheduled",
       });
-    });
+    }
   }
-
-  const planningDate = params.startDate;
-
-  events.push({
-    id: `planning-${planningDate}`,
-    type: "planning",
-    title: "Planejamento pedagógico",
-    description:
-      "Revise chamada, diário pedagógico, comunicados e conteúdos previstos para o dia.",
-    date: planningDate,
-    startTime: "06:40",
-    endTime: "07:00",
-    classId: null,
-    className: null,
-    status: "pending",
-  });
 
   return events.sort((a, b) => {
     const da = `${a.date}T${a.startTime}:00`;
@@ -304,13 +354,43 @@ export async function GET(req: Request) {
       ? Math.min(Math.max(daysParam, 1), 62)
       : 31;
 
-    const classes = await getTeacherClasses({
-      teacherUserId: ctx.user.id,
-      schoolId: ctx.schoolId,
-    });
+    const [linkedClassIds, scheduleRows] = await Promise.all([
+      getTeacherLinkedClassIds(ctx.user.id),
+      getOfficialSchedule({
+        schoolId: ctx.schoolId,
+        teacherUserId: ctx.user.id,
+      }),
+    ]);
 
-    const events = buildInternalAgenda({
-      classes,
+    const scheduleClassIds = scheduleRows
+      .map((row: any) => cleanText(row.class_id))
+      .filter(Boolean);
+
+    const allClassIds = Array.from(new Set([...linkedClassIds, ...scheduleClassIds]));
+
+    const subjectIds = scheduleRows
+      .map((row: any) => cleanText(row.subject_id))
+      .filter(Boolean);
+
+    const [classesById, subjectsById] = await Promise.all([
+      getClassesByIds({
+        schoolId: ctx.schoolId,
+        classIds: allClassIds,
+      }),
+      getSubjectsByIds({
+        schoolId: ctx.schoolId,
+        subjectIds,
+      }),
+    ]);
+
+    const classes = Array.from(classesById.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, "pt-BR")
+    );
+
+    const events = buildOfficialEvents({
+      scheduleRows,
+      classesById,
+      subjectsById,
       startDate,
       days,
     });
@@ -322,7 +402,7 @@ export async function GET(req: Request) {
         name:
           cleanText((ctx.user.user_metadata as any)?.full_name) ||
           cleanText((ctx.user.user_metadata as any)?.name) ||
-          cleanText(ctx.user.email) ||
+          teacherNameFromEmail(ctx.user.email) ||
           "Professor",
       },
       schoolId: ctx.schoolId,
@@ -331,8 +411,8 @@ export async function GET(req: Request) {
       meta: {
         startDate,
         days,
-        source: "internal_initial_calendar",
-        hasOfficialSchedule: false,
+        source: "official_school_class_schedule",
+        hasOfficialSchedule: scheduleRows.length > 0,
       },
     });
   } catch (e: any) {
