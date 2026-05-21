@@ -179,7 +179,8 @@ function ScheduleCard({
           </h3>
 
           <p className="mt-2 break-words text-sm leading-6 text-slate-500">
-            Turma: <span className="font-semibold text-slate-700">{row.className}</span>
+            Turma:{" "}
+            <span className="font-semibold text-slate-700">{row.className}</span>
           </p>
 
           <p className="mt-1 break-words text-sm leading-6 text-slate-500">
@@ -238,13 +239,10 @@ export default function SchoolSchedulePage() {
 
   const grouped = useMemo(() => groupedByWeekday(schedule), [schedule]);
 
-  const totalTeachers = useMemo(() => {
-    return new Set(schedule.map((row) => row.teacherUserId)).size;
-  }, [schedule]);
-
-  const totalClasses = useMemo(() => {
-    return new Set(schedule.map((row) => row.classId)).size;
-  }, [schedule]);
+  const totalActiveSchedules = schedule.length;
+  const totalClasses = options.classes.length;
+  const totalTeachers = options.teachers.length;
+  const totalSubjects = options.subjects.length;
 
   async function getToken() {
     const { data } = await supabase.auth.getSession();
@@ -262,23 +260,17 @@ export default function SchoolSchedulePage() {
     setSchedule(Array.isArray(json?.schedule) ? json.schedule : []);
 
     if (json?.options) {
-      setOptions({
+      const nextOptions: Options = {
         classes: Array.isArray(json.options.classes) ? json.options.classes : [],
         teachers: Array.isArray(json.options.teachers) ? json.options.teachers : [],
         subjects: Array.isArray(json.options.subjects) ? json.options.subjects : [],
-      });
+      };
 
-      if (!classId && json.options.classes?.[0]?.id) {
-        setClassId(json.options.classes[0].id);
-      }
+      setOptions(nextOptions);
 
-      if (!teacherUserId && json.options.teachers?.[0]?.userId) {
-        setTeacherUserId(json.options.teachers[0].userId);
-      }
-
-      if (!subjectId && json.options.subjects?.[0]?.id) {
-        setSubjectId(json.options.subjects[0].id);
-      }
+      setClassId((current) => current || nextOptions.classes?.[0]?.id || "");
+      setTeacherUserId((current) => current || nextOptions.teachers?.[0]?.userId || "");
+      setSubjectId((current) => current || nextOptions.subjects?.[0]?.id || "");
     }
   }
 
@@ -483,10 +475,10 @@ export default function SchoolSchedulePage() {
       ) : null}
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <InfoBadge label="Horários ativos" value={schedule.length} tone="blue" />
-        <InfoBadge label="Turmas na grade" value={totalClasses} tone="green" />
-        <InfoBadge label="Professores" value={totalTeachers} tone="amber" />
-        <InfoBadge label="Disciplinas" value={options.subjects.length} />
+        <InfoBadge label="Horários ativos" value={totalActiveSchedules} tone="blue" />
+        <InfoBadge label="Turmas cadastradas" value={totalClasses} tone="green" />
+        <InfoBadge label="Professores disponíveis" value={totalTeachers} tone="amber" />
+        <InfoBadge label="Disciplinas disponíveis" value={totalSubjects} />
       </section>
 
       <section className="grid grid-cols-1 gap-5 xl:grid-cols-[0.85fr_1.15fr]">
