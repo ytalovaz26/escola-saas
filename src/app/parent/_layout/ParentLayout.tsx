@@ -316,6 +316,12 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       description: "Eventos e compromissos",
     },
     {
+      href: "/parent/schedule",
+      icon: "🕒",
+      title: "Horários",
+      description: "Rotina escolar do filho",
+    },
+    {
       href: "/parent/messages",
       icon: "📩",
       title: "Comunicados",
@@ -351,7 +357,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="lg:hidden sticky top-0 z-40 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur">
+      <div className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 px-4 py-3 backdrop-blur lg:hidden">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -376,6 +382,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
           <div className="mt-3 rounded-3xl border border-slate-200 bg-white p-3 shadow-lg">
             <div className="mb-3 flex items-center gap-3 rounded-2xl bg-slate-50 p-3">
               <ParentAvatar photoUrl={profile?.photoUrl} fallbackText={responsibleInitials} />
+
               <div className="min-w-0">
                 <div className="truncate text-sm font-semibold text-slate-900">
                   {responsibleName}
@@ -462,9 +469,12 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
               <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-300">
                 Ambiente
               </div>
+
               <div className="mt-2 text-lg font-semibold">Portal familiar</div>
+
               <p className="mt-2 text-sm leading-6 text-slate-300">
-                Acompanhe filhos, agenda, comunicados e financeiro em um ambiente seguro.
+                Acompanhe filhos, agenda, horários, comunicados e financeiro em um
+                ambiente seguro.
               </p>
 
               <button
