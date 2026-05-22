@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -17,7 +17,7 @@ type ParentChild = {
   };
 };
 
-type ParentCalendarEvent = {
+type ParentScheduleEvent = {
   id: string;
   source: "official_schedule" | "school_event";
   type: "class" | "event";
@@ -40,7 +40,7 @@ type ParentCalendarEvent = {
   createdAt: string | null;
 };
 
-type ParentCalendarPayload = {
+type ParentSchedulePayload = {
   parent: {
     parentId: string;
     name: string;
@@ -49,7 +49,7 @@ type ParentCalendarPayload = {
   schoolId: string;
   selectedStudentId: string;
   children: ParentChild[];
-  events: ParentCalendarEvent[];
+  events: ParentScheduleEvent[];
   summary: {
     total: number;
     routine: number;
@@ -93,10 +93,8 @@ function startOfWeekISO(date: string) {
   return d.toISOString().slice(0, 10);
 }
 
-function monthStartISO(date: string) {
-  const d = new Date(`${date}T12:00:00`);
-  d.setDate(1);
-  return d.toISOString().slice(0, 10);
+function endOfWeekISO(date: string) {
+  return addDaysISO(startOfWeekISO(date), 6);
 }
 
 function formatShortDateBR(date: string) {
@@ -115,30 +113,14 @@ function formatLongDateBR(date: string) {
   });
 }
 
-function formatDateTimeBR(value?: string | null) {
-  if (!value) return "—";
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) return "—";
-
-  return date.toLocaleString("pt-BR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function weekdayLabel(date: string) {
   const labels = [
     "Domingo",
-    "Segunda",
-    "Terça",
-    "Quarta",
-    "Quinta",
-    "Sexta",
+    "Segunda-feira",
+    "Terça-feira",
+    "Quarta-feira",
+    "Quinta-feira",
+    "Sexta-feira",
     "Sábado",
   ];
 
@@ -146,43 +128,59 @@ function weekdayLabel(date: string) {
   return labels[d.getDay()] || "";
 }
 
-function monthLabel(date: string) {
-  const d = new Date(`${date}T12:00:00`);
-
-  return d.toLocaleDateString("pt-BR", {
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function isFutureOrToday(date: string) {
-  return String(date).slice(0, 10) >= todayISO();
-}
-
-function groupEventsByDate(events: ParentCalendarEvent[]) {
-  return events.reduce<Record<string, ParentCalendarEvent[]>>((acc, event) => {
-    if (!acc[event.date]) acc[event.date] = [];
-    acc[event.date].push(event);
-    return acc;
-  }, {});
-}
-
-function eventSort(a: ParentCalendarEvent, b: ParentCalendarEvent) {
+function eventSort(a: ParentScheduleEvent, b: ParentScheduleEvent) {
   const ad = `${a.date}T${a.startTime || "99:99"}:00`;
   const bd = `${b.date}T${b.startTime || "99:99"}:00`;
 
   return ad.localeCompare(bd);
 }
 
-function MetricCard({
+function isFutureOrToday(date: string) {
+  return String(date).slice(0, 10) >= todayISO();
+}
+
+function getTimeLabel(event: ParentScheduleEvent) {
+  if (event.startTime && event.endTime) return `${event.startTime} - ${event.endTime}`;
+  if (event.startTime) return event.startTime;
+  return "Dia todo";
+}
+
+function getSubjectTitle(event: ParentScheduleEvent) {
+  if (event.source === "school_event") return event.title;
+  return event.subjectName || event.title || "Aula";
+}
+
+function getSelectedStudentLabel(
+  children: ParentChild[],
+  selectedStudentId: string
+) {
+  if (selectedStudentId === "all") return "Todos os filhos";
+
+  const child = children.find((item) => item.id === selectedStudentId);
+
+  return child?.fullName || "Filho selecionado";
+}
+
+function getSelectedStudentClass(
+  children: ParentChild[],
+  selectedStudentId: string
+) {
+  if (selectedStudentId === "all") return null;
+
+  const child = children.find((item) => item.id === selectedStudentId);
+
+  return child?.activeClass?.className || null;
+}
+
+function StatCard({
   label,
   value,
-  help,
+  description,
   tone = "default",
 }: {
   label: string;
   value: string;
-  help: string;
+  description: string;
   tone?: "default" | "blue" | "green" | "amber";
 }) {
   const toneClass =
@@ -192,48 +190,26 @@ function MetricCard({
         ? "border-emerald-200 bg-emerald-50 text-emerald-950"
         : tone === "amber"
           ? "border-amber-200 bg-amber-50 text-amber-950"
-          : "border-slate-200 bg-white text-slate-900";
+          : "border-slate-200 bg-white text-slate-950";
 
   return (
     <div className={`rounded-[28px] border p-5 shadow-sm ${toneClass}`}>
-      <div className="text-xs font-semibold uppercase tracking-wide opacity-70">
+      <div className="text-xs font-bold uppercase tracking-[0.18em] opacity-70">
         {label}
       </div>
 
-      <div className="mt-3 text-3xl font-semibold tracking-tight">{value}</div>
+      <div className="mt-3 text-3xl font-bold tracking-tight">{value}</div>
 
-      <div className="mt-2 text-sm leading-6 opacity-75">{help}</div>
+      <p className="mt-2 text-sm leading-6 opacity-75">{description}</p>
     </div>
   );
 }
 
-function EmptyState({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="rounded-[30px] border border-dashed border-slate-300 bg-white p-8 text-center">
-      <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-2xl">
-        📅
-      </div>
-
-      <h3 className="mt-4 text-lg font-semibold text-slate-900">{title}</h3>
-
-      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
-        {description}
-      </p>
-    </div>
-  );
-}
-
-function EventPill({
+function Pill({
   children,
   tone = "default",
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   tone?: "default" | "blue" | "green" | "amber";
 }) {
   const toneClass =
@@ -247,67 +223,119 @@ function EventPill({
 
   return (
     <span
-      className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${toneClass}`}
+      className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${toneClass}`}
     >
       {children}
     </span>
   );
 }
 
-function EventCard({ event }: { event: ParentCalendarEvent }) {
+function EmptyRoutine({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="rounded-[32px] border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
+      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-slate-100 text-3xl">
+        🕒
+      </div>
+
+      <h3 className="mt-5 text-xl font-bold text-slate-950">{title}</h3>
+
+      <p className="mx-auto mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+        {description}
+      </p>
+
+      {action ? <div className="mt-5">{action}</div> : null}
+    </div>
+  );
+}
+
+function ClassCard({
+  event,
+  compact = false,
+}: {
+  event: ParentScheduleEvent;
+  compact?: boolean;
+}) {
   const isClass = event.source === "official_schedule";
 
   return (
-    <article className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
+    <article className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+      <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0 flex-1">
           <div className="flex flex-wrap gap-2">
-            <EventPill tone={isClass ? "green" : "blue"}>
+            <Pill tone={isClass ? "green" : "blue"}>
               {isClass ? "Aula" : "Evento escolar"}
-            </EventPill>
+            </Pill>
 
-            {event.studentName ? (
-              <EventPill tone="amber">{event.studentName}</EventPill>
-            ) : null}
+            {event.studentName ? <Pill tone="amber">{event.studentName}</Pill> : null}
 
-            {event.room ? <EventPill>Sala: {event.room}</EventPill> : null}
+            <Pill>{formatShortDateBR(event.date)}</Pill>
+
+            {event.room ? <Pill>Sala: {event.room}</Pill> : null}
           </div>
 
-          <h3 className="mt-3 break-words text-lg font-bold text-slate-950">
-            {event.title}
+          <h3 className="mt-4 break-words text-xl font-bold text-slate-950">
+            {getSubjectTitle(event)}
           </h3>
 
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            {event.className ? (
+              <div className="rounded-2xl bg-slate-50 p-3">
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  Turma
+                </div>
+                <div className="mt-1 text-sm font-semibold text-slate-800">
+                  {event.className}
+                </div>
+              </div>
+            ) : null}
+
+            {event.teacherName || event.teacherEmail ? (
+              <div className="rounded-2xl bg-slate-50 p-3">
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+                  Professor
+                </div>
+                <div className="mt-1 break-words text-sm font-semibold text-slate-800">
+                  {event.teacherName || "Professor"}
+                  {event.teacherEmail ? (
+                    <span className="font-normal text-slate-500">
+                      {" "}
+                      • {event.teacherEmail}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
           {event.description ? (
-            <p className="mt-2 break-words text-sm leading-6 text-slate-500">
+            <p
+              className={[
+                "mt-4 break-words rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600",
+                compact ? "line-clamp-3" : "",
+              ].join(" ")}
+            >
               {event.description}
             </p>
           ) : null}
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            {event.className ? <EventPill>Turma: {event.className}</EventPill> : null}
-
-            {event.teacherName ? (
-              <EventPill>
-                Professor: {event.teacherName}
-                {event.teacherEmail ? ` • ${event.teacherEmail}` : ""}
-              </EventPill>
-            ) : null}
-
-            {event.createdAt && event.source === "school_event" ? (
-              <EventPill>Publicado em: {formatDateTimeBR(event.createdAt)}</EventPill>
-            ) : null}
-          </div>
         </div>
 
-        <div className="shrink-0 rounded-2xl bg-slate-950 px-4 py-3 text-center text-white">
-          <div className="text-xs font-medium text-slate-300">
-            {formatShortDateBR(event.date)}
+        <div className="shrink-0 rounded-[24px] bg-slate-950 px-5 py-4 text-center text-white xl:w-40">
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">
+            Horário
           </div>
 
-          <div className="mt-1 text-sm font-bold">
-            {event.startTime && event.endTime
-              ? `${event.startTime} - ${event.endTime}`
-              : "Dia todo"}
+          <div className="mt-2 text-lg font-bold">{getTimeLabel(event)}</div>
+
+          <div className="mt-2 text-xs font-medium capitalize text-slate-300">
+            {weekdayLabel(event.date)}
           </div>
         </div>
       </div>
@@ -315,13 +343,53 @@ function EventCard({ event }: { event: ParentCalendarEvent }) {
   );
 }
 
+function DayBlock({
+  date,
+  events,
+}: {
+  date: string;
+  events: ParentScheduleEvent[];
+}) {
+  return (
+    <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+            {weekdayLabel(date)}
+          </div>
+
+          <h3 className="mt-1 text-xl font-bold capitalize text-slate-950">
+            {formatLongDateBR(date)}
+          </h3>
+        </div>
+
+        <div className="rounded-full bg-slate-100 px-4 py-2 text-sm font-bold text-slate-600">
+          {events.length} aula(s)
+        </div>
+      </div>
+
+      {events.length > 0 ? (
+        <div className="space-y-4">
+          {events.map((event) => (
+            <ClassCard key={event.id} event={event} compact />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
+          Nenhuma aula cadastrada para este dia.
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function ParentSchedulePage() {
   const router = useRouter();
 
-  const [payload, setPayload] = useState<ParentCalendarPayload | null>(null);
+  const [payload, setPayload] = useState<ParentSchedulePayload | null>(null);
   const [selectedStudentId, setSelectedStudentId] = useState("all");
   const [selectedDate, setSelectedDate] = useState(todayISO());
-  const [view, setView] = useState<"day" | "week" | "month">("day");
+  const [view, setView] = useState<"today" | "week" | "all">("today");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -329,17 +397,29 @@ export default function ParentSchedulePage() {
   const children = payload?.children || [];
   const events = payload?.events || [];
 
+  const routineEvents = useMemo(() => {
+    return events
+      .filter((event) => event.source === "official_schedule")
+      .sort(eventSort);
+  }, [events]);
+
+  const schoolEvents = useMemo(() => {
+    return events.filter((event) => event.source === "school_event").sort(eventSort);
+  }, [events]);
+
   const selectedStudentLabel = useMemo(() => {
-    if (selectedStudentId === "all") return "Todos os filhos";
-
-    const child = children.find((item) => item.id === selectedStudentId);
-
-    return child?.fullName || "Filho selecionado";
+    return getSelectedStudentLabel(children, selectedStudentId);
   }, [children, selectedStudentId]);
 
-  const dayEvents = useMemo(() => {
-    return events.filter((event) => event.date === selectedDate).sort(eventSort);
-  }, [events, selectedDate]);
+  const selectedStudentClass = useMemo(() => {
+    return getSelectedStudentClass(children, selectedStudentId);
+  }, [children, selectedStudentId]);
+
+  const todayEvents = useMemo(() => {
+    return routineEvents
+      .filter((event) => event.date === selectedDate)
+      .sort(eventSort);
+  }, [routineEvents, selectedDate]);
 
   const weekDates = useMemo(() => {
     const start = startOfWeekISO(selectedDate);
@@ -347,23 +427,22 @@ export default function ParentSchedulePage() {
   }, [selectedDate]);
 
   const weekEvents = useMemo(() => {
-    return events.filter((event) => weekDates.includes(event.date)).sort(eventSort);
-  }, [events, weekDates]);
+    return routineEvents
+      .filter((event) => weekDates.includes(event.date))
+      .sort(eventSort);
+  }, [routineEvents, weekDates]);
 
-  const monthDates = useMemo(() => {
-    const start = monthStartISO(selectedDate);
-    return Array.from({ length: 35 }).map((_, index) => addDaysISO(start, index));
-  }, [selectedDate]);
+  const futureRoutineEvents = useMemo(() => {
+    return routineEvents
+      .filter((event) => isFutureOrToday(event.date))
+      .sort(eventSort);
+  }, [routineEvents]);
 
-  const monthEventsByDate = useMemo(() => {
-    return groupEventsByDate(events);
-  }, [events]);
+  const nextClasses = useMemo(() => {
+    return futureRoutineEvents.slice(0, 5);
+  }, [futureRoutineEvents]);
 
-  const futureEvents = useMemo(() => {
-    return events.filter((event) => isFutureOrToday(event.date)).sort(eventSort);
-  }, [events]);
-
-  const nextEvent = futureEvents[0] || null;
+  const nextClass = nextClasses[0] || null;
 
   async function getToken() {
     const { data } = await supabase.auth.getSession();
@@ -392,12 +471,12 @@ export default function ParentSchedulePage() {
       const nextStudentId = params?.studentId ?? selectedStudentId;
       const nextDate = params?.date ?? selectedDate;
 
-      const startDate = monthStartISO(nextDate);
+      const startDate = startOfWeekISO(nextDate);
 
       const qs = new URLSearchParams({
         studentId: nextStudentId,
         startDate,
-        days: "45",
+        days: "35",
       });
 
       const res = await fetch(`/api/parent/schedule?${qs.toString()}`, {
@@ -470,18 +549,16 @@ export default function ParentSchedulePage() {
     return (
       <main className="min-h-screen bg-slate-100">
         <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
-          <div className="animate-pulse space-y-4">
-            <div className="h-48 rounded-[32px] bg-slate-200" />
+          <div className="h-64 animate-pulse rounded-[36px] bg-slate-200" />
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="h-32 rounded-[28px] bg-slate-100" />
-              <div className="h-32 rounded-[28px] bg-slate-100" />
-              <div className="h-32 rounded-[28px] bg-slate-100" />
-            </div>
-
-            <div className="h-28 rounded-[28px] bg-slate-100" />
-            <div className="h-96 rounded-[28px] bg-slate-100" />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+            <div className="h-32 animate-pulse rounded-[28px] bg-white" />
+            <div className="h-32 animate-pulse rounded-[28px] bg-white" />
+            <div className="h-32 animate-pulse rounded-[28px] bg-white" />
+            <div className="h-32 animate-pulse rounded-[28px] bg-white" />
           </div>
+
+          <div className="h-96 animate-pulse rounded-[32px] bg-white" />
         </div>
       </main>
     );
@@ -490,30 +567,42 @@ export default function ParentSchedulePage() {
   return (
     <main className="min-h-screen bg-slate-100">
       <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
-        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-          <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-8 text-white md:px-8">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0">
-                <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
+        <section className="overflow-hidden rounded-[36px] border border-slate-200 bg-white shadow-sm">
+          <div className="relative overflow-hidden bg-slate-950 px-6 py-10 text-white md:px-8 md:py-12">
+            <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-blue-500/20 blur-3xl" />
+            <div className="absolute -bottom-24 left-20 h-72 w-72 rounded-full bg-emerald-500/20 blur-3xl" />
+
+            <div className="relative flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
+              <div className="max-w-3xl">
+                <div className="inline-flex rounded-full bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-200">
                   Rotina escolar do aluno
                 </div>
 
-                <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
+                <h1 className="mt-5 text-4xl font-bold tracking-tight md:text-5xl">
                   Horários e rotina escolar
                 </h1>
 
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
-                  Acompanhe as aulas oficiais cadastradas pela direção, professores,
-                  salas, disciplinas e horários da rotina escolar do aluno.
+                <p className="mt-4 text-base leading-8 text-slate-200">
+                  Acompanhe as aulas oficiais cadastradas pela escola, com disciplina,
+                  professor, turma, sala, data e horário.
                 </p>
 
-                <div className="mt-4 text-sm text-slate-200">
-                  Visualização atual:{" "}
-                  <span className="font-semibold">{selectedStudentLabel}</span>
+                <div className="mt-5 rounded-3xl border border-white/10 bg-white/10 p-4 backdrop-blur">
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-300">
+                    Visualização atual
+                  </div>
+
+                  <div className="mt-1 text-xl font-bold">{selectedStudentLabel}</div>
+
+                  {selectedStudentClass ? (
+                    <div className="mt-1 text-sm text-slate-300">
+                      {selectedStudentClass}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-3">
                 <button
                   type="button"
                   onClick={() =>
@@ -522,81 +611,84 @@ export default function ParentSchedulePage() {
                       date: selectedDate,
                     })
                   }
-                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                  className="rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/15"
                 >
-                  Recarregar
+                  Atualizar horários
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => router.push("/parent/children")}
-                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                  onClick={() => router.push("/parent/calendar")}
+                  className="rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-950 transition hover:opacity-90"
                 >
-                  Meus filhos
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => router.push("/parent")}
-                  className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
-                >
-                  Voltar ao portal
+                  Ver agenda
                 </button>
               </div>
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-4 md:p-6">
-            <MetricCard
-              label="Total"
-              value={String(payload?.summary?.total || 0)}
-              help="Aulas e registros carregados."
-              tone="blue"
-            />
-
-            <MetricCard
+            <StatCard
               label="Aulas"
-              value={String(payload?.summary?.routine || 0)}
-              help="Horários oficiais da grade."
+              value={String(routineEvents.length)}
+              description="Aulas oficiais carregadas."
               tone="green"
             />
 
-            <MetricCard
-              label="Eventos"
-              value={String(payload?.summary?.schoolEvents || 0)}
-              help="Eventos gerais incluídos."
+            <StatCard
+              label="Hoje"
+              value={String(todayEvents.length)}
+              description="Aulas na data selecionada."
+              tone="blue"
+            />
+
+            <StatCard
+              label="Semana"
+              value={String(weekEvents.length)}
+              description={`${formatShortDateBR(startOfWeekISO(selectedDate))} até ${formatShortDateBR(
+                endOfWeekISO(selectedDate)
+              )}.`}
               tone="amber"
             />
 
-            <MetricCard
+            <StatCard
               label="Filhos"
-              value={String(payload?.summary?.children || children.length)}
-              help="Alunos vinculados à conta."
+              value={String(children.length)}
+              description="Alunos vinculados à conta."
             />
           </div>
         </section>
 
-        <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        {error ? (
+          <div className="rounded-[28px] border border-red-200 bg-red-50 px-5 py-4 text-sm font-medium text-red-700">
+            {error}
+          </div>
+        ) : null}
+
+        <section className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_0.9fr]">
+          <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
               <div>
-                <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+                <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
                   Filtro da rotina
+                </div>
+
+                <h2 className="mt-2 text-2xl font-bold text-slate-950">
+                  Escolha o filho e a data
                 </h2>
 
-                <p className="mt-1 text-sm text-slate-500">
-                  Selecione um filho para ver a rotina individual ou mantenha todos para
-                  visualizar a rotina familiar completa.
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                  A rotina é montada a partir da grade oficial cadastrada pela escola.
                 </p>
               </div>
 
               <div className="w-full xl:w-[360px]">
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                <label className="mb-1 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
                   Filho
                 </label>
 
                 <select
-                  className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
+                  className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-slate-500"
                   value={selectedStudentId}
                   onChange={(e) => changeStudent(e.target.value)}
                 >
@@ -605,25 +697,27 @@ export default function ParentSchedulePage() {
                   {children.map((child) => (
                     <option key={child.id} value={child.id}>
                       {child.fullName}
-                      {child.registrationNumber ? ` • ${child.registrationNumber}` : ""}
+                      {child.activeClass?.className
+                        ? ` • ${child.activeClass.className}`
+                        : ""}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
 
-            <div className="mt-5 flex flex-col gap-3 md:flex-row">
+            <div className="mt-6 flex flex-col gap-3 md:flex-row">
               <input
                 type="date"
                 value={selectedDate}
                 onChange={(e) => changeDate(e.target.value)}
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-800 outline-none transition focus:border-slate-500 focus:ring-4 focus:ring-slate-100"
               />
 
               <button
                 type="button"
                 onClick={() => moveDate(-1)}
-                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
               >
                 Dia anterior
               </button>
@@ -631,7 +725,7 @@ export default function ParentSchedulePage() {
               <button
                 type="button"
                 onClick={() => changeDate(todayISO())}
-                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
               >
                 Hoje
               </button>
@@ -639,110 +733,119 @@ export default function ParentSchedulePage() {
               <button
                 type="button"
                 onClick={() => moveDate(1)}
-                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                className="rounded-2xl border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
               >
                 Próximo dia
               </button>
             </div>
-
-            {error ? (
-              <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {error}
-              </div>
-            ) : null}
           </div>
 
-          <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
               Próxima aula
             </div>
 
-            {nextEvent ? (
-              <div className="mt-3">
-                <div className="text-lg font-semibold text-slate-900">
-                  {nextEvent.title}
+            {nextClass ? (
+              <div className="mt-4 rounded-[28px] bg-slate-950 p-5 text-white">
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold">
+                    {formatShortDateBR(nextClass.date)}
+                  </span>
+
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold">
+                    {getTimeLabel(nextClass)}
+                  </span>
                 </div>
 
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <EventPill tone={nextEvent.source === "official_schedule" ? "green" : "blue"}>
-                    {nextEvent.source === "official_schedule" ? "Aula" : "Evento"}
-                  </EventPill>
+                <h3 className="mt-4 text-2xl font-bold leading-tight">
+                  {getSubjectTitle(nextClass)}
+                </h3>
 
-                  <EventPill>{formatShortDateBR(nextEvent.date)}</EventPill>
+                <p className="mt-2 text-sm leading-6 text-slate-300">
+                  {nextClass.studentName ? `${nextClass.studentName} • ` : ""}
+                  {nextClass.className || "Turma não informada"}
+                </p>
 
-                  {nextEvent.startTime && nextEvent.endTime ? (
-                    <EventPill>
-                      {nextEvent.startTime} - {nextEvent.endTime}
-                    </EventPill>
-                  ) : null}
-                </div>
-
-                <div className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-600">
-                  {nextEvent.description || "Sem descrição adicional."}
-                </div>
+                {nextClass.teacherName ? (
+                  <p className="mt-1 text-sm text-slate-300">
+                    Professor: {nextClass.teacherName}
+                  </p>
+                ) : null}
               </div>
             ) : (
-              <div className="mt-3 text-sm leading-6 text-slate-500">
-                Nenhuma aula futura identificada no momento.
+              <div className="mt-5 rounded-[28px] border border-dashed border-slate-300 bg-slate-50 p-8 text-center">
+                <div className="text-3xl">📭</div>
+
+                <h3 className="mt-3 text-lg font-bold text-slate-950">
+                  Nenhuma aula futura
+                </h3>
+
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  Quando a escola cadastrar a rotina do aluno, a próxima aula aparecerá aqui.
+                </p>
               </div>
             )}
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-5 py-4 md:px-6">
+        <section className="overflow-hidden rounded-[36px] border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-5 md:px-6">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-                  Visualização dos horários
+                <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
+                  Visualização da rotina
+                </div>
+
+                <h2 className="mt-2 text-2xl font-bold text-slate-950">
+                  Aulas do aluno
                 </h2>
 
-                <p className="mt-1 text-sm text-slate-500">
-                  Escolha entre dia, semana ou mês para acompanhar a rotina escolar.
+                <p className="mt-1 text-sm leading-6 text-slate-500">
+                  Veja as aulas do dia, da semana ou uma lista com os próximos registros.
                 </p>
               </div>
 
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setView("day")}
-                  className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${
-                    view === "day"
+                  onClick={() => setView("today")}
+                  className={`rounded-2xl px-4 py-2 text-sm font-bold transition ${
+                    view === "today"
                       ? "bg-slate-950 text-white"
                       : "border border-slate-300 text-slate-700 hover:bg-slate-50"
                   }`}
                 >
-                  Dia
+                  Aulas de hoje
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setView("week")}
-                  className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${
+                  className={`rounded-2xl px-4 py-2 text-sm font-bold transition ${
                     view === "week"
                       ? "bg-slate-950 text-white"
                       : "border border-slate-300 text-slate-700 hover:bg-slate-50"
                   }`}
                 >
-                  Semana
+                  Semana completa
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setView("month")}
-                  className={`rounded-2xl px-4 py-2 text-sm font-semibold transition ${
-                    view === "month"
+                  onClick={() => setView("all")}
+                  className={`rounded-2xl px-4 py-2 text-sm font-bold transition ${
+                    view === "all"
                       ? "bg-slate-950 text-white"
                       : "border border-slate-300 text-slate-700 hover:bg-slate-50"
                   }`}
                 >
-                  Mês
+                  Próximas aulas
                 </button>
               </div>
             </div>
           </div>
 
-          <div className="p-4 md:p-6">
+          <div className="p-5 md:p-6">
             {loading ? (
               <div className="space-y-4">
                 {[1, 2, 3].map((item) => (
@@ -752,121 +855,108 @@ export default function ParentSchedulePage() {
                   />
                 ))}
               </div>
-            ) : view === "day" ? (
+            ) : view === "today" ? (
               <div>
-                <div className="mb-4">
-                  <div className="text-lg font-bold capitalize text-slate-900">
+                <div className="mb-5">
+                  <div className="text-xl font-bold capitalize text-slate-950">
                     {formatLongDateBR(selectedDate)}
                   </div>
 
                   <div className="mt-1 text-sm text-slate-500">
-                    {dayEvents.length} aula(s) ou registro(s)
+                    {todayEvents.length} aula(s) encontrada(s)
                   </div>
                 </div>
 
-                {dayEvents.length ? (
+                {todayEvents.length > 0 ? (
                   <div className="space-y-4">
-                    {dayEvents.map((event) => (
-                      <EventCard key={event.id} event={event} />
+                    {todayEvents.map((event) => (
+                      <ClassCard key={event.id} event={event} />
                     ))}
                   </div>
                 ) : (
-                  <EmptyState
+                  <EmptyRoutine
                     title="Nenhuma rotina neste dia"
-                    description="Não existe aula cadastrada na grade oficial para esta data."
+                    description="Não existe aula cadastrada na grade oficial para esta data. Confira se a escola já cadastrou os horários da turma do aluno."
+                    action={
+                      <button
+                        type="button"
+                        onClick={() => setView("week")}
+                        className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white transition hover:opacity-90"
+                      >
+                        Ver semana completa
+                      </button>
+                    }
                   />
                 )}
               </div>
             ) : view === "week" ? (
               <div className="space-y-5">
+                <div className="mb-2 text-sm font-semibold text-slate-500">
+                  Semana de {formatShortDateBR(startOfWeekISO(selectedDate))} até{" "}
+                  {formatShortDateBR(endOfWeekISO(selectedDate))}
+                </div>
+
                 {weekDates.map((date) => {
                   const dateEvents = weekEvents
                     .filter((event) => event.date === date)
                     .sort(eventSort);
 
-                  return (
-                    <div key={date} className="rounded-[28px] bg-slate-50 p-4">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-bold text-slate-900">
-                            {weekdayLabel(date)}
-                          </div>
-
-                          <div className="text-xs text-slate-500">
-                            {formatShortDateBR(date)}
-                          </div>
-                        </div>
-
-                        <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">
-                          {dateEvents.length} item(ns)
-                        </span>
-                      </div>
-
-                      {dateEvents.length ? (
-                        <div className="space-y-3">
-                          {dateEvents.map((event) => (
-                            <EventCard key={event.id} event={event} />
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-4 text-sm text-slate-500">
-                          Sem rotina cadastrada.
-                        </div>
-                      )}
-                    </div>
-                  );
+                  return <DayBlock key={date} date={date} events={dateEvents} />;
                 })}
               </div>
             ) : (
               <div>
-                <div className="mb-4 text-lg font-bold capitalize text-slate-900">
-                  {monthLabel(selectedDate)}
+                <div className="mb-5">
+                  <div className="text-xl font-bold text-slate-950">
+                    Próximas aulas
+                  </div>
+
+                  <div className="mt-1 text-sm text-slate-500">
+                    {nextClasses.length} próxima(s) aula(s) destacada(s)
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-                  {monthDates.map((date) => {
-                    const dateEvents = monthEventsByDate[date] || [];
-                    const isSelected = date === selectedDate;
-
-                    return (
-                      <button
-                        type="button"
-                        key={date}
-                        onClick={() => {
-                          setSelectedDate(date);
-                          setView("day");
-                        }}
-                        className={`min-h-[116px] rounded-3xl border p-3 text-left transition ${
-                          isSelected
-                            ? "border-slate-950 bg-slate-950 text-white"
-                            : "border-slate-200 bg-slate-50 text-slate-800 hover:bg-white"
-                        }`}
-                      >
-                        <div className="text-xs font-semibold">
-                          {weekdayLabel(date).slice(0, 3)}
-                        </div>
-
-                        <div className="mt-1 text-lg font-bold">
-                          {date.split("-")[2]}
-                        </div>
-
-                        <div
-                          className={`mt-3 rounded-full px-2 py-1 text-xs font-semibold ${
-                            isSelected
-                              ? "bg-white/10 text-white"
-                              : "bg-white text-slate-500"
-                          }`}
-                        >
-                          {dateEvents.length} item(ns)
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                {nextClasses.length > 0 ? (
+                  <div className="space-y-4">
+                    {nextClasses.map((event) => (
+                      <ClassCard key={event.id} event={event} />
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyRoutine
+                    title="Nenhuma próxima aula encontrada"
+                    description="A rotina escolar ainda não foi localizada para os próximos dias. Verifique se a turma do aluno está vinculada corretamente e se a grade oficial foi cadastrada pela escola."
+                  />
+                )}
               </div>
             )}
           </div>
         </section>
+
+        {schoolEvents.length > 0 ? (
+          <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+            <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
+              Eventos gerais
+            </div>
+
+            <h2 className="mt-2 text-2xl font-bold text-slate-950">
+              Também existem eventos na agenda
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              A rotina de aulas aparece nesta tela. Eventos gerais continuam disponíveis
+              na agenda escolar.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => router.push("/parent/calendar")}
+              className="mt-5 rounded-2xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+            >
+              Abrir agenda escolar
+            </button>
+          </section>
+        ) : null}
       </div>
     </main>
   );
