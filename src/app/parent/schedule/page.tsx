@@ -9,13 +9,34 @@ type ParentChild = {
   fullName: string;
   registrationNumber: string | null;
   relationship: string | null;
+  activeClass: null | {
+    classId: string;
+    className: string;
+    grade: string | null;
+    shift: string | null;
+  };
 };
 
 type ParentCalendarEvent = {
   id: string;
+  source: "official_schedule" | "school_event";
+  type: "class" | "event";
   title: string;
   description: string | null;
   date: string;
+  startTime: string | null;
+  endTime: string | null;
+  studentId: string | null;
+  studentName: string | null;
+  classId: string | null;
+  className: string | null;
+  subjectId: string | null;
+  subjectName: string | null;
+  teacherUserId: string | null;
+  teacherName: string | null;
+  teacherEmail: string | null;
+  room: string | null;
+  notes: string | null;
   createdAt: string | null;
 };
 
@@ -26,13 +47,18 @@ type ParentCalendarPayload = {
     email: string | null;
   };
   schoolId: string;
+  selectedStudentId: string;
   children: ParentChild[];
   events: ParentCalendarEvent[];
   summary: {
     total: number;
+    routine: number;
+    schoolEvents: number;
     children: number;
   };
   meta: {
+    startDate: string;
+    days: number;
     source: string;
   };
 };
@@ -142,8 +168,8 @@ function groupEventsByDate(events: ParentCalendarEvent[]) {
 }
 
 function eventSort(a: ParentCalendarEvent, b: ParentCalendarEvent) {
-  const ad = `${a.date}T99:99:00`;
-  const bd = `${b.date}T99:99:00`;
+  const ad = `${a.date}T${a.startTime || "99:99"}:00`;
+  const bd = `${b.date}T${b.startTime || "99:99"}:00`;
 
   return ad.localeCompare(bd);
 }
@@ -229,13 +255,22 @@ function EventPill({
 }
 
 function EventCard({ event }: { event: ParentCalendarEvent }) {
+  const isClass = event.source === "official_schedule";
+
   return (
     <article className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap gap-2">
-            <EventPill tone="blue">Evento escolar</EventPill>
-            <EventPill>Agenda geral</EventPill>
+            <EventPill tone={isClass ? "green" : "blue"}>
+              {isClass ? "Aula" : "Evento escolar"}
+            </EventPill>
+
+            {event.studentName ? (
+              <EventPill tone="amber">{event.studentName}</EventPill>
+            ) : null}
+
+            {event.room ? <EventPill>Sala: {event.room}</EventPill> : null}
           </div>
 
           <h3 className="mt-3 break-words text-lg font-bold text-slate-950">
@@ -246,24 +281,33 @@ function EventCard({ event }: { event: ParentCalendarEvent }) {
             <p className="mt-2 break-words text-sm leading-6 text-slate-500">
               {event.description}
             </p>
-          ) : (
-            <p className="mt-2 text-sm leading-6 text-slate-400">
-              Sem descrição adicional.
-            </p>
-          )}
+          ) : null}
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {event.createdAt ? (
+            {event.className ? <EventPill>Turma: {event.className}</EventPill> : null}
+
+            {event.teacherName ? (
+              <EventPill>
+                Professor: {event.teacherName}
+                {event.teacherEmail ? ` • ${event.teacherEmail}` : ""}
+              </EventPill>
+            ) : null}
+
+            {event.createdAt && event.source === "school_event" ? (
               <EventPill>Publicado em: {formatDateTimeBR(event.createdAt)}</EventPill>
             ) : null}
           </div>
         </div>
 
         <div className="shrink-0 rounded-2xl bg-slate-950 px-4 py-3 text-center text-white">
-          <div className="text-xs font-medium text-slate-300">Data</div>
+          <div className="text-xs font-medium text-slate-300">
+            {formatShortDateBR(event.date)}
+          </div>
 
           <div className="mt-1 text-sm font-bold">
-            {formatShortDateBR(event.date)}
+            {event.startTime && event.endTime
+              ? `${event.startTime} - ${event.endTime}`
+              : "Dia todo"}
           </div>
         </div>
       </div>
@@ -271,18 +315,27 @@ function EventCard({ event }: { event: ParentCalendarEvent }) {
   );
 }
 
-export default function ParentCalendarPage() {
+export default function ParentSchedulePage() {
   const router = useRouter();
 
   const [payload, setPayload] = useState<ParentCalendarPayload | null>(null);
+  const [selectedStudentId, setSelectedStudentId] = useState("all");
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [view, setView] = useState<"day" | "week" | "month">("day");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const events = payload?.events || [];
   const children = payload?.children || [];
+  const events = payload?.events || [];
+
+  const selectedStudentLabel = useMemo(() => {
+    if (selectedStudentId === "all") return "Todos os filhos";
+
+    const child = children.find((item) => item.id === selectedStudentId);
+
+    return child?.fullName || "Filho selecionado";
+  }, [children, selectedStudentId]);
 
   const dayEvents = useMemo(() => {
     return events.filter((event) => event.date === selectedDate).sort(eventSort);
@@ -324,7 +377,10 @@ export default function ParentCalendarPage() {
     return token;
   }
 
-  async function loadCalendar() {
+  async function loadSchedule(params?: {
+    studentId?: string;
+    date?: string;
+  }) {
     setLoading(true);
     setError(null);
 
@@ -333,7 +389,18 @@ export default function ParentCalendarPage() {
 
       if (!token) return;
 
-      const res = await fetch("/api/parent/calendar", {
+      const nextStudentId = params?.studentId ?? selectedStudentId;
+      const nextDate = params?.date ?? selectedDate;
+
+      const startDate = monthStartISO(nextDate);
+
+      const qs = new URLSearchParams({
+        studentId: nextStudentId,
+        startDate,
+        days: "45",
+      });
+
+      const res = await fetch(`/api/parent/schedule?${qs.toString()}`, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -344,30 +411,44 @@ export default function ParentCalendarPage() {
       const json = await safeJsonFromResponse(res);
 
       if (!res.ok || !json?.ok) {
-        setError(json?.error || "Falha ao carregar agenda escolar.");
+        setError(json?.error || "Falha ao carregar horários do aluno.");
         return;
       }
 
       setPayload({
         parent: json.parent,
         schoolId: json.schoolId,
+        selectedStudentId: json.selectedStudentId,
         children: Array.isArray(json.children) ? json.children : [],
         events: Array.isArray(json.events) ? json.events : [],
         summary: json.summary || {
           total: 0,
+          routine: 0,
+          schoolEvents: 0,
           children: 0,
         },
         meta: json.meta,
       });
     } catch (e: any) {
-      setError(e?.message || "Erro inesperado ao carregar agenda escolar.");
+      setError(e?.message || "Erro inesperado ao carregar horários do aluno.");
     } finally {
       setLoading(false);
     }
   }
 
+  function changeStudent(studentId: string) {
+    setSelectedStudentId(studentId);
+
+    const qs =
+      studentId === "all" ? "" : `?studentId=${encodeURIComponent(studentId)}`;
+
+    router.replace(`/parent/schedule${qs}`);
+    loadSchedule({ studentId, date: selectedDate });
+  }
+
   function changeDate(date: string) {
     setSelectedDate(date);
+    loadSchedule({ studentId: selectedStudentId, date });
   }
 
   function moveDate(days: number) {
@@ -376,7 +457,12 @@ export default function ParentCalendarPage() {
   }
 
   useEffect(() => {
-    loadCalendar();
+    const params = new URLSearchParams(window.location.search);
+    const urlStudentId = params.get("studentId") || "all";
+
+    setSelectedStudentId(urlStudentId);
+    loadSchedule({ studentId: urlStudentId, date: selectedDate });
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -409,23 +495,33 @@ export default function ParentCalendarPage() {
             <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
               <div className="min-w-0">
                 <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
-                  Agenda geral da escola
+                  Rotina escolar do aluno
                 </div>
 
                 <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
-                  Agenda e eventos escolares
+                  Horários e rotina escolar
                 </h1>
 
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
-                  Acompanhe comunicados, datas importantes, eventos e compromissos
-                  gerais publicados pela escola.
+                  Acompanhe as aulas oficiais cadastradas pela direção, professores,
+                  salas, disciplinas e horários da rotina escolar do aluno.
                 </p>
+
+                <div className="mt-4 text-sm text-slate-200">
+                  Visualização atual:{" "}
+                  <span className="font-semibold">{selectedStudentLabel}</span>
+                </div>
               </div>
 
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={loadCalendar}
+                  onClick={() =>
+                    loadSchedule({
+                      studentId: selectedStudentId,
+                      date: selectedDate,
+                    })
+                  }
                   className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
                 >
                   Recarregar
@@ -433,10 +529,10 @@ export default function ParentCalendarPage() {
 
                 <button
                   type="button"
-                  onClick={() => router.push("/parent/schedule")}
+                  onClick={() => router.push("/parent/children")}
                   className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
                 >
-                  Ver horários
+                  Meus filhos
                 </button>
 
                 <button
@@ -450,26 +546,32 @@ export default function ParentCalendarPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-3 md:p-6">
+          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-4 md:p-6">
+            <MetricCard
+              label="Total"
+              value={String(payload?.summary?.total || 0)}
+              help="Aulas e registros carregados."
+              tone="blue"
+            />
+
+            <MetricCard
+              label="Aulas"
+              value={String(payload?.summary?.routine || 0)}
+              help="Horários oficiais da grade."
+              tone="green"
+            />
+
             <MetricCard
               label="Eventos"
-              value={String(payload?.summary?.total || 0)}
-              help="Eventos gerais publicados."
-              tone="blue"
+              value={String(payload?.summary?.schoolEvents || 0)}
+              help="Eventos gerais incluídos."
+              tone="amber"
             />
 
             <MetricCard
               label="Filhos"
               value={String(payload?.summary?.children || children.length)}
               help="Alunos vinculados à conta."
-              tone="green"
-            />
-
-            <MetricCard
-              label="Próximo"
-              value={nextEvent ? formatShortDateBR(nextEvent.date) : "—"}
-              help="Próximo evento identificado."
-              tone="amber"
             />
           </div>
         </section>
@@ -479,12 +581,34 @@ export default function ParentCalendarPage() {
             <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
               <div>
                 <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-                  Navegação da agenda
+                  Filtro da rotina
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  Escolha uma data para visualizar os eventos gerais publicados pela escola.
+                  Selecione um filho para ver a rotina individual ou mantenha todos para
+                  visualizar a rotina familiar completa.
                 </p>
+              </div>
+
+              <div className="w-full xl:w-[360px]">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Filho
+                </label>
+
+                <select
+                  className="w-full rounded-2xl border border-slate-300 bg-white p-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
+                  value={selectedStudentId}
+                  onChange={(e) => changeStudent(e.target.value)}
+                >
+                  <option value="all">Todos os filhos</option>
+
+                  {children.map((child) => (
+                    <option key={child.id} value={child.id}>
+                      {child.fullName}
+                      {child.registrationNumber ? ` • ${child.registrationNumber}` : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -530,7 +654,7 @@ export default function ParentCalendarPage() {
 
           <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Próximo evento
+              Próxima aula
             </div>
 
             {nextEvent ? (
@@ -540,8 +664,17 @@ export default function ParentCalendarPage() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <EventPill tone="blue">Evento</EventPill>
+                  <EventPill tone={nextEvent.source === "official_schedule" ? "green" : "blue"}>
+                    {nextEvent.source === "official_schedule" ? "Aula" : "Evento"}
+                  </EventPill>
+
                   <EventPill>{formatShortDateBR(nextEvent.date)}</EventPill>
+
+                  {nextEvent.startTime && nextEvent.endTime ? (
+                    <EventPill>
+                      {nextEvent.startTime} - {nextEvent.endTime}
+                    </EventPill>
+                  ) : null}
                 </div>
 
                 <div className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-600">
@@ -550,7 +683,7 @@ export default function ParentCalendarPage() {
               </div>
             ) : (
               <div className="mt-3 text-sm leading-6 text-slate-500">
-                Nenhum evento futuro identificado no momento.
+                Nenhuma aula futura identificada no momento.
               </div>
             )}
           </div>
@@ -561,11 +694,11 @@ export default function ParentCalendarPage() {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-                  Visualização da agenda
+                  Visualização dos horários
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  Escolha entre dia, semana ou mês para acompanhar os eventos.
+                  Escolha entre dia, semana ou mês para acompanhar a rotina escolar.
                 </p>
               </div>
 
@@ -627,7 +760,7 @@ export default function ParentCalendarPage() {
                   </div>
 
                   <div className="mt-1 text-sm text-slate-500">
-                    {dayEvents.length} evento(s)
+                    {dayEvents.length} aula(s) ou registro(s)
                   </div>
                 </div>
 
@@ -639,8 +772,8 @@ export default function ParentCalendarPage() {
                   </div>
                 ) : (
                   <EmptyState
-                    title="Nenhum evento neste dia"
-                    description="Não existe evento geral publicado pela escola para esta data."
+                    title="Nenhuma rotina neste dia"
+                    description="Não existe aula cadastrada na grade oficial para esta data."
                   />
                 )}
               </div>
@@ -665,7 +798,7 @@ export default function ParentCalendarPage() {
                         </div>
 
                         <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-500">
-                          {dateEvents.length} evento(s)
+                          {dateEvents.length} item(ns)
                         </span>
                       </div>
 
@@ -677,7 +810,7 @@ export default function ParentCalendarPage() {
                         </div>
                       ) : (
                         <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-4 py-4 text-sm text-slate-500">
-                          Sem eventos.
+                          Sem rotina cadastrada.
                         </div>
                       )}
                     </div>
@@ -724,7 +857,7 @@ export default function ParentCalendarPage() {
                               : "bg-white text-slate-500"
                           }`}
                         >
-                          {dateEvents.length} evento(s)
+                          {dateEvents.length} item(ns)
                         </div>
                       </button>
                     );
