@@ -97,6 +97,45 @@ function endOfWeekISO(date: string) {
   return addDaysISO(startOfWeekISO(date), 6);
 }
 
+function monthStartISO(date: string) {
+  const d = new Date(`${date}T12:00:00`);
+  d.setDate(1);
+  return d.toISOString().slice(0, 10);
+}
+
+function monthEndISO(date: string) {
+  const d = new Date(`${date}T12:00:00`);
+  d.setMonth(d.getMonth() + 1);
+  d.setDate(0);
+  return d.toISOString().slice(0, 10);
+}
+
+function calendarGridDates(date: string) {
+  const monthStart = monthStartISO(date);
+  const monthEnd = monthEndISO(date);
+
+  const start = new Date(`${monthStart}T12:00:00`);
+  const end = new Date(`${monthEnd}T12:00:00`);
+
+  const startDay = start.getDay();
+  const startDiff = startDay === 0 ? -6 : 1 - startDay;
+  start.setDate(start.getDate() + startDiff);
+
+  const endDay = end.getDay();
+  const endDiff = endDay === 0 ? 0 : 7 - endDay;
+  end.setDate(end.getDate() + endDiff);
+
+  const dates: string[] = [];
+  const cursor = new Date(start);
+
+  while (cursor <= end) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return dates;
+}
+
 function formatShortDateBR(date: string) {
   const [year, month, day] = String(date).slice(0, 10).split("-");
   return `${day}/${month}/${year}`;
@@ -108,6 +147,15 @@ function formatLongDateBR(date: string) {
   return d.toLocaleDateString("pt-BR", {
     weekday: "long",
     day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function formatMonthBR(date: string) {
+  const d = new Date(`${date}T12:00:00`);
+
+  return d.toLocaleDateString("pt-BR", {
     month: "long",
     year: "numeric",
   });
@@ -128,6 +176,12 @@ function weekdayLabel(date: string) {
   return labels[d.getDay()] || "";
 }
 
+function weekdayShortLabel(date: string) {
+  const labels = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  const d = new Date(`${date}T12:00:00`);
+  return labels[d.getDay()] || "";
+}
+
 function eventSort(a: ParentScheduleEvent, b: ParentScheduleEvent) {
   const ad = `${a.date}T${a.startTime || "99:99"}:00`;
   const bd = `${b.date}T${b.startTime || "99:99"}:00`;
@@ -137,6 +191,10 @@ function eventSort(a: ParentScheduleEvent, b: ParentScheduleEvent) {
 
 function isFutureOrToday(date: string) {
   return String(date).slice(0, 10) >= todayISO();
+}
+
+function sameMonth(a: string, b: string) {
+  return a.slice(0, 7) === b.slice(0, 7);
 }
 
 function getTimeLabel(event: ParentScheduleEvent) {
@@ -383,13 +441,252 @@ function DayBlock({
   );
 }
 
+function MonthCalendar({
+  selectedDate,
+  routineEvents,
+  schoolEvents,
+  onSelectDate,
+  onPreviousMonth,
+  onNextMonth,
+}: {
+  selectedDate: string;
+  routineEvents: ParentScheduleEvent[];
+  schoolEvents: ParentScheduleEvent[];
+  onSelectDate: (date: string) => void;
+  onPreviousMonth: () => void;
+  onNextMonth: () => void;
+}) {
+  const dates = useMemo(() => calendarGridDates(selectedDate), [selectedDate]);
+
+  const eventsByDate = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        routine: ParentScheduleEvent[];
+        school: ParentScheduleEvent[];
+      }
+    >();
+
+    for (const date of dates) {
+      map.set(date, { routine: [], school: [] });
+    }
+
+    for (const event of routineEvents) {
+      const current = map.get(event.date) || { routine: [], school: [] };
+      current.routine.push(event);
+      map.set(event.date, current);
+    }
+
+    for (const event of schoolEvents) {
+      const current = map.get(event.date) || { routine: [], school: [] };
+      current.school.push(event);
+      map.set(event.date, current);
+    }
+
+    return map;
+  }, [dates, routineEvents, schoolEvents]);
+
+  const selectedDayEvents = eventsByDate.get(selectedDate) || {
+    routine: [],
+    school: [],
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
+            Calendário mensal
+          </div>
+
+          <h3 className="mt-2 text-2xl font-bold capitalize text-slate-950">
+            {formatMonthBR(selectedDate)}
+          </h3>
+
+          <p className="mt-1 text-sm text-slate-500">
+            Visualize os dias com aulas e compromissos escolares.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onPreviousMonth}
+            className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+          >
+            Mês anterior
+          </button>
+
+          <button
+            type="button"
+            onClick={onNextMonth}
+            className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+          >
+            Próximo mês
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-7">
+        {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map((day) => (
+          <div
+            key={day}
+            className="hidden rounded-2xl bg-slate-100 px-3 py-2 text-center text-xs font-bold uppercase tracking-[0.16em] text-slate-500 md:block"
+          >
+            {day}
+          </div>
+        ))}
+
+        {dates.map((date) => {
+          const dayData = eventsByDate.get(date) || { routine: [], school: [] };
+          const total = dayData.routine.length + dayData.school.length;
+          const selected = date === selectedDate;
+          const isToday = date === todayISO();
+          const inCurrentMonth = sameMonth(date, selectedDate);
+
+          return (
+            <button
+              type="button"
+              key={date}
+              onClick={() => onSelectDate(date)}
+              className={[
+                "min-h-[132px] rounded-[26px] border p-4 text-left transition",
+                selected
+                  ? "border-slate-950 bg-slate-950 text-white shadow-md"
+                  : "border-slate-200 bg-white text-slate-900 hover:-translate-y-0.5 hover:shadow-md",
+                !inCurrentMonth && !selected ? "opacity-45" : "",
+              ].join(" ")}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div
+                    className={[
+                      "text-xs font-bold uppercase tracking-wide",
+                      selected ? "text-slate-300" : "text-slate-400",
+                    ].join(" ")}
+                  >
+                    {weekdayShortLabel(date)}
+                  </div>
+
+                  <div className="mt-1 text-2xl font-bold">{date.slice(8, 10)}</div>
+                </div>
+
+                {isToday ? (
+                  <span
+                    className={[
+                      "rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide",
+                      selected
+                        ? "bg-white/10 text-white"
+                        : "bg-emerald-50 text-emerald-700",
+                    ].join(" ")}
+                  >
+                    Hoje
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <div
+                  className={[
+                    "rounded-full px-3 py-1 text-xs font-bold",
+                    selected ? "bg-white/10 text-white" : "bg-emerald-50 text-emerald-700",
+                  ].join(" ")}
+                >
+                  {dayData.routine.length} aula(s)
+                </div>
+
+                <div
+                  className={[
+                    "rounded-full px-3 py-1 text-xs font-bold",
+                    selected ? "bg-white/10 text-white" : "bg-blue-50 text-blue-700",
+                  ].join(" ")}
+                >
+                  {dayData.school.length} compromisso(s)
+                </div>
+
+                {total > 0 ? (
+                  <div
+                    className={[
+                      "text-xs font-semibold",
+                      selected ? "text-slate-300" : "text-slate-500",
+                    ].join(" ")}
+                  >
+                    Toque para ver detalhes
+                  </div>
+                ) : null}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="rounded-[30px] border border-slate-200 bg-slate-50 p-5">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+              Detalhes do dia
+            </div>
+
+            <h4 className="mt-1 text-xl font-bold capitalize text-slate-950">
+              {formatLongDateBR(selectedDate)}
+            </h4>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Pill tone="green">{selectedDayEvents.routine.length} aula(s)</Pill>
+            <Pill tone="blue">{selectedDayEvents.school.length} compromisso(s)</Pill>
+          </div>
+        </div>
+
+        <div className="mt-5 space-y-4">
+          {selectedDayEvents.routine.length > 0 ? (
+            selectedDayEvents.routine.sort(eventSort).map((event) => (
+              <ClassCard key={event.id} event={event} compact />
+            ))
+          ) : selectedDayEvents.school.length > 0 ? null : (
+            <div className="rounded-3xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
+              Nenhuma aula ou compromisso encontrado para este dia.
+            </div>
+          )}
+
+          {selectedDayEvents.school.length > 0 ? (
+            <div className="space-y-3">
+              {selectedDayEvents.school.sort(eventSort).map((event) => (
+                <article
+                  key={event.id}
+                  className="rounded-[26px] border border-blue-100 bg-blue-50 p-5"
+                >
+                  <div className="flex flex-wrap gap-2">
+                    <Pill tone="blue">Compromisso escolar</Pill>
+                    <Pill>{formatShortDateBR(event.date)}</Pill>
+                  </div>
+
+                  <h5 className="mt-3 text-lg font-bold text-slate-950">
+                    {event.title}
+                  </h5>
+
+                  {event.description ? (
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      {event.description}
+                    </p>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ParentSchedulePage() {
   const router = useRouter();
 
   const [payload, setPayload] = useState<ParentSchedulePayload | null>(null);
   const [selectedStudentId, setSelectedStudentId] = useState("all");
   const [selectedDate, setSelectedDate] = useState(todayISO());
-  const [view, setView] = useState<"today" | "week" | "all">("today");
+  const [view, setView] = useState<"today" | "week" | "month" | "all">("today");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -471,12 +768,12 @@ export default function ParentSchedulePage() {
       const nextStudentId = params?.studentId ?? selectedStudentId;
       const nextDate = params?.date ?? selectedDate;
 
-      const startDate = startOfWeekISO(nextDate);
+      const startDate = addDaysISO(monthStartISO(nextDate), -7);
 
       const qs = new URLSearchParams({
         studentId: nextStudentId,
         startDate,
-        days: "35",
+        days: "60",
       });
 
       const res = await fetch(`/api/parent/schedule?${qs.toString()}`, {
@@ -532,6 +829,13 @@ export default function ParentSchedulePage() {
 
   function moveDate(days: number) {
     const next = addDaysISO(selectedDate, days);
+    changeDate(next);
+  }
+
+  function moveMonth(months: number) {
+    const d = new Date(`${selectedDate}T12:00:00`);
+    d.setMonth(d.getMonth() + months);
+    const next = d.toISOString().slice(0, 10);
     changeDate(next);
   }
 
@@ -797,11 +1101,11 @@ export default function ParentSchedulePage() {
                 </div>
 
                 <h2 className="mt-2 text-2xl font-bold text-slate-950">
-                  Aulas do aluno
+                  Aulas e compromissos do aluno
                 </h2>
 
                 <p className="mt-1 text-sm leading-6 text-slate-500">
-                  Veja as aulas do dia, da semana ou uma lista com os próximos registros.
+                  Veja as aulas do dia, a semana completa, o calendário mensal ou os próximos registros.
                 </p>
               </div>
 
@@ -828,6 +1132,18 @@ export default function ParentSchedulePage() {
                   }`}
                 >
                   Semana completa
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setView("month")}
+                  className={`rounded-2xl px-4 py-2 text-sm font-bold transition ${
+                    view === "month"
+                      ? "bg-slate-950 text-white"
+                      : "border border-slate-300 text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  Calendário mensal
                 </button>
 
                 <button
@@ -878,13 +1194,23 @@ export default function ParentSchedulePage() {
                     title="Nenhuma rotina neste dia"
                     description="Não existe aula cadastrada na grade oficial para esta data. Confira se a escola já cadastrou os horários da turma do aluno."
                     action={
-                      <button
-                        type="button"
-                        onClick={() => setView("week")}
-                        className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white transition hover:opacity-90"
-                      >
-                        Ver semana completa
-                      </button>
+                      <div className="flex flex-wrap justify-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setView("week")}
+                          className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white transition hover:opacity-90"
+                        >
+                          Ver semana completa
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setView("month")}
+                          className="rounded-2xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+                        >
+                          Ver calendário mensal
+                        </button>
+                      </div>
                     }
                   />
                 )}
@@ -904,6 +1230,17 @@ export default function ParentSchedulePage() {
                   return <DayBlock key={date} date={date} events={dateEvents} />;
                 })}
               </div>
+            ) : view === "month" ? (
+              <MonthCalendar
+                selectedDate={selectedDate}
+                routineEvents={routineEvents}
+                schoolEvents={schoolEvents}
+                onSelectDate={(date) => {
+                  setSelectedDate(date);
+                }}
+                onPreviousMonth={() => moveMonth(-1)}
+                onNextMonth={() => moveMonth(1)}
+              />
             ) : (
               <div>
                 <div className="mb-5">
@@ -945,7 +1282,7 @@ export default function ParentSchedulePage() {
 
             <p className="mt-2 text-sm leading-6 text-slate-500">
               A rotina de aulas aparece nesta tela. Eventos gerais continuam disponíveis
-              na agenda escolar.
+              na agenda escolar e também aparecem no calendário mensal.
             </p>
 
             <button
