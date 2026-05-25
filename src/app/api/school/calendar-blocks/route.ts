@@ -75,6 +75,14 @@ function normalizeBlockType(value: unknown) {
   return allowed.has(safe) ? safe : "no_class";
 }
 
+function normalizeTargetScope(value: unknown) {
+  const safe = cleanText(value);
+
+  const allowed = new Set(["all_school", "class", "shift"]);
+
+  return allowed.has(safe) ? safe : "all_school";
+}
+
 function isStaffRole(role: string) {
   return ["diretor", "coordenador", "admin", "secretaria"].includes(role);
 }
@@ -140,6 +148,40 @@ async function getStaffContext(req: Request): Promise<StaffContext> {
   };
 }
 
+async function assertClassBelongsToSchool(params: {
+  schoolId: string;
+  classId: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("classes")
+    .select("id, school_id, name, grade, shift")
+    .eq("school_id", params.schoolId)
+    .eq("id", params.classId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error("Falha ao validar turma: " + error.message);
+  }
+
+  if (!data?.id) {
+    throw new Error("Turma não encontrada nesta escola.");
+  }
+
+  return data;
+}
+
+async function loadClasses(schoolId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("classes")
+    .select("id, name, grade, shift")
+    .eq("school_id", schoolId)
+    .order("name", { ascending: true });
+
+  if (error) return [];
+
+  return data || [];
+}
+
 export async function GET(req: Request) {
   const ctx = await getStaffContext(req);
 
@@ -151,34 +193,45 @@ export async function GET(req: Request) {
     const startDate = normalizeDate(url.searchParams.get("startDate"));
     const endDate = normalizeDate(url.searchParams.get("endDate"));
 
-    const { data, error } = await supabaseAdmin
-      .from("school_calendar_blocks")
-      .select(
+    const [blocksRes, classes] = await Promise.all([
+      supabaseAdmin
+        .from("school_calendar_blocks")
+        .select(
+          `
+          id,
+          school_id,
+          block_date,
+          type,
+          title,
+          description,
+          affects_all_classes,
+          target_scope,
+          class_id,
+          shift,
+          created_by,
+          created_at,
+          updated_at
         `
-        id,
-        school_id,
-        block_date,
-        type,
-        title,
-        description,
-        affects_all_classes,
-        created_by,
-        created_at,
-        updated_at
-      `
-      )
-      .eq("school_id", ctx.schoolId)
-      .gte("block_date", startDate)
-      .lte("block_date", endDate)
-      .order("block_date", { ascending: true })
-      .order("created_at", { ascending: true });
+        )
+        .eq("school_id", ctx.schoolId)
+        .gte("block_date", startDate)
+        .lte("block_date", endDate)
+        .order("block_date", { ascending: true })
+        .order("created_at", { ascending: true }),
 
-    if (error) {
-      return jsonError("Falha ao buscar bloqueios do calendário: " + error.message, 500);
+      loadClasses(ctx.schoolId),
+    ]);
+
+    if (blocksRes.error) {
+      return jsonError(
+        "Falha ao buscar bloqueios do calendário: " + blocksRes.error.message,
+        500
+      );
     }
 
     return jsonOk({
-      blocks: data || [],
+      blocks: blocksRes.data || [],
+      classes,
       meta: {
         schoolId: ctx.schoolId,
         startDate,
@@ -202,15 +255,51 @@ export async function POST(req: Request) {
     const type = normalizeBlockType(body.type);
     const title = cleanText(body.title);
     const description = cleanText(body.description) || null;
-    const affectsAllClasses =
-      typeof body.affectsAllClasses === "boolean"
-        ? body.affectsAllClasses
-        : typeof body.affects_all_classes === "boolean"
-          ? body.affects_all_classes
-          : true;
+
+    const targetScope = normalizeTargetScope(
+      body.targetScope || body.target_scope
+    );
+
+    const rawClassId = cleanText(body.classId || body.class_id);
+    const rawShift = cleanText(body.shift);
+
+    let classId: string | null = null;
+    let shift: string | null = null;
+    let affectsAllClasses = true;
 
     if (!title) {
       return jsonError("Informe o título do bloqueio.", 400);
+    }
+
+    if (targetScope === "class") {
+      if (!rawClassId) {
+        return jsonError("Selecione a turma para bloquear.", 400);
+      }
+
+      await assertClassBelongsToSchool({
+        schoolId: ctx.schoolId,
+        classId: rawClassId,
+      });
+
+      classId = rawClassId;
+      shift = null;
+      affectsAllClasses = false;
+    }
+
+    if (targetScope === "shift") {
+      if (!rawShift) {
+        return jsonError("Selecione o período/turno para bloquear.", 400);
+      }
+
+      classId = null;
+      shift = rawShift;
+      affectsAllClasses = false;
+    }
+
+    if (targetScope === "all_school") {
+      classId = null;
+      shift = null;
+      affectsAllClasses = true;
     }
 
     const { data, error } = await supabaseAdmin
@@ -222,6 +311,9 @@ export async function POST(req: Request) {
         title,
         description,
         affects_all_classes: affectsAllClasses,
+        target_scope: targetScope,
+        class_id: classId,
+        shift,
         created_by: ctx.userId,
         updated_at: new Date().toISOString(),
       })
@@ -234,6 +326,9 @@ export async function POST(req: Request) {
         title,
         description,
         affects_all_classes,
+        target_scope,
+        class_id,
+        shift,
         created_by,
         created_at,
         updated_at
