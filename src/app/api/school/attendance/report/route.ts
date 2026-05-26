@@ -15,8 +15,34 @@ type RosterStudent = {
   registration_number?: string | null;
 };
 
+type CalendarBlock = {
+  id: string;
+  block_date: string;
+  type: string;
+  title: string;
+  description: string | null;
+  target_scope: string | null;
+  class_id: string | null;
+  shift: string | null;
+  affects_all_classes: boolean | null;
+};
+
 function jsonError(message: string, status = 400, extra?: any) {
-  return NextResponse.json({ ok: false, error: message, ...extra }, { status });
+  return NextResponse.json(
+    { ok: false, error: message, ...extra },
+    { status, headers: { "Cache-Control": "no-store" } }
+  );
+}
+
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+function normalizeComparable(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function brDateFromISO(iso: string) {
@@ -41,6 +67,50 @@ function statusLabel(status: AttendanceStatus | undefined) {
   if (status === "absent") return "Falta";
   if (status === "late") return "Atraso";
   return "Sem registro";
+}
+
+function blockTypeLabel(type: string) {
+  const safe = cleanText(type);
+
+  if (safe === "holiday") return "Feriado";
+  if (safe === "recess") return "Recesso escolar";
+  if (safe === "no_class") return "Dia sem aula";
+  if (safe === "pedagogical_day") return "Dia pedagógico";
+  if (safe === "exam_day") return "Dia de avaliação";
+  if (safe === "event") return "Evento escolar";
+
+  return "Calendário escolar";
+}
+
+function isAllSchoolScope(value: unknown) {
+  const scope = normalizeComparable(value);
+
+  return (
+    !scope ||
+    scope === "all" ||
+    scope === "school" ||
+    scope === "all_school" ||
+    scope === "allschool" ||
+    scope === "all_classes" ||
+    scope === "allclasses" ||
+    scope === "toda_escola" ||
+    scope === "todaescola"
+  );
+}
+
+function isClassScope(value: unknown) {
+  const scope = normalizeComparable(value);
+  return scope === "class" || scope === "turma";
+}
+
+function isShiftScope(value: unknown) {
+  const scope = normalizeComparable(value);
+  return scope === "shift" || scope === "period" || scope === "periodo" || scope === "turno";
+}
+
+function classDisplayName(data: any, fallback: string) {
+  const parts = [data?.name, data?.grade, data?.shift].map(cleanText).filter(Boolean);
+  return parts.join(" • ") || fallback;
 }
 
 function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: string } | null {
@@ -175,6 +245,192 @@ async function tryGetTeacherForDate(params: {
   } catch {
     return "Professor(a)";
   }
+}
+
+async function getClassInfo(params: {
+  schoolId: string;
+  classId: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("classes")
+    .select("id, name, grade, shift, school_id")
+    .eq("school_id", params.schoolId)
+    .eq("id", params.classId)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      ok: false as const,
+      error: error.message,
+      data: null as any,
+    };
+  }
+
+  if (!data?.id) {
+    return {
+      ok: false as const,
+      error: "Turma não encontrada nesta escola.",
+      data: null as any,
+    };
+  }
+
+  return {
+    ok: true as const,
+    error: null,
+    data,
+  };
+}
+
+async function getApplicableCalendarBlocks(params: {
+  schoolId: string;
+  classId: string;
+  date: string;
+  classShift: string | null;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("school_calendar_blocks")
+    .select(
+      `
+      id,
+      block_date,
+      type,
+      title,
+      description,
+      target_scope,
+      class_id,
+      shift,
+      affects_all_classes
+    `
+    )
+    .eq("school_id", params.schoolId)
+    .eq("block_date", params.date)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    return {
+      ok: false as const,
+      error: error.message,
+      blocks: [] as CalendarBlock[],
+    };
+  }
+
+  const applicableBlocks = ((data || []) as CalendarBlock[]).filter((block) => {
+    if (block.affects_all_classes === true) return true;
+
+    const scope = cleanText(block.target_scope);
+
+    if (isAllSchoolScope(scope)) return true;
+
+    if (isClassScope(scope)) {
+      return cleanText(block.class_id) === params.classId;
+    }
+
+    if (isShiftScope(scope)) {
+      return (
+        !!cleanText(block.shift) &&
+        normalizeComparable(block.shift) === normalizeComparable(params.classShift)
+      );
+    }
+
+    return false;
+  });
+
+  return {
+    ok: true as const,
+    error: null,
+    blocks: applicableBlocks,
+  };
+}
+
+function drawNoClassPdf(params: {
+  doc: PDFKit.PDFDocument;
+  schoolName: string;
+  logoBuffer: Buffer | null;
+  className: string;
+  teacherName: string;
+  date: string;
+  block: CalendarBlock;
+}) {
+  const { doc, schoolName, logoBuffer, className, teacherName, date, block } = params;
+
+  const pageW = doc.page.width;
+  const margin = 46;
+  const headerTop = 44;
+
+  if (logoBuffer) {
+    try {
+      doc.image(logoBuffer, margin, headerTop, { fit: [90, 90] });
+    } catch {}
+  }
+
+  const titleX = margin + 110;
+
+  doc.font("Helvetica-Bold").fontSize(24).fillColor("#0f172a").text(
+    schoolName,
+    titleX,
+    headerTop + 4,
+    {
+      width: pageW - titleX - margin,
+      ellipsis: true,
+    }
+  );
+
+  doc.font("Helvetica").fontSize(11).fillColor("#334155");
+  doc.text(`Turma: ${className}`, titleX, headerTop + 42);
+  doc.text(`Professor(a): ${teacherName}`, titleX, headerTop + 60);
+  doc.text(`Data: ${brDateFromISO(date)}`, titleX, headerTop + 78);
+
+  const boxY = headerTop + 140;
+
+  doc.roundedRect(margin, boxY, pageW - margin * 2, 240, 22).fill("#fff7ed");
+
+  doc
+    .roundedRect(margin + 22, boxY + 22, pageW - margin * 2 - 44, 196, 18)
+    .strokeColor("#fed7aa")
+    .lineWidth(1.2)
+    .stroke();
+
+  doc.font("Helvetica-Bold").fontSize(28).fillColor("#9a3412").text(
+    "Não haverá aula neste dia",
+    margin + 44,
+    boxY + 48,
+    {
+      width: pageW - margin * 2 - 88,
+      align: "center",
+    }
+  );
+
+  doc.font("Helvetica-Bold").fontSize(15).fillColor("#7c2d12").text(
+    `${blockTypeLabel(block.type)} · ${cleanText(block.title) || "Calendário escolar"}`,
+    margin + 44,
+    boxY + 96,
+    {
+      width: pageW - margin * 2 - 88,
+      align: "center",
+    }
+  );
+
+  doc.font("Helvetica").fontSize(12).fillColor("#7c2d12").text(
+    cleanText(block.description) ||
+      "A escola informou bloqueio no calendário escolar. A chamada não precisa ser realizada nesta data.",
+    margin + 70,
+    boxY + 136,
+    {
+      width: pageW - margin * 2 - 140,
+      align: "center",
+      lineGap: 4,
+    }
+  );
+
+  doc.font("Helvetica").fontSize(10).fillColor("#475569").text(
+    "Este documento registra que a data não é considerada dia normal de chamada para esta turma.",
+    margin,
+    boxY + 270,
+    {
+      width: pageW - margin * 2,
+      align: "center",
+    }
+  );
 }
 
 async function getRosterFromRpc(classId: string, date: string): Promise<RosterStudent[]> {
@@ -335,23 +591,62 @@ export async function GET(req: Request) {
   const schoolName = school?.brand_name || school?.name || "Escola";
   const logoUrl = school?.brand_logo_url || school?.logo_url || null;
 
-  const { data: classData, error: classErr } = await supabaseAdmin
-    .from("classes")
-    .select("id, name")
-    .eq("id", classId)
-    .eq("school_id", schoolId)
-    .maybeSingle();
+  const classInfo = await getClassInfo({
+    schoolId,
+    classId,
+  });
 
-  if (classErr) {
-    return jsonError("Falha ao buscar turma.", 500, { details: classErr.message });
+  if (!classInfo.ok) {
+    return jsonError("Falha ao buscar turma.", 500, {
+      details: classInfo.error,
+    });
   }
 
-  if (!classData?.id) {
-    return jsonError("Turma não encontrada nesta escola.", 404);
-  }
-
-  const className = classData?.name || classId;
+  const className = classDisplayName(classInfo.data, classId);
+  const classShift = cleanText(classInfo.data?.shift) || null;
   const teacherName = await tryGetTeacherForDate({ schoolId, classId, date });
+  const logoBuffer = await getLogoBuffer(logoUrl);
+
+  const calendarBlocksResult = await getApplicableCalendarBlocks({
+    schoolId,
+    classId,
+    date,
+    classShift,
+  });
+
+  if (!calendarBlocksResult.ok) {
+    return jsonError("Erro ao verificar calendário escolar.", 500, {
+      details: calendarBlocksResult.error,
+    });
+  }
+
+  if (calendarBlocksResult.blocks.length > 0) {
+    const doc = new PDFDocument({
+      size: "A4",
+      layout: "landscape",
+      margin: 36,
+    });
+
+    drawNoClassPdf({
+      doc,
+      schoolName,
+      logoBuffer,
+      className,
+      teacherName,
+      date,
+      block: calendarBlocksResult.blocks[0],
+    });
+
+    const pdfBuffer = await pdfToBuffer(doc);
+
+    return new NextResponse(new Uint8Array(pdfBuffer), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="sem-aula-${date}.pdf"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
 
   const { data: sessions, error: sessionsErr } = await supabaseAdmin
     .from("attendance_sessions")
@@ -459,8 +754,6 @@ export async function GET(req: Request) {
   const pageW = doc.page.width;
   const pageH = doc.page.height;
   const margin = 36;
-
-  const logoBuffer = await getLogoBuffer(logoUrl);
   const headerTop = 38;
 
   if (logoBuffer) {
