@@ -678,7 +678,7 @@ async function loadCalendarBlockEvents(params: {
 
       events.push({
         id: `block-${block.id}`,
-        source: "school_event",
+        source: "official_schedule",
         type: "event",
         title,
         description,
@@ -714,7 +714,7 @@ async function loadCalendarBlockEvents(params: {
     for (const child of affectedChildren) {
       events.push({
         id: `block-${block.id}-${child.id}`,
-        source: "school_event",
+        source: "official_schedule",
         type: "event",
         title,
         description,
@@ -853,8 +853,9 @@ export async function GET(req: Request) {
       events,
       summary: {
         total: events.length,
-        routine: routineEvents.length,
-        schoolEvents: schoolEvents.length + blockEvents.length,
+        routine: routineEvents.length + blockEvents.length,
+        schoolEvents: schoolEvents.length,
+        calendarBlocks: blockEvents.length,
         children: children.length,
       },
       debug: {
@@ -872,12 +873,13 @@ export async function GET(req: Request) {
           targetScope: block.blockTargetScope,
           classId: block.classId,
           shift: block.blockShift,
+          source: block.source,
         })),
       },
       meta: {
         startDate,
         days,
-        source: "parent_schedule_official_class_routine_with_calendar_blocks",
+        source: "parent_schedule_official_class_routine_with_calendar_blocks_v2",
       },
     });
   } catch (e: any) {
