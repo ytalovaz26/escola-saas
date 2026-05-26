@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -33,6 +33,7 @@ type QuickAction = {
 const SUBJECTS_HREF = "/school/subjects";
 const BRANDING_HREF = "/school/settings/branding";
 const STAFF_HREF = "/school/staff";
+const CALENDAR_BLOCKS_HREF = "/school/calendar-blocks";
 
 function safeJson(text: string) {
   if (!text) return null;

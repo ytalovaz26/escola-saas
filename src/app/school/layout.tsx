@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -39,6 +39,7 @@ const SUBJECTS_HREF = "/school/subjects";
 const BRANDING_HREF = "/school/settings/branding";
 const STAFF_HREF = "/school/staff";
 const SCHEDULE_HREF = "/school/schedule";
+const CALENDAR_BLOCKS_HREF = "/school/calendar-blocks";
 
 function safeJson(text: string) {
   if (!text) return null;
