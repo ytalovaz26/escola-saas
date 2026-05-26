@@ -17,6 +17,20 @@ type ParentChild = {
   };
 };
 
+type CalendarBlockRow = {
+  id: string;
+  school_id: string;
+  block_date: string;
+  type: string;
+  title: string;
+  description: string | null;
+  affects_all_classes: boolean | null;
+  target_scope: "all_school" | "class" | "shift" | string | null;
+  class_id: string | null;
+  shift: string | null;
+  created_at: string | null;
+};
+
 type ParentScheduleEvent = {
   id: string;
   source: "official_schedule" | "school_event";
@@ -30,6 +44,7 @@ type ParentScheduleEvent = {
   studentName: string | null;
   classId: string | null;
   className: string | null;
+  classShift?: string | null;
   subjectId: string | null;
   subjectName: string | null;
   teacherUserId: string | null;
@@ -38,6 +53,9 @@ type ParentScheduleEvent = {
   room: string | null;
   notes: string | null;
   createdAt: string | null;
+  isCalendarBlock?: boolean;
+  blockTargetScope?: "all_school" | "class" | "shift" | string | null;
+  blockShift?: string | null;
 };
 
 function jsonOk(body: Record<string, any> = {}, status = 200) {
@@ -64,6 +82,13 @@ function cleanText(value: unknown) {
   return String(value || "").trim();
 }
 
+function normalizeComparable(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 function getBearerToken(req: Request) {
   const auth = req.headers.get("authorization") || "";
   const match = auth.match(/^Bearer\s+(.+)$/i);
@@ -87,9 +112,6 @@ function jsWeekday(date: string) {
 function possibleWeekdaysForDate(date: string) {
   const day = jsWeekday(date);
 
-  // Suporta bancos salvos como:
-  // 0 = domingo ... 6 = sábado
-  // ou 1 = segunda ... 7 = domingo
   if (day === 0) return [0, 7];
 
   return [day];
@@ -136,6 +158,38 @@ function classDisplayName(cls: any) {
     .filter(Boolean);
 
   return parts.join(" • ") || "Turma";
+}
+
+function blockTypeLabel(type: string) {
+  const safe = cleanText(type);
+
+  if (safe === "holiday") return "Feriado";
+  if (safe === "recess") return "Recesso escolar";
+  if (safe === "no_class") return "Dia sem aula";
+  if (safe === "pedagogical_day") return "Dia pedagógico";
+  if (safe === "exam_day") return "Dia de avaliação";
+  if (safe === "event") return "Evento escolar";
+
+  return "Calendário escolar";
+}
+
+function isBlockTargetingChild(block: CalendarBlockRow, child: ParentChild) {
+  const scope = cleanText(block.target_scope) || "all_school";
+
+  if (scope === "all_school" || block.affects_all_classes === true) return true;
+
+  if (scope === "class") {
+    return cleanText(block.class_id) === cleanText(child.activeClass?.classId);
+  }
+
+  if (scope === "shift") {
+    return (
+      !!cleanText(block.shift) &&
+      normalizeComparable(block.shift) === normalizeComparable(child.activeClass?.shift)
+    );
+  }
+
+  return false;
 }
 
 async function getParentContext(req: Request) {
@@ -498,6 +552,7 @@ async function loadOfficialScheduleEvents(params: {
           studentName: child.fullName,
           classId,
           className,
+          classShift: child.activeClass?.shift || null,
           subjectId,
           subjectName,
           teacherUserId,
@@ -549,6 +604,7 @@ async function loadSchoolEvents(params: {
     studentName: selectedChild?.fullName || null,
     classId: null,
     className: null,
+    classShift: null,
     subjectId: null,
     subjectName: null,
     teacherUserId: null,
@@ -558,6 +614,168 @@ async function loadSchoolEvents(params: {
     notes: null,
     createdAt: ev.created_at || null,
   }));
+}
+
+async function loadCalendarBlockEvents(params: {
+  schoolId: string;
+  selectedStudentId: string;
+  children: ParentChild[];
+  startDate: string;
+  days: number;
+}) {
+  const endDate = addDaysISO(params.startDate, params.days - 1);
+
+  const { data, error } = await supabaseAdmin
+    .from("school_calendar_blocks")
+    .select(
+      `
+      id,
+      school_id,
+      block_date,
+      type,
+      title,
+      description,
+      affects_all_classes,
+      target_scope,
+      class_id,
+      shift,
+      created_at
+    `
+    )
+    .eq("school_id", params.schoolId)
+    .gte("block_date", params.startDate)
+    .lte("block_date", endDate)
+    .order("block_date", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) return [];
+
+  const targetChildren =
+    params.selectedStudentId === "all"
+      ? params.children
+      : params.children.filter((child) => child.id === params.selectedStudentId);
+
+  const events: ParentScheduleEvent[] = [];
+
+  for (const block of (data || []) as CalendarBlockRow[]) {
+    const scope = cleanText(block.target_scope) || "all_school";
+    const affectedChildren = targetChildren.filter((child) =>
+      isBlockTargetingChild(block, child)
+    );
+
+    if (affectedChildren.length === 0) continue;
+
+    const title = `${blockTypeLabel(block.type)} • ${
+      cleanText(block.title) || "Não haverá aula"
+    }`;
+
+    const description =
+      cleanText(block.description) ||
+      "A escola informou que não haverá aula para esta data.";
+
+    if (params.selectedStudentId === "all") {
+      const firstChild = affectedChildren[0] || null;
+
+      events.push({
+        id: `block-${block.id}`,
+        source: "school_event",
+        type: "event",
+        title,
+        description,
+        date: normalizeDate(block.block_date),
+        startTime: null,
+        endTime: null,
+        studentId: null,
+        studentName: null,
+        classId: scope === "class" ? cleanText(block.class_id) || null : null,
+        className:
+          scope === "class"
+            ? firstChild?.activeClass?.className || "Turma específica"
+            : scope === "shift"
+              ? `Turno: ${cleanText(block.shift)}`
+              : "Toda a escola",
+        classShift: scope === "shift" ? cleanText(block.shift) || null : null,
+        subjectId: null,
+        subjectName: "Não haverá aula",
+        teacherUserId: null,
+        teacherName: null,
+        teacherEmail: null,
+        room: null,
+        notes: description,
+        createdAt: block.created_at || null,
+        isCalendarBlock: true,
+        blockTargetScope: scope,
+        blockShift: cleanText(block.shift) || null,
+      });
+
+      continue;
+    }
+
+    for (const child of affectedChildren) {
+      events.push({
+        id: `block-${block.id}-${child.id}`,
+        source: "school_event",
+        type: "event",
+        title,
+        description,
+        date: normalizeDate(block.block_date),
+        startTime: null,
+        endTime: null,
+        studentId: child.id,
+        studentName: child.fullName,
+        classId:
+          scope === "class"
+            ? cleanText(block.class_id) || child.activeClass?.classId || null
+            : child.activeClass?.classId || null,
+        className: child.activeClass?.className || null,
+        classShift: child.activeClass?.shift || null,
+        subjectId: null,
+        subjectName: "Não haverá aula",
+        teacherUserId: null,
+        teacherName: null,
+        teacherEmail: null,
+        room: null,
+        notes: description,
+        createdAt: block.created_at || null,
+        isCalendarBlock: true,
+        blockTargetScope: scope,
+        blockShift: cleanText(block.shift) || null,
+      });
+    }
+  }
+
+  return events;
+}
+
+function filterRoutineEventsByBlocks(params: {
+  routineEvents: ParentScheduleEvent[];
+  blockEvents: ParentScheduleEvent[];
+}) {
+  if (params.blockEvents.length === 0) return params.routineEvents;
+
+  return params.routineEvents.filter((event) => {
+    return !params.blockEvents.some((block) => {
+      if (!block.isCalendarBlock) return false;
+      if (block.date !== event.date) return false;
+
+      const scope = cleanText(block.blockTargetScope) || "all_school";
+
+      if (scope === "all_school") return true;
+
+      if (scope === "class") {
+        return !!block.classId && block.classId === event.classId;
+      }
+
+      if (scope === "shift") {
+        return (
+          !!cleanText(block.blockShift) &&
+          normalizeComparable(block.blockShift) === normalizeComparable(event.classShift)
+        );
+      }
+
+      return false;
+    });
+  });
 }
 
 export async function GET(req: Request) {
@@ -589,7 +807,7 @@ export async function GET(req: Request) {
       }
     }
 
-    const [routineEvents, schoolEvents] = await Promise.all([
+    const [rawRoutineEvents, schoolEvents, blockEvents] = await Promise.all([
       loadOfficialScheduleEvents({
         schoolId: ctx.schoolId,
         children,
@@ -602,9 +820,21 @@ export async function GET(req: Request) {
         selectedStudentId,
         children,
       }),
+      loadCalendarBlockEvents({
+        schoolId: ctx.schoolId,
+        selectedStudentId,
+        children,
+        startDate,
+        days,
+      }),
     ]);
 
-    const events = [...routineEvents, ...schoolEvents].sort((a, b) => {
+    const routineEvents = filterRoutineEventsByBlocks({
+      routineEvents: rawRoutineEvents,
+      blockEvents,
+    });
+
+    const events = [...routineEvents, ...schoolEvents, ...blockEvents].sort((a, b) => {
       const ad = `${a.date}T${a.startTime || "99:99"}:00`;
       const bd = `${b.date}T${b.startTime || "99:99"}:00`;
 
@@ -624,7 +854,7 @@ export async function GET(req: Request) {
       summary: {
         total: events.length,
         routine: routineEvents.length,
-        schoolEvents: schoolEvents.length,
+        schoolEvents: schoolEvents.length + blockEvents.length,
         children: children.length,
       },
       debug: {
@@ -633,12 +863,21 @@ export async function GET(req: Request) {
           name: child.fullName,
           classId: child.activeClass?.classId || null,
           className: child.activeClass?.className || null,
+          shift: child.activeClass?.shift || null,
+        })),
+        blocks: blockEvents.map((block) => ({
+          id: block.id,
+          date: block.date,
+          title: block.title,
+          targetScope: block.blockTargetScope,
+          classId: block.classId,
+          shift: block.blockShift,
         })),
       },
       meta: {
         startDate,
         days,
-        source: "parent_schedule_official_class_routine",
+        source: "parent_schedule_official_class_routine_with_calendar_blocks",
       },
     });
   } catch (e: any) {

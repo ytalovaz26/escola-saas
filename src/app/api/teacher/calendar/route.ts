@@ -7,6 +7,20 @@ export const dynamic = "force-dynamic";
 type CalendarClass = {
   id: string;
   name: string;
+  shift: string | null;
+};
+
+type CalendarBlockRow = {
+  id: string;
+  block_date: string;
+  type: string;
+  title: string;
+  description: string | null;
+  target_scope: "all_school" | "class" | "shift" | string | null;
+  class_id: string | null;
+  shift: string | null;
+  affects_all_classes: boolean | null;
+  created_at: string | null;
 };
 
 type CalendarEvent = {
@@ -24,6 +38,9 @@ type CalendarEvent = {
   room?: string | null;
   notes?: string | null;
   status: "scheduled" | "pending" | "done";
+  isCalendarBlock?: boolean;
+  blockTargetScope?: "all_school" | "class" | "shift" | string | null;
+  blockShift?: string | null;
 };
 
 function jsonOk(body: any = {}, status = 200) {
@@ -54,11 +71,15 @@ function cleanText(value: unknown) {
   return String(value || "").trim();
 }
 
-function normalizeRole(value: unknown) {
+function normalizeComparable(value: unknown) {
   return cleanText(value)
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeRole(value: unknown) {
+  return normalizeComparable(value);
 }
 
 function isTeacherRole(role: unknown) {
@@ -76,6 +97,14 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function normalizeDate(value: unknown) {
+  const safe = cleanText(value);
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(safe)) return safe;
+
+  return todayISO();
+}
+
 function addDaysISO(baseDate: string, days: number) {
   const d = new Date(`${baseDate}T12:00:00`);
   d.setDate(d.getDate() + days);
@@ -84,6 +113,14 @@ function addDaysISO(baseDate: string, days: number) {
 
 function getWeekday(date: string) {
   return new Date(`${date}T12:00:00`).getDay();
+}
+
+function possibleWeekdaysForDate(date: string) {
+  const day = getWeekday(date);
+
+  if (day === 0) return [0, 7];
+
+  return [day];
 }
 
 function normalizeTime(value: unknown) {
@@ -111,6 +148,19 @@ function teacherNameFromEmail(email?: string | null) {
     .join(" ");
 
   return pretty || "Professor";
+}
+
+function blockTypeLabel(type: string) {
+  const safe = cleanText(type);
+
+  if (safe === "holiday") return "Feriado";
+  if (safe === "recess") return "Recesso escolar";
+  if (safe === "no_class") return "Dia sem aula";
+  if (safe === "pedagogical_day") return "Dia pedagógico";
+  if (safe === "exam_day") return "Dia de avaliação";
+  if (safe === "event") return "Evento escolar";
+
+  return "Calendário escolar";
 }
 
 async function getTeacherContext(req: Request) {
@@ -232,7 +282,7 @@ async function getClassesByIds(params: {
 
   const { data, error } = await supabaseAdmin
     .from("classes")
-    .select("id, name, school_id")
+    .select("id, name, school_id, grade, shift")
     .in("id", ids)
     .eq("school_id", params.schoolId)
     .order("name", { ascending: true });
@@ -244,9 +294,12 @@ async function getClassesByIds(params: {
   const map = new Map<string, CalendarClass>();
 
   for (const cls of data || []) {
+    const parts = [cls.name, cls.grade, cls.shift].map(cleanText).filter(Boolean);
+
     map.set(String(cls.id), {
       id: String(cls.id),
-      name: cleanText(cls.name) || "Turma",
+      name: parts.join(" • ") || "Turma",
+      shift: cleanText(cls.shift) || null,
     });
   }
 
@@ -284,6 +337,110 @@ async function getSubjectsByIds(params: {
   return map;
 }
 
+async function loadTeacherCalendarBlocks(params: {
+  schoolId: string;
+  classesById: Map<string, CalendarClass>;
+  startDate: string;
+  days: number;
+}) {
+  const endDate = addDaysISO(params.startDate, params.days - 1);
+
+  const classIds = Array.from(params.classesById.keys());
+
+  const shifts = Array.from(
+    new Set(
+      Array.from(params.classesById.values())
+        .map((cls) => cleanText(cls.shift))
+        .filter(Boolean)
+    )
+  );
+
+  const { data, error } = await supabaseAdmin
+    .from("school_calendar_blocks")
+    .select(
+      `
+      id,
+      block_date,
+      type,
+      title,
+      description,
+      target_scope,
+      class_id,
+      shift,
+      affects_all_classes,
+      created_at
+    `
+    )
+    .eq("school_id", params.schoolId)
+    .gte("block_date", params.startDate)
+    .lte("block_date", endDate)
+    .order("block_date", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) return [];
+
+  const events: CalendarEvent[] = [];
+
+  for (const block of (data || []) as CalendarBlockRow[]) {
+    const scope = cleanText(block.target_scope) || "all_school";
+    const blockClassId = cleanText(block.class_id);
+    const blockShift = cleanText(block.shift);
+
+    let applies = false;
+
+    if (scope === "all_school" || block.affects_all_classes === true) {
+      applies = true;
+    }
+
+    if (scope === "class") {
+      applies = !!blockClassId && classIds.includes(blockClassId);
+    }
+
+    if (scope === "shift") {
+      applies =
+        !!blockShift &&
+        shifts.some((shift) => normalizeComparable(shift) === normalizeComparable(blockShift));
+    }
+
+    if (!applies) continue;
+
+    const className =
+      scope === "class"
+        ? params.classesById.get(blockClassId)?.name || "Turma específica"
+        : scope === "shift"
+          ? `Turno: ${blockShift}`
+          : "Toda a escola";
+
+    const description =
+      cleanText(block.description) ||
+      "A escola informou que não haverá aula para esta data.";
+
+    events.push({
+      id: `block-${block.id}`,
+      type: "notice",
+      title: `${blockTypeLabel(block.type)} • ${
+        cleanText(block.title) || "Não haverá aula"
+      }`,
+      description,
+      date: normalizeDate(block.block_date),
+      startTime: "",
+      endTime: "",
+      classId: scope === "class" ? blockClassId || null : null,
+      className,
+      subjectId: null,
+      subjectName: "Não haverá aula",
+      room: null,
+      notes: description,
+      status: "pending",
+      isCalendarBlock: true,
+      blockTargetScope: scope,
+      blockShift: blockShift || null,
+    });
+  }
+
+  return events;
+}
+
 function buildOfficialEvents(params: {
   scheduleRows: any[];
   classesById: Map<string, CalendarClass>;
@@ -295,9 +452,11 @@ function buildOfficialEvents(params: {
 
   for (let i = 0; i < params.days; i++) {
     const date = addDaysISO(params.startDate, i);
-    const weekday = getWeekday(date);
+    const possibleWeekdays = possibleWeekdaysForDate(date);
 
-    const dayRows = params.scheduleRows.filter((row) => Number(row.weekday) === weekday);
+    const dayRows = params.scheduleRows.filter((row) =>
+      possibleWeekdays.includes(Number(row.weekday))
+    );
 
     for (const row of dayRows) {
       const classId = cleanText(row.class_id);
@@ -334,9 +493,43 @@ function buildOfficialEvents(params: {
   }
 
   return events.sort((a, b) => {
-    const da = `${a.date}T${a.startTime}:00`;
-    const db = `${b.date}T${b.startTime}:00`;
+    const da = `${a.date}T${a.startTime || "99:99"}:00`;
+    const db = `${b.date}T${b.startTime || "99:99"}:00`;
     return da.localeCompare(db);
+  });
+}
+
+function filterOfficialEventsByBlocks(params: {
+  events: CalendarEvent[];
+  blockEvents: CalendarEvent[];
+  classesById: Map<string, CalendarClass>;
+}) {
+  if (params.blockEvents.length === 0) return params.events;
+
+  return params.events.filter((event) => {
+    return !params.blockEvents.some((block) => {
+      if (!block.isCalendarBlock) return false;
+      if (block.date !== event.date) return false;
+
+      const scope = cleanText(block.blockTargetScope) || "all_school";
+
+      if (scope === "all_school") return true;
+
+      if (scope === "class") {
+        return !!block.classId && block.classId === event.classId;
+      }
+
+      if (scope === "shift") {
+        const eventClass = event.classId ? params.classesById.get(event.classId) : null;
+
+        return (
+          !!cleanText(block.blockShift) &&
+          normalizeComparable(block.blockShift) === normalizeComparable(eventClass?.shift)
+        );
+      }
+
+      return false;
+    });
   });
 }
 
@@ -348,7 +541,7 @@ export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
 
-    const startDate = cleanText(url.searchParams.get("startDate")) || todayISO();
+    const startDate = normalizeDate(url.searchParams.get("startDate")) || todayISO();
     const daysParam = Number(url.searchParams.get("days") || "31");
     const days = Number.isFinite(daysParam)
       ? Math.min(Math.max(daysParam, 1), 62)
@@ -387,12 +580,32 @@ export async function GET(req: Request) {
       a.name.localeCompare(b.name, "pt-BR")
     );
 
-    const events = buildOfficialEvents({
+    const rawEvents = buildOfficialEvents({
       scheduleRows,
       classesById,
       subjectsById,
       startDate,
       days,
+    });
+
+    const blockEvents = await loadTeacherCalendarBlocks({
+      schoolId: ctx.schoolId,
+      classesById,
+      startDate,
+      days,
+    });
+
+    const events = [
+      ...filterOfficialEventsByBlocks({
+        events: rawEvents,
+        blockEvents,
+        classesById,
+      }),
+      ...blockEvents,
+    ].sort((a, b) => {
+      const da = `${a.date}T${a.startTime || "99:99"}:00`;
+      const db = `${b.date}T${b.startTime || "99:99"}:00`;
+      return da.localeCompare(db);
     });
 
     return jsonOk({
@@ -411,8 +624,9 @@ export async function GET(req: Request) {
       meta: {
         startDate,
         days,
-        source: "official_school_class_schedule",
+        source: "official_school_class_schedule_with_calendar_blocks",
         hasOfficialSchedule: scheduleRows.length > 0,
+        calendarBlocks: blockEvents.length,
       },
     });
   } catch (e: any) {
