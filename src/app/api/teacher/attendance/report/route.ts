@@ -27,7 +27,13 @@ type CalendarBlock = {
 };
 
 function jsonError(message: string, status = 400, extra?: any) {
-  return NextResponse.json({ ok: false, error: message, ...extra }, { status });
+  return NextResponse.json(
+    { ok: false, error: message, ...extra },
+    {
+      status,
+      headers: { "Cache-Control": "no-store" },
+    }
+  );
 }
 
 function cleanText(value: unknown) {
@@ -42,7 +48,7 @@ function normalizeComparable(value: unknown) {
 }
 
 function brDateFromISO(iso: string) {
-  const [y, m, d] = (iso || "").split("-");
+  const [y, m, d] = String(iso || "").split("-");
   if (!y || !m || !d) return iso;
   return `${d}/${m}/${y}`;
 }
@@ -76,6 +82,37 @@ function blockTypeLabel(type: string) {
   if (safe === "event") return "Evento escolar";
 
   return "Calendário escolar";
+}
+
+function isAllSchoolScope(value: unknown) {
+  const scope = normalizeComparable(value);
+
+  return (
+    !scope ||
+    scope === "all" ||
+    scope === "school" ||
+    scope === "all_school" ||
+    scope === "allschool" ||
+    scope === "all_classes" ||
+    scope === "allclasses" ||
+    scope === "toda_escola" ||
+    scope === "todaescola"
+  );
+}
+
+function isClassScope(value: unknown) {
+  const scope = normalizeComparable(value);
+  return scope === "class" || scope === "turma";
+}
+
+function isShiftScope(value: unknown) {
+  const scope = normalizeComparable(value);
+  return (
+    scope === "shift" ||
+    scope === "period" ||
+    scope === "periodo" ||
+    scope === "turno"
+  );
 }
 
 function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: string } | null {
@@ -182,6 +219,11 @@ function drawCellText(
   });
 }
 
+function getClassName(data: any, fallback: string) {
+  const parts = [data?.name, data?.grade, data?.shift].map(cleanText).filter(Boolean);
+  return parts.join(" • ") || fallback;
+}
+
 async function getClassInfo(params: {
   schoolId: string;
   classId: string;
@@ -264,15 +306,17 @@ async function getApplicableCalendarBlocks(params: {
   }
 
   const applicableBlocks = ((data || []) as CalendarBlock[]).filter((block) => {
-    const scope = cleanText(block.target_scope) || "all_school";
+    if (block.affects_all_classes === true) return true;
 
-    if (scope === "all_school" || block.affects_all_classes === true) return true;
+    const scope = cleanText(block.target_scope);
 
-    if (scope === "class") {
+    if (isAllSchoolScope(scope)) return true;
+
+    if (isClassScope(scope)) {
       return cleanText(block.class_id) === params.classId;
     }
 
-    if (scope === "shift") {
+    if (isShiftScope(scope)) {
       return (
         !!cleanText(block.shift) &&
         normalizeComparable(block.shift) === normalizeComparable(classShift)
@@ -312,7 +356,11 @@ function drawNoClassPdf(params: {
 
   const titleX = margin + 110;
 
-  doc.font("Helvetica-Bold").fontSize(24).fillColor("#0f172a").text(schoolName, titleX, headerTop + 4);
+  doc.font("Helvetica-Bold").fontSize(24).fillColor("#0f172a").text(
+    schoolName,
+    titleX,
+    headerTop + 4
+  );
 
   doc.font("Helvetica").fontSize(11).fillColor("#334155");
   doc.text(`Turma: ${className}`, titleX, headerTop + 42);
@@ -321,23 +369,28 @@ function drawNoClassPdf(params: {
 
   const boxY = headerTop + 140;
 
-  doc.roundedRect(margin, boxY, pageW - margin * 2, 230, 22).fill("#fff7ed");
+  doc.roundedRect(margin, boxY, pageW - margin * 2, 240, 22).fill("#fff7ed");
 
   doc
-    .roundedRect(margin + 22, boxY + 22, pageW - margin * 2 - 44, 186, 18)
+    .roundedRect(margin + 22, boxY + 22, pageW - margin * 2 - 44, 196, 18)
     .strokeColor("#fed7aa")
     .lineWidth(1.2)
     .stroke();
 
-  doc.font("Helvetica-Bold").fontSize(28).fillColor("#9a3412").text("🚫 Não haverá aula neste dia", margin + 44, boxY + 48, {
-    width: pageW - margin * 2 - 88,
-    align: "center",
-  });
+  doc.font("Helvetica-Bold").fontSize(28).fillColor("#9a3412").text(
+    "Não haverá aula neste dia",
+    margin + 44,
+    boxY + 48,
+    {
+      width: pageW - margin * 2 - 88,
+      align: "center",
+    }
+  );
 
   doc.font("Helvetica-Bold").fontSize(15).fillColor("#7c2d12").text(
     `${blockTypeLabel(block.type)} · ${cleanText(block.title) || "Calendário escolar"}`,
     margin + 44,
-    boxY + 94,
+    boxY + 96,
     {
       width: pageW - margin * 2 - 88,
       align: "center",
@@ -348,7 +401,7 @@ function drawNoClassPdf(params: {
     cleanText(block.description) ||
       "A escola informou bloqueio no calendário escolar. A chamada não precisa ser realizada nesta data.",
     margin + 70,
-    boxY + 130,
+    boxY + 136,
     {
       width: pageW - margin * 2 - 140,
       align: "center",
@@ -357,9 +410,9 @@ function drawNoClassPdf(params: {
   );
 
   doc.font("Helvetica").fontSize(10).fillColor("#475569").text(
-    "Este documento foi gerado para registrar que a data não é considerada dia normal de chamada para esta turma.",
+    "Este documento registra que a data não é considerada dia normal de chamada para esta turma.",
     margin,
-    boxY + 260,
+    boxY + 270,
     {
       width: pageW - margin * 2,
       align: "center",
@@ -425,18 +478,18 @@ export async function GET(req: Request) {
   const schoolName = school?.name || "Escola";
   const logoUrl = school?.brand_logo_url || null;
 
-  const { data: classData } = await supabaseAdmin
-    .from("classes")
-    .select("name, grade, shift")
-    .eq("id", classId)
-    .eq("school_id", schoolId)
-    .single();
+  const classInfo = await getClassInfo({
+    schoolId,
+    classId,
+  });
 
-  const classNameParts = [classData?.name, classData?.grade, classData?.shift]
-    .map(cleanText)
-    .filter(Boolean);
+  if (!classInfo.ok) {
+    return jsonError("Falha ao buscar dados da turma.", 500, {
+      details: classInfo.error,
+    });
+  }
 
-  const className = classNameParts.join(" • ") || classId;
+  const className = getClassName(classInfo.data, classId);
 
   const teacherName = await getTeacherDisplayName({
     teacherUserId,
@@ -581,7 +634,11 @@ export async function GET(req: Request) {
 
   const titleX = margin + 100;
 
-  doc.font("Helvetica-Bold").fontSize(23).fillColor("#0f172a").text(schoolName, titleX, headerTop + 4);
+  doc.font("Helvetica-Bold").fontSize(23).fillColor("#0f172a").text(
+    schoolName,
+    titleX,
+    headerTop + 4
+  );
 
   doc.font("Helvetica").fontSize(11).fillColor("#334155");
   doc.text(`Turma: ${className}`, titleX, headerTop + 38);
@@ -598,7 +655,12 @@ export async function GET(req: Request) {
     });
 
   const lineY = headerTop + 108;
-  doc.moveTo(margin, lineY).lineTo(pageW - margin, lineY).lineWidth(1.2).strokeColor("#cbd5e1").stroke();
+  doc
+    .moveTo(margin, lineY)
+    .lineTo(pageW - margin, lineY)
+    .lineWidth(1.2)
+    .strokeColor("#cbd5e1")
+    .stroke();
 
   const startX = margin;
   let y = lineY + 18;
