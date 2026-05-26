@@ -14,8 +14,31 @@ type RosterStudent = {
   registration_number?: string | null;
 };
 
+type CalendarBlock = {
+  id: string;
+  block_date: string;
+  type: string;
+  title: string;
+  description: string | null;
+  target_scope: string | null;
+  class_id: string | null;
+  shift: string | null;
+  affects_all_classes: boolean | null;
+};
+
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
+}
+
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+function normalizeComparable(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function brDateFromISO(iso: string) {
@@ -40,6 +63,19 @@ function statusLabel(status: AttendanceStatus | undefined) {
   if (status === "absent") return "Falta";
   if (status === "late") return "Atraso";
   return "Sem registro";
+}
+
+function blockTypeLabel(type: string) {
+  const safe = cleanText(type);
+
+  if (safe === "holiday") return "Feriado";
+  if (safe === "recess") return "Recesso escolar";
+  if (safe === "no_class") return "Dia sem aula";
+  if (safe === "pedagogical_day") return "Dia pedagógico";
+  if (safe === "exam_day") return "Dia de avaliação";
+  if (safe === "event") return "Evento escolar";
+
+  return "Calendário escolar";
 }
 
 function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: string } | null {
@@ -146,6 +182,191 @@ function drawCellText(
   });
 }
 
+async function getClassInfo(params: {
+  schoolId: string;
+  classId: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("classes")
+    .select("id, name, grade, shift, school_id")
+    .eq("school_id", params.schoolId)
+    .eq("id", params.classId)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      ok: false as const,
+      error: error.message,
+      data: null as any,
+    };
+  }
+
+  if (!data?.id) {
+    return {
+      ok: false as const,
+      error: "Turma não encontrada nesta escola.",
+      data: null as any,
+    };
+  }
+
+  return {
+    ok: true as const,
+    error: null,
+    data,
+  };
+}
+
+async function getApplicableCalendarBlocks(params: {
+  schoolId: string;
+  classId: string;
+  date: string;
+}) {
+  const classInfo = await getClassInfo({
+    schoolId: params.schoolId,
+    classId: params.classId,
+  });
+
+  if (!classInfo.ok) {
+    return {
+      ok: false as const,
+      error: classInfo.error,
+      blocks: [] as CalendarBlock[],
+    };
+  }
+
+  const classShift = cleanText(classInfo.data?.shift);
+
+  const { data, error } = await supabaseAdmin
+    .from("school_calendar_blocks")
+    .select(
+      `
+      id,
+      block_date,
+      type,
+      title,
+      description,
+      target_scope,
+      class_id,
+      shift,
+      affects_all_classes
+    `
+    )
+    .eq("school_id", params.schoolId)
+    .eq("block_date", params.date)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    return {
+      ok: false as const,
+      error: error.message,
+      blocks: [] as CalendarBlock[],
+    };
+  }
+
+  const applicableBlocks = ((data || []) as CalendarBlock[]).filter((block) => {
+    const scope = cleanText(block.target_scope) || "all_school";
+
+    if (scope === "all_school" || block.affects_all_classes === true) return true;
+
+    if (scope === "class") {
+      return cleanText(block.class_id) === params.classId;
+    }
+
+    if (scope === "shift") {
+      return (
+        !!cleanText(block.shift) &&
+        normalizeComparable(block.shift) === normalizeComparable(classShift)
+      );
+    }
+
+    return false;
+  });
+
+  return {
+    ok: true as const,
+    error: null,
+    blocks: applicableBlocks,
+  };
+}
+
+function drawNoClassPdf(params: {
+  doc: PDFKit.PDFDocument;
+  schoolName: string;
+  logoBuffer: Buffer | null;
+  className: string;
+  teacherName: string;
+  date: string;
+  block: CalendarBlock;
+}) {
+  const { doc, schoolName, logoBuffer, className, teacherName, date, block } = params;
+
+  const pageW = doc.page.width;
+  const margin = 46;
+  const headerTop = 44;
+
+  if (logoBuffer) {
+    try {
+      doc.image(logoBuffer, margin, headerTop, { fit: [90, 90] });
+    } catch {}
+  }
+
+  const titleX = margin + 110;
+
+  doc.font("Helvetica-Bold").fontSize(24).fillColor("#0f172a").text(schoolName, titleX, headerTop + 4);
+
+  doc.font("Helvetica").fontSize(11).fillColor("#334155");
+  doc.text(`Turma: ${className}`, titleX, headerTop + 42);
+  doc.text(`Professor(a): ${teacherName}`, titleX, headerTop + 60);
+  doc.text(`Data: ${brDateFromISO(date)}`, titleX, headerTop + 78);
+
+  const boxY = headerTop + 140;
+
+  doc.roundedRect(margin, boxY, pageW - margin * 2, 230, 22).fill("#fff7ed");
+
+  doc
+    .roundedRect(margin + 22, boxY + 22, pageW - margin * 2 - 44, 186, 18)
+    .strokeColor("#fed7aa")
+    .lineWidth(1.2)
+    .stroke();
+
+  doc.font("Helvetica-Bold").fontSize(28).fillColor("#9a3412").text("🚫 Não haverá aula neste dia", margin + 44, boxY + 48, {
+    width: pageW - margin * 2 - 88,
+    align: "center",
+  });
+
+  doc.font("Helvetica-Bold").fontSize(15).fillColor("#7c2d12").text(
+    `${blockTypeLabel(block.type)} · ${cleanText(block.title) || "Calendário escolar"}`,
+    margin + 44,
+    boxY + 94,
+    {
+      width: pageW - margin * 2 - 88,
+      align: "center",
+    }
+  );
+
+  doc.font("Helvetica").fontSize(12).fillColor("#7c2d12").text(
+    cleanText(block.description) ||
+      "A escola informou bloqueio no calendário escolar. A chamada não precisa ser realizada nesta data.",
+    margin + 70,
+    boxY + 130,
+    {
+      width: pageW - margin * 2 - 140,
+      align: "center",
+      lineGap: 4,
+    }
+  );
+
+  doc.font("Helvetica").fontSize(10).fillColor("#475569").text(
+    "Este documento foi gerado para registrar que a data não é considerada dia normal de chamada para esta turma.",
+    margin,
+    boxY + 260,
+    {
+      width: pageW - margin * 2,
+      align: "center",
+    }
+  );
+}
+
 export async function GET(req: Request) {
   const guard = await requireStaff(req, [
     "professor",
@@ -206,16 +427,64 @@ export async function GET(req: Request) {
 
   const { data: classData } = await supabaseAdmin
     .from("classes")
-    .select("name")
+    .select("name, grade, shift")
     .eq("id", classId)
+    .eq("school_id", schoolId)
     .single();
 
-  const className = classData?.name || classId;
+  const classNameParts = [classData?.name, classData?.grade, classData?.shift]
+    .map(cleanText)
+    .filter(Boolean);
+
+  const className = classNameParts.join(" • ") || classId;
 
   const teacherName = await getTeacherDisplayName({
     teacherUserId,
     schoolId,
   });
+
+  const logoBuffer = await getLogoBuffer(logoUrl);
+
+  const calendarBlocksResult = await getApplicableCalendarBlocks({
+    schoolId,
+    classId,
+    date,
+  });
+
+  if (!calendarBlocksResult.ok) {
+    return jsonError("Erro ao verificar calendário escolar.", 500, {
+      details: calendarBlocksResult.error,
+    });
+  }
+
+  if (calendarBlocksResult.blocks.length > 0) {
+    const doc = new PDFDocument({
+      size: "A4",
+      layout: "landscape",
+      margin: 36,
+    });
+
+    drawNoClassPdf({
+      doc,
+      schoolName,
+      logoBuffer,
+      className,
+      teacherName,
+      date,
+      block: calendarBlocksResult.blocks[0],
+    });
+
+    const pdfBuffer = await pdfToBuffer(doc);
+    const pdfBytes = new Uint8Array(pdfBuffer);
+
+    return new NextResponse(pdfBytes, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="sem-aula-${date}.pdf"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
 
   const { data: roster, error: rosterErr } = await supabaseAdmin.rpc(
     "get_active_students_for_class_on_date",
@@ -304,8 +573,6 @@ export async function GET(req: Request) {
   const pageW = doc.page.width;
   const pageH = doc.page.height;
   const margin = 36;
-
-  const logoBuffer = await getLogoBuffer(logoUrl);
   const headerTop = 38;
 
   if (logoBuffer) {
@@ -437,10 +704,10 @@ export async function GET(req: Request) {
       status === "present"
         ? "#166534"
         : status === "absent"
-        ? "#b91c1c"
-        : status === "late"
-        ? "#92400e"
-        : "#64748b";
+          ? "#b91c1c"
+          : status === "late"
+            ? "#92400e"
+            : "#64748b";
 
     drawCellText(
       doc,
