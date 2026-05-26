@@ -4,11 +4,48 @@ import { requireStaff } from "@/lib/requireStaff";
 
 export const runtime = "nodejs";
 
+type AttendanceStatus = "present" | "absent" | "late";
+
+type StudentItem = {
+  student_id: string;
+  full_name: string | null;
+  registration_number: string | null;
+};
+
+type CalendarBlock = {
+  id: string;
+  block_date: string;
+  type: string;
+  title: string;
+  description: string | null;
+  target_scope: string | null;
+  class_id: string | null;
+  shift: string | null;
+  affects_all_classes: boolean | null;
+};
+
 function jsonError(message: string, status = 400, extra?: any) {
-  return NextResponse.json({ ok: false, error: message, ...extra }, { status });
+  return NextResponse.json(
+    { ok: false, error: message, ...extra },
+    {
+      status,
+      headers: { "Cache-Control": "no-store" },
+    }
+  );
 }
 
-function normalizeStatus(raw: any): "present" | "absent" | "late" | null {
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+function normalizeComparable(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeStatus(raw: any): AttendanceStatus | null {
   const s = String(raw || "").toLowerCase().trim();
 
   if (!s) return null;
@@ -19,11 +56,138 @@ function normalizeStatus(raw: any): "present" | "absent" | "late" | null {
   return null;
 }
 
-type StudentItem = {
-  student_id: string;
-  full_name: string | null;
-  registration_number: string | null;
-};
+function blockTypeLabel(type: string) {
+  const safe = cleanText(type);
+
+  if (safe === "holiday") return "Feriado";
+  if (safe === "recess") return "Recesso escolar";
+  if (safe === "no_class") return "Dia sem aula";
+  if (safe === "pedagogical_day") return "Dia pedagógico";
+  if (safe === "exam_day") return "Dia de avaliação";
+  if (safe === "event") return "Evento escolar";
+
+  return "Calendário escolar";
+}
+
+async function getClassInfo(params: { schoolId: string; classId: string }) {
+  const { data, error } = await supabaseAdmin
+    .from("classes")
+    .select("id, name, grade, shift, school_id")
+    .eq("school_id", params.schoolId)
+    .eq("id", params.classId)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      ok: false as const,
+      error: error.message,
+      data: null as any,
+    };
+  }
+
+  if (!data?.id) {
+    return {
+      ok: false as const,
+      error: "Turma não encontrada nesta escola.",
+      data: null as any,
+    };
+  }
+
+  return {
+    ok: true as const,
+    error: null,
+    data,
+  };
+}
+
+async function getApplicableCalendarBlocks(params: {
+  schoolId: string;
+  classId: string;
+  date: string;
+}) {
+  const classInfo = await getClassInfo({
+    schoolId: params.schoolId,
+    classId: params.classId,
+  });
+
+  if (!classInfo.ok) {
+    return {
+      ok: false as const,
+      error: classInfo.error,
+      blocks: [] as CalendarBlock[],
+    };
+  }
+
+  const classShift = cleanText(classInfo.data?.shift);
+
+  const { data, error } = await supabaseAdmin
+    .from("school_calendar_blocks")
+    .select(
+      `
+      id,
+      block_date,
+      type,
+      title,
+      description,
+      target_scope,
+      class_id,
+      shift,
+      affects_all_classes
+    `
+    )
+    .eq("school_id", params.schoolId)
+    .eq("block_date", params.date)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    return {
+      ok: false as const,
+      error: error.message,
+      blocks: [] as CalendarBlock[],
+    };
+  }
+
+  const applicableBlocks = ((data || []) as CalendarBlock[]).filter((block) => {
+    const scope = cleanText(block.target_scope) || "all_school";
+
+    if (scope === "all_school" || block.affects_all_classes === true) return true;
+
+    if (scope === "class") {
+      return cleanText(block.class_id) === params.classId;
+    }
+
+    if (scope === "shift") {
+      return (
+        !!cleanText(block.shift) &&
+        normalizeComparable(block.shift) === normalizeComparable(classShift)
+      );
+    }
+
+    return false;
+  });
+
+  return {
+    ok: true as const,
+    error: null,
+    blocks: applicableBlocks,
+  };
+}
+
+function formatCalendarBlockForResponse(block: CalendarBlock) {
+  return {
+    id: block.id,
+    date: block.block_date,
+    type: block.type,
+    typeLabel: blockTypeLabel(block.type),
+    title: cleanText(block.title) || "Não haverá aula",
+    description:
+      cleanText(block.description) ||
+      "A escola informou que não haverá aula para esta data.",
+    targetScope: cleanText(block.target_scope) || "all_school",
+    classId: cleanText(block.class_id) || null,
+    shift: cleanText(block.shift) || null,
+  };
+}
 
 async function getRosterFromRpc(classId: string, date: string) {
   const { data, error } = await supabaseAdmin.rpc("get_active_students_for_class_on_date", {
@@ -104,6 +268,83 @@ async function getRosterFromActiveLinks(schoolId: string, classId: string) {
   };
 }
 
+async function loadExistingMarks(params: {
+  schoolId: string;
+  classId: string;
+  date: string;
+  allowedStudentIds: string[];
+}) {
+  const { data: sessions, error: sessionsErr } = await supabaseAdmin
+    .from("attendance_sessions")
+    .select("id")
+    .eq("school_id", params.schoolId)
+    .eq("class_id", params.classId)
+    .eq("lesson_date", params.date)
+    .eq("lesson_number", 1);
+
+  if (sessionsErr) {
+    return {
+      ok: false as const,
+      error: sessionsErr.message,
+      marks: [] as {
+        student_id: string;
+        status: AttendanceStatus;
+        note: string | null;
+      }[],
+    };
+  }
+
+  const sessionIds = (sessions || [])
+    .map((session: any) => String(session.id))
+    .filter(Boolean);
+
+  const marksMap = new Map<
+    string,
+    {
+      student_id: string;
+      status: AttendanceStatus;
+      note: string | null;
+    }
+  >();
+
+  if (sessionIds.length > 0) {
+    const { data: records, error: recordsErr } = await supabaseAdmin
+      .from("attendance_records")
+      .select("student_id, status, note, session_id")
+      .eq("school_id", params.schoolId)
+      .in("session_id", sessionIds)
+      .in("student_id", params.allowedStudentIds);
+
+    if (recordsErr) {
+      return {
+        ok: false as const,
+        error: recordsErr.message,
+        marks: [],
+      };
+    }
+
+    for (const record of records || []) {
+      const studentId = String((record as any)?.student_id || "").trim();
+      if (!studentId) continue;
+
+      const status = normalizeStatus((record as any)?.status);
+      if (!status) continue;
+
+      marksMap.set(studentId, {
+        student_id: studentId,
+        status,
+        note: (record as any)?.note ?? null,
+      });
+    }
+  }
+
+  return {
+    ok: true as const,
+    error: null,
+    marks: Array.from(marksMap.values()),
+  };
+}
+
 export async function GET(req: Request) {
   const guard = await requireStaff(req, [
     "professor",
@@ -114,6 +355,7 @@ export async function GET(req: Request) {
     "director",
     "admin",
   ]);
+
   if (!guard.ok) return guard.res;
 
   const schoolId = (guard as any).schoolId as string;
@@ -146,11 +388,33 @@ export async function GET(req: Request) {
     return jsonError("Professor não está vinculado a esta turma.", 403);
   }
 
-  // 1) tenta roster pela RPC histórica
+  const calendarBlocksResult = await getApplicableCalendarBlocks({
+    schoolId,
+    classId,
+    date,
+  });
+
+  if (!calendarBlocksResult.ok) {
+    return jsonError("Erro ao verificar calendário escolar.", 500, {
+      details: calendarBlocksResult.error,
+    });
+  }
+
+  const formattedBlocks = calendarBlocksResult.blocks.map(formatCalendarBlockForResponse);
+
+  const attendanceBlock = {
+    isBlocked: formattedBlocks.length > 0,
+    blocks: formattedBlocks,
+    mainBlock: formattedBlocks[0] || null,
+    message:
+      formattedBlocks.length > 0
+        ? "Não haverá aula neste dia. A chamada não precisa ser realizada."
+        : null,
+  };
+
   const rpcRoster = await getRosterFromRpc(classId, date);
 
   if (!rpcRoster.ok) {
-    // 2) se a RPC falhar, usa fallback seguro pelo vínculo ativo atual
     const fallbackRoster = await getRosterFromActiveLinks(schoolId, classId);
 
     if (!fallbackRoster.ok) {
@@ -162,78 +426,43 @@ export async function GET(req: Request) {
     const allowedStudentIds = fallbackRoster.data.map((item) => item.student_id);
 
     if (allowedStudentIds.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        roster: [],
-        marks: [],
-      });
+      return NextResponse.json(
+        {
+          ok: true,
+          roster: [],
+          marks: [],
+          attendanceBlock,
+          roster_source: "active_links_fallback_empty",
+        },
+        { headers: { "Cache-Control": "no-store" } }
+      );
     }
 
-    const { data: sessions, error: sessionsErr } = await supabaseAdmin
-      .from("attendance_sessions")
-      .select("id")
-      .eq("school_id", schoolId)
-      .eq("class_id", classId)
-      .eq("lesson_date", date)
-      .eq("lesson_number", 1);
-
-    if (sessionsErr) {
-      return jsonError("Falha ao buscar sessões da chamada.", 500, {
-        details: sessionsErr.message,
-      });
-    }
-
-    const sessionIds = (sessions || [])
-      .map((session: any) => String(session.id))
-      .filter(Boolean);
-
-    const marksMap = new Map<
-      string,
-      {
-        student_id: string;
-        status: "present" | "absent" | "late";
-        note: string | null;
-      }
-    >();
-
-    if (sessionIds.length > 0) {
-      const { data: records, error: recordsErr } = await supabaseAdmin
-        .from("attendance_records")
-        .select("student_id, status, note, session_id")
-        .eq("school_id", schoolId)
-        .in("session_id", sessionIds)
-        .in("student_id", allowedStudentIds);
-
-      if (recordsErr) {
-        return jsonError("Falha ao buscar registros da chamada.", 500, {
-          details: recordsErr.message,
-        });
-      }
-
-      for (const record of records || []) {
-        const studentId = String((record as any)?.student_id || "").trim();
-        if (!studentId) continue;
-
-        const status = normalizeStatus((record as any)?.status);
-        if (!status) continue;
-
-        marksMap.set(studentId, {
-          student_id: studentId,
-          status,
-          note: (record as any)?.note ?? null,
-        });
-      }
-    }
-
-    return NextResponse.json({
-      ok: true,
-      roster: fallbackRoster.data,
-      marks: Array.from(marksMap.values()),
-      roster_source: "active_links_fallback",
+    const marksResult = await loadExistingMarks({
+      schoolId,
+      classId,
+      date,
+      allowedStudentIds,
     });
+
+    if (!marksResult.ok) {
+      return jsonError("Falha ao buscar registros da chamada.", 500, {
+        details: marksResult.error,
+      });
+    }
+
+    return NextResponse.json(
+      {
+        ok: true,
+        roster: fallbackRoster.data,
+        marks: marksResult.marks,
+        attendanceBlock,
+        roster_source: "active_links_fallback",
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   }
 
-  // 3) se a RPC veio vazia, mas existe vínculo ativo atual, usa fallback também
   let finalRoster = rpcRoster.data;
 
   if (finalRoster.length === 0) {
@@ -246,74 +475,39 @@ export async function GET(req: Request) {
   const allowedStudentIds = finalRoster.map((item) => item.student_id);
 
   if (allowedStudentIds.length === 0) {
-    return NextResponse.json({
-      ok: true,
-      roster: [],
-      marks: [],
-      roster_source: "empty",
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        roster: [],
+        marks: [],
+        attendanceBlock,
+        roster_source: "empty",
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   }
 
-  const { data: sessions, error: sessionsErr } = await supabaseAdmin
-    .from("attendance_sessions")
-    .select("id")
-    .eq("school_id", schoolId)
-    .eq("class_id", classId)
-    .eq("lesson_date", date)
-    .eq("lesson_number", 1);
-
-  if (sessionsErr) {
-    return jsonError("Falha ao buscar sessões da chamada.", 500, {
-      details: sessionsErr.message,
-    });
-  }
-
-  const sessionIds = (sessions || [])
-    .map((session: any) => String(session.id))
-    .filter(Boolean);
-
-  const marksMap = new Map<
-    string,
-    {
-      student_id: string;
-      status: "present" | "absent" | "late";
-      note: string | null;
-    }
-  >();
-
-  if (sessionIds.length > 0) {
-    const { data: records, error: recordsErr } = await supabaseAdmin
-      .from("attendance_records")
-      .select("student_id, status, note, session_id")
-      .eq("school_id", schoolId)
-      .in("session_id", sessionIds)
-      .in("student_id", allowedStudentIds);
-
-    if (recordsErr) {
-      return jsonError("Falha ao buscar registros da chamada.", 500, {
-        details: recordsErr.message,
-      });
-    }
-
-    for (const record of records || []) {
-      const studentId = String((record as any)?.student_id || "").trim();
-      if (!studentId) continue;
-
-      const status = normalizeStatus((record as any)?.status);
-      if (!status) continue;
-
-      marksMap.set(studentId, {
-        student_id: studentId,
-        status,
-        note: (record as any)?.note ?? null,
-      });
-    }
-  }
-
-  return NextResponse.json({
-    ok: true,
-    roster: finalRoster,
-    marks: Array.from(marksMap.values()),
-    roster_source: finalRoster.length === rpcRoster.data.length ? "rpc" : "active_links_fallback",
+  const marksResult = await loadExistingMarks({
+    schoolId,
+    classId,
+    date,
+    allowedStudentIds,
   });
+
+  if (!marksResult.ok) {
+    return jsonError("Falha ao buscar registros da chamada.", 500, {
+      details: marksResult.error,
+    });
+  }
+
+  return NextResponse.json(
+    {
+      ok: true,
+      roster: finalRoster,
+      marks: marksResult.marks,
+      attendanceBlock,
+      roster_source: finalRoster.length === rpcRoster.data.length ? "rpc" : "active_links_fallback",
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }

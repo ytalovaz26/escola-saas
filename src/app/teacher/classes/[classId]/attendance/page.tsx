@@ -17,6 +17,25 @@ type MarkRow = {
   note: string | null;
 };
 
+type AttendanceBlockItem = {
+  id: string;
+  date: string;
+  type: string;
+  typeLabel: string;
+  title: string;
+  description: string;
+  targetScope: string;
+  classId: string | null;
+  shift: string | null;
+};
+
+type AttendanceBlock = {
+  isBlocked: boolean;
+  blocks: AttendanceBlockItem[];
+  mainBlock: AttendanceBlockItem | null;
+  message: string | null;
+};
+
 type MePayload = {
   ok: true;
   user: { id: string; email: string | null };
@@ -35,6 +54,7 @@ function todayISO() {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
+
   return `${yyyy}-${mm}-${dd}`;
 }
 
@@ -42,7 +62,16 @@ function currentMonthISO() {
   const d = new Date();
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
+
   return `${yyyy}-${mm}`;
+}
+
+function formatDateBR(date: string) {
+  const [year, month, day] = String(date || "").slice(0, 10).split("-");
+
+  if (!year || !month || !day) return date;
+
+  return `${day}/${month}/${year}`;
 }
 
 function slugifyFileName(value: string) {
@@ -57,7 +86,9 @@ function slugifyFileName(value: string) {
 
 async function safeJson(res: Response) {
   const text = await res.text();
+
   if (!text) return null;
+
   try {
     return JSON.parse(text);
   } catch {
@@ -88,17 +119,27 @@ export default function TeacherAttendancePage() {
   const [roster, setRoster] = useState<RosterRow[]>([]);
   const [marks, setMarks] = useState<Record<string, MarkRow>>({});
   const [isLocked, setIsLocked] = useState(false);
+  const [attendanceBlock, setAttendanceBlock] = useState<AttendanceBlock>({
+    isBlocked: false,
+    blocks: [],
+    mainBlock: null,
+    message: null,
+  });
 
   const [branding, setBranding] = useState<MePayload["branding"] | null>(null);
   const [schoolName, setSchoolName] = useState("Portal do Professor");
 
+  const isAttendanceBlocked = attendanceBlock.isBlocked;
+
   async function ensureToken() {
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
+
     if (!token) {
       router.replace("/login");
       return null;
     }
+
     return token;
   }
 
@@ -113,7 +154,7 @@ export default function TeacherAttendancePage() {
   }
 
   function setStatus(studentId: string, status: "present" | "absent" | "late") {
-    if (isLocked) return;
+    if (isLocked || isAttendanceBlocked) return;
 
     setMarks((prev) => ({
       ...prev,
@@ -132,6 +173,7 @@ export default function TeacherAttendancePage() {
 
     for (const row of roster) {
       const status = ensureMark(row.student_id).status;
+
       if (status === "present") p++;
       else if (status === "absent") f++;
       else if (status === "late") t++;
@@ -141,7 +183,7 @@ export default function TeacherAttendancePage() {
   }, [roster, marks]);
 
   function setAllPresent() {
-    if (isLocked) return;
+    if (isLocked || isAttendanceBlocked) return;
 
     setMarks((prev) => {
       const next = { ...prev };
@@ -188,7 +230,9 @@ export default function TeacherAttendancePage() {
       await loadBranding(token);
 
       const res = await fetch(
-        `/api/teacher/attendance/roster?classId=${encodeURIComponent(classId)}&date=${encodeURIComponent(date)}`,
+        `/api/teacher/attendance/roster?classId=${encodeURIComponent(
+          classId
+        )}&date=${encodeURIComponent(date)}`,
         {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
@@ -205,7 +249,17 @@ export default function TeacherAttendancePage() {
       const r: RosterRow[] = json.roster || [];
       const m: MarkRow[] = json.marks || [];
 
+      const block: AttendanceBlock = {
+        isBlocked: Boolean(json.attendanceBlock?.isBlocked),
+        blocks: Array.isArray(json.attendanceBlock?.blocks)
+          ? json.attendanceBlock.blocks
+          : [],
+        mainBlock: json.attendanceBlock?.mainBlock || null,
+        message: json.attendanceBlock?.message || null,
+      };
+
       const rosterMap = new Map<string, RosterRow>();
+
       for (const row of r) {
         const studentId = String(row.student_id || "").trim();
         if (!studentId) continue;
@@ -222,6 +276,7 @@ export default function TeacherAttendancePage() {
       const cleanRoster = Array.from(rosterMap.values());
 
       const markMap: Record<string, MarkRow> = {};
+
       for (const row of m) {
         const studentId = String(row.student_id || "").trim();
         if (!studentId) continue;
@@ -245,6 +300,7 @@ export default function TeacherAttendancePage() {
 
       setRoster(cleanRoster);
       setMarks(markMap);
+      setAttendanceBlock(block);
       setIsLocked((m || []).length > 0);
     } catch (e: any) {
       setErr(e?.message || "Erro inesperado.");
@@ -254,6 +310,11 @@ export default function TeacherAttendancePage() {
   }
 
   async function save() {
+    if (isAttendanceBlocked) {
+      setErr("Não é possível salvar chamada em dia sem aula.");
+      return;
+    }
+
     setSaving(true);
     setErr(null);
     setMsg(null);
@@ -264,6 +325,7 @@ export default function TeacherAttendancePage() {
     try {
       const items = roster.map((r) => {
         const mk = ensureMark(r.student_id);
+
         return {
           studentId: r.student_id,
           status: mk.status,
@@ -288,6 +350,17 @@ export default function TeacherAttendancePage() {
       const json = await safeJson(res);
 
       if (!res.ok || !json?.ok) {
+        if (json?.attendanceBlock?.isBlocked) {
+          setAttendanceBlock({
+            isBlocked: true,
+            blocks: Array.isArray(json.attendanceBlock.blocks)
+              ? json.attendanceBlock.blocks
+              : [],
+            mainBlock: json.attendanceBlock.mainBlock || null,
+            message: json.attendanceBlock.message || null,
+          });
+        }
+
         setErr(json?.error || "Falha ao salvar chamada.");
         return;
       }
@@ -303,6 +376,11 @@ export default function TeacherAttendancePage() {
   }
 
   async function openPdfDaily() {
+    if (isAttendanceBlocked) {
+      setErr("Não há PDF diário de chamada para dia sem aula.");
+      return;
+    }
+
     setErr(null);
     setMsg(null);
     setGeneratingDailyPdf(true);
@@ -322,6 +400,7 @@ export default function TeacherAttendancePage() {
 
       if (!res.ok) {
         const text = await res.text();
+
         try {
           const j = text ? JSON.parse(text) : null;
           setErr(
@@ -331,12 +410,11 @@ export default function TeacherAttendancePage() {
         } catch {
           setErr(text || "Falha ao gerar PDF.");
         }
+
         return;
       }
 
-      const fileName = `${slugifyFileName(
-        `${schoolName}-presenca-diaria-${date}`
-      )}.pdf`;
+      const fileName = `${slugifyFileName(`${schoolName}-presenca-diaria-${date}`)}.pdf`;
 
       await openPdfFromResponse(res, {
         fileName,
@@ -375,6 +453,7 @@ export default function TeacherAttendancePage() {
 
       if (!res.ok) {
         const text = await res.text();
+
         try {
           const j = text ? JSON.parse(text) : null;
           setErr(
@@ -384,17 +463,14 @@ export default function TeacherAttendancePage() {
         } catch {
           setErr(text || "Falha ao gerar PDF.");
         }
+
         return;
       }
 
       const fileName =
         reportMode === "period"
-          ? `${slugifyFileName(
-              `${schoolName}-presenca-periodo-${start}-a-${end}`
-            )}.pdf`
-          : `${slugifyFileName(
-              `${schoolName}-presenca-mensal-${month}`
-            )}.pdf`;
+          ? `${slugifyFileName(`${schoolName}-presenca-periodo-${start}-a-${end}`)}.pdf`
+          : `${slugifyFileName(`${schoolName}-presenca-mensal-${month}`)}.pdf`;
 
       await openPdfFromResponse(res, {
         fileName,
@@ -421,10 +497,12 @@ export default function TeacherAttendancePage() {
     return <div className="p-6 text-sm text-slate-600">Carregando chamada...</div>;
   }
 
+  const mainBlock = attendanceBlock.mainBlock;
+
   return (
-    <div className="p-4 md:p-6 bg-slate-50 min-h-screen">
-      <div className="max-w-7xl mx-auto space-y-5">
-        <div className="rounded-3xl bg-white border border-slate-200 shadow-sm p-5">
+    <div className="min-h-screen bg-slate-50 p-4 md:p-6">
+      <div className="mx-auto max-w-7xl space-y-5">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-4">
             {branding?.brandLogoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -434,13 +512,13 @@ export default function TeacherAttendancePage() {
                 className="h-14 w-14 rounded-2xl border border-slate-200 bg-white object-contain p-1"
               />
             ) : (
-              <div className="h-14 w-14 rounded-2xl border border-slate-200 bg-slate-100 flex items-center justify-center text-xs text-slate-500">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-200 bg-slate-100 text-xs text-slate-500">
                 Logo
               </div>
             )}
 
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 text-blue-700 px-3 py-1 text-xs font-medium">
+              <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
                 Portal do Professor
               </div>
 
@@ -454,7 +532,7 @@ export default function TeacherAttendancePage() {
             </div>
           </div>
 
-          <div className="mt-4 flex gap-2 flex-wrap">
+          <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
               className="rounded-2xl border border-slate-300 px-4 py-2 text-sm"
@@ -472,9 +550,9 @@ export default function TeacherAttendancePage() {
             </button>
           </div>
 
-          <div className="mt-5 grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-4">
             <div>
-              <label className="block text-xs text-slate-500 mb-1">Data (Diário)</label>
+              <label className="mb-1 block text-xs text-slate-500">Data (Diário)</label>
               <input
                 type="date"
                 value={date}
@@ -484,7 +562,7 @@ export default function TeacherAttendancePage() {
             </div>
 
             <div>
-              <label className="block text-xs text-slate-500 mb-1">Tipo de relatório</label>
+              <label className="mb-1 block text-xs text-slate-500">Tipo de relatório</label>
               <select
                 value={reportMode}
                 onChange={(e) => setReportMode(e.target.value as "month" | "period")}
@@ -497,7 +575,7 @@ export default function TeacherAttendancePage() {
 
             {reportMode === "month" ? (
               <div>
-                <label className="block text-xs text-slate-500 mb-1">Mês</label>
+                <label className="mb-1 block text-xs text-slate-500">Mês</label>
                 <input
                   type="month"
                   value={month}
@@ -508,7 +586,7 @@ export default function TeacherAttendancePage() {
             ) : (
               <>
                 <div>
-                  <label className="block text-xs text-slate-500 mb-1">Início</label>
+                  <label className="mb-1 block text-xs text-slate-500">Início</label>
                   <input
                     type="date"
                     value={start}
@@ -518,7 +596,7 @@ export default function TeacherAttendancePage() {
                 </div>
 
                 <div>
-                  <label className="block text-xs text-slate-500 mb-1">Fim</label>
+                  <label className="mb-1 block text-xs text-slate-500">Fim</label>
                   <input
                     type="date"
                     value={end}
@@ -530,12 +608,55 @@ export default function TeacherAttendancePage() {
             )}
           </div>
 
-          <div className="mt-5 flex gap-2 flex-wrap">
+          {isAttendanceBlocked ? (
+            <div className="mt-5 rounded-[28px] border border-amber-200 bg-amber-50 p-5 text-amber-900">
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <div className="inline-flex rounded-full border border-amber-200 bg-white/70 px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-amber-700">
+                    Dia bloqueado no calendário escolar
+                  </div>
+
+                  <h2 className="mt-3 text-xl font-bold text-amber-950">
+                    🚫 Não haverá aula neste dia
+                  </h2>
+
+                  <p className="mt-2 text-sm leading-6 text-amber-900">
+                    {attendanceBlock.message ||
+                      "A chamada não precisa ser realizada para esta data."}
+                  </p>
+
+                  {mainBlock ? (
+                    <div className="mt-4 rounded-2xl border border-amber-200 bg-white/60 p-4 text-sm leading-6">
+                      <div>
+                        <b>Motivo:</b> {mainBlock.typeLabel} · {mainBlock.title}
+                      </div>
+
+                      <div>
+                        <b>Data:</b> {formatDateBR(mainBlock.date)}
+                      </div>
+
+                      {mainBlock.description ? (
+                        <div>
+                          <b>Descrição:</b> {mainBlock.description}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="rounded-2xl bg-amber-100 px-4 py-3 text-sm font-semibold text-amber-950">
+                  Chamada desativada
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-5 flex flex-wrap gap-2">
             <button
               type="button"
-              className="rounded-2xl bg-slate-900 text-white px-4 py-2 text-sm disabled:opacity-50"
+              className="rounded-2xl bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50"
               onClick={setAllPresent}
-              disabled={roster.length === 0 || isLocked}
+              disabled={roster.length === 0 || isLocked || isAttendanceBlocked}
             >
               Marcar todos como P
             </button>
@@ -544,7 +665,7 @@ export default function TeacherAttendancePage() {
               type="button"
               className="rounded-2xl border border-slate-300 px-4 py-2 text-sm disabled:opacity-50"
               onClick={() => setIsLocked(false)}
-              disabled={!isLocked}
+              disabled={!isLocked || isAttendanceBlocked}
             >
               Editar
             </button>
@@ -553,7 +674,7 @@ export default function TeacherAttendancePage() {
               type="button"
               className="rounded-2xl border border-slate-300 px-4 py-2 text-sm disabled:opacity-50"
               onClick={openPdfDaily}
-              disabled={roster.length === 0 || generatingDailyPdf}
+              disabled={roster.length === 0 || generatingDailyPdf || isAttendanceBlocked}
             >
               {generatingDailyPdf ? "Gerando PDF diário..." : "Gerar PDF (Diário)"}
             </button>
@@ -575,64 +696,75 @@ export default function TeacherAttendancePage() {
 
             <button
               type="button"
-              className="rounded-2xl bg-blue-600 text-white px-5 py-2 text-sm disabled:opacity-50"
+              className="rounded-2xl bg-blue-600 px-5 py-2 text-sm text-white disabled:opacity-50"
               onClick={save}
-              disabled={saving || roster.length === 0}
+              disabled={saving || roster.length === 0 || isAttendanceBlocked}
             >
               {saving ? "Salvando..." : "Salvar chamada"}
             </button>
           </div>
 
-          {isLocked ? (
-            <div className="mt-4 rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+          {isAttendanceBlocked ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              A chamada está bloqueada porque a direção marcou esta data como dia sem aula,
+              feriado, recesso ou evento pedagógico sem aula.
+            </div>
+          ) : isLocked ? (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               Edição bloqueada após salvar. Use <b>Editar</b> para alterar.
             </div>
           ) : (
-            <div className="mt-4 rounded-2xl bg-blue-50 border border-blue-100 px-4 py-3 text-sm text-blue-800">
+            <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
               Marque <b>P</b>, <b>F</b> ou <b>T</b> individualmente e salve para registrar a presença.
             </div>
           )}
 
           {msg ? (
-            <div className="mt-4 rounded-2xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
+            <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
               {msg}
             </div>
           ) : null}
 
           {err ? (
-            <div className="mt-4 rounded-2xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 whitespace-pre-wrap">
+            <div className="mt-4 whitespace-pre-wrap rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               {err}
             </div>
           ) : null}
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
-          <div className="xl:col-span-1 rounded-3xl bg-white border border-slate-200 shadow-sm p-5">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-1">
             <h2 className="text-sm font-semibold text-slate-900">Resumo da chamada</h2>
 
             <div className="mt-4 space-y-3">
-              <div className="rounded-2xl bg-slate-50 border border-slate-200 px-4 py-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div className="text-xs text-slate-500">Presentes</div>
-                <div className="text-2xl font-semibold">{counts.p}</div>
+                <div className="text-2xl font-semibold">{isAttendanceBlocked ? "—" : counts.p}</div>
               </div>
 
-              <div className="rounded-2xl bg-slate-50 border border-slate-200 px-4 py-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div className="text-xs text-slate-500">Faltas</div>
-                <div className="text-2xl font-semibold text-red-600">{counts.f}</div>
+                <div className="text-2xl font-semibold text-red-600">
+                  {isAttendanceBlocked ? "—" : counts.f}
+                </div>
               </div>
 
-              <div className="rounded-2xl bg-slate-50 border border-slate-200 px-4 py-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div className="text-xs text-slate-500">Atrasos</div>
-                <div className="text-2xl font-semibold text-amber-600">{counts.t}</div>
+                <div className="text-2xl font-semibold text-amber-600">
+                  {isAttendanceBlocked ? "—" : counts.t}
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="xl:col-span-3 rounded-3xl bg-white border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b border-slate-200">
+          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm xl:col-span-3">
+            <div className="border-b border-slate-200 px-5 py-4">
               <h2 className="text-lg font-semibold text-slate-900">Lista de alunos</h2>
-              <p className="text-sm text-slate-500 mt-1">
-                Selecione o status individual de cada aluno para a data escolhida.
+              <p className="mt-1 text-sm text-slate-500">
+                {isAttendanceBlocked
+                  ? "A lista permanece visível apenas para conferência. A chamada está bloqueada."
+                  : "Selecione o status individual de cada aluno para a data escolhida."}
               </p>
             </div>
 
@@ -657,6 +789,7 @@ export default function TeacherAttendancePage() {
                         </th>
                       </tr>
                     </thead>
+
                     <tbody>
                       {roster.map((r) => {
                         const mk = ensureMark(r.student_id);
@@ -664,52 +797,62 @@ export default function TeacherAttendancePage() {
                         return (
                           <tr key={r.student_id} className="border-t border-slate-200">
                             <td className="px-5 py-4">
-                              <div className="font-medium text-slate-900">{r.full_name || "—"}</div>
+                              <div className="font-medium text-slate-900">
+                                {r.full_name || "—"}
+                              </div>
                             </td>
+
                             <td className="px-5 py-4 text-slate-600">
                               {r.registration_number || "—"}
                             </td>
+
                             <td className="px-5 py-4">
-                              <div className="flex gap-2 flex-wrap">
-                                <button
-                                  type="button"
-                                  onClick={() => setStatus(r.student_id, "present")}
-                                  disabled={isLocked}
-                                  className={`rounded-2xl px-4 py-2 text-sm font-semibold ${
-                                    mk.status === "present"
-                                      ? "bg-slate-900 text-white"
-                                      : "border border-slate-300 text-slate-700"
-                                  }`}
-                                >
-                                  P
-                                </button>
+                              {isAttendanceBlocked ? (
+                                <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800">
+                                  Sem aula
+                                </span>
+                              ) : (
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setStatus(r.student_id, "present")}
+                                    disabled={isLocked}
+                                    className={`rounded-2xl px-4 py-2 text-sm font-semibold ${
+                                      mk.status === "present"
+                                        ? "bg-slate-900 text-white"
+                                        : "border border-slate-300 text-slate-700"
+                                    }`}
+                                  >
+                                    P
+                                  </button>
 
-                                <button
-                                  type="button"
-                                  onClick={() => setStatus(r.student_id, "absent")}
-                                  disabled={isLocked}
-                                  className={`rounded-2xl px-4 py-2 text-sm font-semibold ${
-                                    mk.status === "absent"
-                                      ? "bg-red-600 text-white"
-                                      : "border border-slate-300 text-slate-700"
-                                  }`}
-                                >
-                                  F
-                                </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setStatus(r.student_id, "absent")}
+                                    disabled={isLocked}
+                                    className={`rounded-2xl px-4 py-2 text-sm font-semibold ${
+                                      mk.status === "absent"
+                                        ? "bg-red-600 text-white"
+                                        : "border border-slate-300 text-slate-700"
+                                    }`}
+                                  >
+                                    F
+                                  </button>
 
-                                <button
-                                  type="button"
-                                  onClick={() => setStatus(r.student_id, "late")}
-                                  disabled={isLocked}
-                                  className={`rounded-2xl px-4 py-2 text-sm font-semibold ${
-                                    mk.status === "late"
-                                      ? "bg-amber-500 text-white"
-                                      : "border border-slate-300 text-slate-700"
-                                  }`}
-                                >
-                                  T
-                                </button>
-                              </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => setStatus(r.student_id, "late")}
+                                    disabled={isLocked}
+                                    className={`rounded-2xl px-4 py-2 text-sm font-semibold ${
+                                      mk.status === "late"
+                                        ? "bg-amber-500 text-white"
+                                        : "border border-slate-300 text-slate-700"
+                                    }`}
+                                  >
+                                    T
+                                  </button>
+                                </div>
+                              )}
                             </td>
                           </tr>
                         );
@@ -718,57 +861,64 @@ export default function TeacherAttendancePage() {
                   </table>
                 </div>
 
-                <div className="md:hidden p-4 space-y-3">
+                <div className="space-y-3 p-4 md:hidden">
                   {roster.map((r) => {
                     const mk = ensureMark(r.student_id);
 
                     return (
                       <div key={r.student_id} className="rounded-2xl border border-slate-200 p-4">
                         <div className="font-medium text-slate-900">{r.full_name || "—"}</div>
+
                         <div className="text-sm text-slate-500">
                           Matrícula: {r.registration_number || "—"}
                         </div>
 
-                        <div className="mt-3 flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setStatus(r.student_id, "present")}
-                            disabled={isLocked}
-                            className={`flex-1 rounded-2xl px-4 py-2 text-sm font-semibold ${
-                              mk.status === "present"
-                                ? "bg-slate-900 text-white"
-                                : "border border-slate-300 text-slate-700"
-                            }`}
-                          >
-                            P
-                          </button>
+                        {isAttendanceBlocked ? (
+                          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+                            Sem aula
+                          </div>
+                        ) : (
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setStatus(r.student_id, "present")}
+                              disabled={isLocked}
+                              className={`flex-1 rounded-2xl px-4 py-2 text-sm font-semibold ${
+                                mk.status === "present"
+                                  ? "bg-slate-900 text-white"
+                                  : "border border-slate-300 text-slate-700"
+                              }`}
+                            >
+                              P
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => setStatus(r.student_id, "absent")}
-                            disabled={isLocked}
-                            className={`flex-1 rounded-2xl px-4 py-2 text-sm font-semibold ${
-                              mk.status === "absent"
-                                ? "bg-red-600 text-white"
-                                : "border border-slate-300 text-slate-700"
-                            }`}
-                          >
-                            F
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => setStatus(r.student_id, "absent")}
+                              disabled={isLocked}
+                              className={`flex-1 rounded-2xl px-4 py-2 text-sm font-semibold ${
+                                mk.status === "absent"
+                                  ? "bg-red-600 text-white"
+                                  : "border border-slate-300 text-slate-700"
+                              }`}
+                            >
+                              F
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => setStatus(r.student_id, "late")}
-                            disabled={isLocked}
-                            className={`flex-1 rounded-2xl px-4 py-2 text-sm font-semibold ${
-                              mk.status === "late"
-                                ? "bg-amber-500 text-white"
-                                : "border border-slate-300 text-slate-700"
-                            }`}
-                          >
-                            T
-                          </button>
-                        </div>
+                            <button
+                              type="button"
+                              onClick={() => setStatus(r.student_id, "late")}
+                              disabled={isLocked}
+                              className={`flex-1 rounded-2xl px-4 py-2 text-sm font-semibold ${
+                                mk.status === "late"
+                                  ? "bg-amber-500 text-white"
+                                  : "border border-slate-300 text-slate-700"
+                              }`}
+                            >
+                              T
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
