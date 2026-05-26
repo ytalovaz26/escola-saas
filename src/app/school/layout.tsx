@@ -236,6 +236,13 @@ export default function SchoolLayout({
         roles: ["diretor", "coordenador", "secretaria", "admin"],
       },
       {
+        label: "Dias sem aula",
+        href: CALENDAR_BLOCKS_HREF,
+        icon: "🚫",
+        section: "operacao",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
         label: "Presença",
         href: "/school/attendance",
         icon: "✅",
@@ -300,6 +307,8 @@ export default function SchoolLayout({
   const canOpenSubjects = role === "diretor" || role === "coordenador" || role === "admin";
   const canOpenBranding = role === "diretor" || role === "admin";
   const canOpenSchedule =
+    role === "diretor" || role === "coordenador" || role === "secretaria" || role === "admin";
+  const canOpenCalendarBlocks =
     role === "diretor" || role === "coordenador" || role === "secretaria" || role === "admin";
 
   useEffect(() => {
@@ -522,6 +531,16 @@ export default function SchoolLayout({
                     className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                   >
                     Horários
+                  </button>
+                ) : null}
+
+                {canOpenCalendarBlocks ? (
+                  <button
+                    type="button"
+                    onClick={() => go(CALENDAR_BLOCKS_HREF)}
+                    className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Dias sem aula
                   </button>
                 ) : null}
 
