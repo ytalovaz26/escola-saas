@@ -12,9 +12,19 @@ type CalendarBlock = {
   title: string;
   description: string | null;
   affects_all_classes: boolean;
+  target_scope: "all_school" | "class" | "shift" | string | null;
+  class_id: string | null;
+  shift: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
+};
+
+type SchoolClass = {
+  id: string;
+  name: string;
+  grade: string | null;
+  shift: string | null;
 };
 
 const blockTypeLabels: Record<string, string> = {
@@ -27,14 +37,14 @@ const blockTypeLabels: Record<string, string> = {
   other: "Outro",
 };
 
+const targetScopeLabels: Record<string, string> = {
+  all_school: "Toda a escola",
+  class: "Turma específica",
+  shift: "Turno/período",
+};
+
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
-}
-
-function addDaysISO(baseDate: string, days: number) {
-  const d = new Date(`${baseDate}T12:00:00`);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
 }
 
 function monthStartISO(date: string) {
@@ -65,6 +75,45 @@ function formatLongDateBR(date: string) {
   });
 }
 
+function normalizeComparable(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function getClassLabel(cls?: SchoolClass | null) {
+  if (!cls) return "Turma não encontrada";
+
+  const parts = [
+    cls.name,
+    cls.grade ? cls.grade : null,
+    cls.shift ? cls.shift : null,
+  ].filter(Boolean);
+
+  return parts.join(" • ");
+}
+
+function getBlockTargetLabel(block: CalendarBlock, classes: SchoolClass[]) {
+  const scope = block.target_scope || "all_school";
+
+  if (scope === "all_school" || block.affects_all_classes) {
+    return "Toda a escola";
+  }
+
+  if (scope === "class") {
+    const cls = classes.find((item) => item.id === block.class_id);
+    return cls ? `Turma: ${getClassLabel(cls)}` : "Turma específica";
+  }
+
+  if (scope === "shift") {
+    return block.shift ? `Turno: ${block.shift}` : "Turno/período";
+  }
+
+  return targetScopeLabels[scope] || "Aplicação do bloqueio";
+}
+
 async function safeJsonFromResponse(res: Response) {
   const text = await res.text();
 
@@ -81,6 +130,8 @@ export default function SchoolCalendarBlocksPage() {
   const router = useRouter();
 
   const [blocks, setBlocks] = useState<CalendarBlock[]>([]);
+  const [classes, setClasses] = useState<SchoolClass[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,8 +144,36 @@ export default function SchoolCalendarBlocksPage() {
   const [title, setTitle] = useState("Não haverá aula");
   const [description, setDescription] = useState("");
 
+  const [targetScope, setTargetScope] = useState<"all_school" | "class" | "shift">(
+    "all_school"
+  );
+  const [selectedClassId, setSelectedClassId] = useState("");
+  const [selectedShift, setSelectedShift] = useState("");
+
   const startDate = useMemo(() => monthStartISO(referenceDate), [referenceDate]);
   const endDate = useMemo(() => monthEndISO(referenceDate), [referenceDate]);
+
+  const availableShifts = useMemo(() => {
+    const map = new Map<string, string>();
+
+    for (const cls of classes) {
+      const shift = String(cls.shift || "").trim();
+      if (!shift) continue;
+
+      const key = normalizeComparable(shift);
+      if (!map.has(key)) map.set(key, shift);
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+  }, [classes]);
+
+  const sortedClasses = useMemo(() => {
+    return [...classes].sort((a, b) => {
+      const an = getClassLabel(a);
+      const bn = getClassLabel(b);
+      return an.localeCompare(bn);
+    });
+  }, [classes]);
 
   const sortedBlocks = useMemo(() => {
     return [...blocks].sort((a, b) => {
@@ -154,6 +233,7 @@ export default function SchoolCalendarBlocksPage() {
       }
 
       setBlocks(Array.isArray(json.blocks) ? json.blocks : []);
+      setClasses(Array.isArray(json.classes) ? json.classes : []);
     } catch (e: any) {
       setError(e?.message || "Erro inesperado ao carregar calendário.");
     } finally {
@@ -176,6 +256,16 @@ export default function SchoolCalendarBlocksPage() {
         return;
       }
 
+      if (targetScope === "class" && !selectedClassId) {
+        setError("Selecione a turma que será bloqueada.");
+        return;
+      }
+
+      if (targetScope === "shift" && !selectedShift) {
+        setError("Selecione o turno/período que será bloqueado.");
+        return;
+      }
+
       const res = await fetch("/api/school/calendar-blocks", {
         method: "POST",
         headers: {
@@ -187,7 +277,10 @@ export default function SchoolCalendarBlocksPage() {
           type,
           title,
           description,
-          affectsAllClasses: true,
+          targetScope,
+          classId: targetScope === "class" ? selectedClassId : null,
+          shift: targetScope === "shift" ? selectedShift : null,
+          affectsAllClasses: targetScope === "all_school",
         }),
       });
 
@@ -198,7 +291,7 @@ export default function SchoolCalendarBlocksPage() {
         return;
       }
 
-      setSuccess("Dia bloqueado com sucesso.");
+      setSuccess("Bloqueio cadastrado com sucesso.");
       setDescription("");
       await loadBlocks();
     } catch (e: any) {
@@ -278,8 +371,8 @@ export default function SchoolCalendarBlocksPage() {
                 </h1>
 
                 <p className="mt-4 text-base leading-8 text-slate-200">
-                  Cadastre feriados, recessos, dias sem aula e eventos pedagógicos. Esses
-                  bloqueios serão usados para informar professores e responsáveis.
+                  Cadastre feriados, recessos, dias sem aula e eventos pedagógicos para
+                  toda a escola, uma turma específica ou um turno/período.
                 </p>
               </div>
 
@@ -327,8 +420,7 @@ export default function SchoolCalendarBlocksPage() {
             </h2>
 
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              Use esta área para informar que não haverá aula ou que existe um evento
-              especial na escola.
+              Defina se o bloqueio vale para toda a escola, uma turma ou um turno.
             </p>
 
             <div className="mt-6 space-y-4">
@@ -375,6 +467,85 @@ export default function SchoolCalendarBlocksPage() {
                   <option value="other">Outro</option>
                 </select>
               </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+                  Aplicar bloqueio em
+                </label>
+
+                <select
+                  value={targetScope}
+                  onChange={(e) => {
+                    const next = e.target.value as "all_school" | "class" | "shift";
+                    setTargetScope(next);
+
+                    if (next !== "class") setSelectedClassId("");
+                    if (next !== "shift") setSelectedShift("");
+                  }}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-slate-500"
+                >
+                  <option value="all_school">Toda a escola</option>
+                  <option value="class">Turma específica</option>
+                  <option value="shift">Turno/período</option>
+                </select>
+              </div>
+
+              {targetScope === "class" ? (
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+                    Turma
+                  </label>
+
+                  <select
+                    value={selectedClassId}
+                    onChange={(e) => setSelectedClassId(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-slate-500"
+                  >
+                    <option value="">Selecione uma turma</option>
+
+                    {sortedClasses.map((cls) => (
+                      <option key={cls.id} value={cls.id}>
+                        {getClassLabel(cls)}
+                      </option>
+                    ))}
+                  </select>
+
+                  {sortedClasses.length === 0 ? (
+                    <p className="mt-2 text-xs font-medium text-amber-700">
+                      Nenhuma turma foi encontrada. Cadastre turmas antes de usar este
+                      tipo de bloqueio.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {targetScope === "shift" ? (
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+                    Turno/período
+                  </label>
+
+                  <select
+                    value={selectedShift}
+                    onChange={(e) => setSelectedShift(e.target.value)}
+                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-slate-500"
+                  >
+                    <option value="">Selecione um turno/período</option>
+
+                    {availableShifts.map((shift) => (
+                      <option key={shift} value={shift}>
+                        {shift}
+                      </option>
+                    ))}
+                  </select>
+
+                  {availableShifts.length === 0 ? (
+                    <p className="mt-2 text-xs font-medium text-amber-700">
+                      Nenhum turno foi encontrado nas turmas cadastradas.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div>
                 <label className="mb-1 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
@@ -501,11 +672,9 @@ export default function SchoolCalendarBlocksPage() {
                               {formatDateBR(block.block_date)}
                             </span>
 
-                            {block.affects_all_classes ? (
-                              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-                                Todas as turmas
-                              </span>
-                            ) : null}
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                              {getBlockTargetLabel(block, classes)}
+                            </span>
                           </div>
 
                           <h3 className="mt-3 text-lg font-bold text-slate-950">
