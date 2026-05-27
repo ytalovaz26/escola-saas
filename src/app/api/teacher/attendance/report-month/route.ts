@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
+import PDFDocument from "pdfkit";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
 import { getTeacherDisplayName } from "@/lib/getTeacherDisplayName";
-import PDFDocument from "pdfkit";
 
 export const runtime = "nodejs";
 
@@ -33,12 +33,50 @@ type FinalStudent = {
   reg: string;
 };
 
+type CalendarBlock = {
+  id: string;
+  block_date: string;
+  type: string;
+  title: string;
+  description: string | null;
+  target_scope: string | null;
+  class_id: string | null;
+  shift: string | null;
+  affects_all_classes: boolean | null;
+};
+
 function jsonError(message: string, status = 400, extra?: any) {
-  return NextResponse.json({ ok: false, error: message, ...extra }, { status });
+  return NextResponse.json(
+    { ok: false, error: message, ...extra },
+    {
+      status,
+      headers: { "Cache-Control": "no-store" },
+    }
+  );
 }
 
-function safeText(v: any) {
-  return typeof v === "string" ? v : "";
+function safeText(value: any) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+function normalizeComparable(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeRole(value: unknown) {
+  return normalizeComparable(value);
+}
+
+function isTeacherRole(role: unknown) {
+  const r = normalizeRole(role);
+  return r === "professor" || r === "teacher";
 }
 
 function brDateFromISO(iso: string) {
@@ -108,11 +146,39 @@ function aggregateStatus(statuses: AttendanceStatus[]) {
   return null;
 }
 
+function isAllSchoolScope(value: unknown) {
+  const scope = normalizeComparable(value);
+
+  return (
+    !scope ||
+    scope === "all" ||
+    scope === "school" ||
+    scope === "all_school" ||
+    scope === "allschool" ||
+    scope === "all_classes" ||
+    scope === "allclasses" ||
+    scope === "toda_escola" ||
+    scope === "todaescola"
+  );
+}
+
+function isClassScope(value: unknown) {
+  const scope = normalizeComparable(value);
+  return scope === "class" || scope === "turma";
+}
+
+function isShiftScope(value: unknown) {
+  const scope = normalizeComparable(value);
+  return scope === "shift" || scope === "period" || scope === "periodo" || scope === "turno";
+}
+
 async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
   const chunks: Buffer[] = [];
 
   return await new Promise<Buffer>((resolve, reject) => {
-    doc.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+    doc.on("data", (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
     doc.end();
@@ -125,7 +191,7 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
 
   const pub = u.split("/storage/v1/object/public/");
   if (pub.length === 2) {
-    const rest = pub[1];
+    const rest = pub[1].split("?")[0];
     const parts = rest.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
@@ -134,8 +200,7 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
 
   const sign = u.split("/storage/v1/object/sign/");
   if (sign.length === 2) {
-    const restWithQuery = sign[1];
-    const rest = restWithQuery.split("?")[0];
+    const rest = sign[1].split("?")[0];
     const parts = rest.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
@@ -143,7 +208,8 @@ function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: strin
   }
 
   if (!u.startsWith("http://") && !u.startsWith("https://") && u.includes("/")) {
-    const parts = u.split("/");
+    const clean = u.split("?")[0];
+    const parts = clean.split("/");
     const bucket = parts.shift();
     const path = parts.join("/");
     if (bucket && path) return { bucket, path };
@@ -182,11 +248,14 @@ async function getLogoBuffer(logoUrl: string | null): Promise<Buffer | null> {
       }
     }
 
-    const res = await fetch(u);
-    if (!res.ok) return null;
+    if (u.startsWith("http://") || u.startsWith("https://")) {
+      const res = await fetch(u, { cache: "no-store" });
+      if (!res.ok) return null;
+      const arr = await res.arrayBuffer();
+      return Buffer.from(arr);
+    }
 
-    const arr = await res.arrayBuffer();
-    return Buffer.from(arr);
+    return null;
   } catch {
     return null;
   }
@@ -216,104 +285,218 @@ function drawHeaderDateVerticalCentered(
   doc.restore();
 }
 
-async function tryGetClassName(classId: string) {
+async function tryGetClassInfo(params: { schoolId: string; classId: string }) {
+  const { schoolId, classId } = params;
+
   try {
-    const { data } = await supabaseAdmin.from("classes").select("*").eq("id", classId).single();
+    const { data, error } = await supabaseAdmin
+      .from("classes")
+      .select("id, name, grade, shift")
+      .eq("id", classId)
+      .eq("school_id", schoolId)
+      .maybeSingle();
 
-    const candidates = [
-      data?.name,
-      data?.title,
-      data?.nome,
-      data?.class_name,
-      data?.descricao,
-      data?.description,
-      data?.series,
-      data?.ano,
-    ];
+    if (error || !data?.id) {
+      return {
+        id: classId,
+        name: classId,
+        grade: null,
+        shift: null,
+        displayName: classId,
+      };
+    }
 
-    const found = candidates.map(safeText).find((x) => x.trim().length > 0);
-    return found || "";
+    const parts = [data?.name, data?.grade, data?.shift]
+      .map(safeText)
+      .filter(Boolean);
+
+    return {
+      id: String(data.id),
+      name: safeText(data.name) || classId,
+      grade: safeText(data.grade) || null,
+      shift: safeText(data.shift) || null,
+      displayName: parts.join(" • ") || classId,
+    };
   } catch {
-    return "";
+    return {
+      id: classId,
+      name: classId,
+      grade: null,
+      shift: null,
+      displayName: classId,
+    };
   }
 }
 
-async function getRosterStudentIdsRobust(params: {
+async function validateTeacherClassLink(params: {
   schoolId: string;
   classId: string;
+  teacherUserId: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("teacher_classes")
+    .select("id")
+    .eq("school_id", params.schoolId)
+    .eq("class_id", params.classId)
+    .eq("teacher_user_id", params.teacherUserId)
+    .limit(1);
+
+  if (error) {
+    return {
+      ok: false as const,
+      status: 500,
+      message: "Erro ao validar vínculo professor-turma.",
+      details: error.message,
+    };
+  }
+
+  if (!data || data.length === 0) {
+    return {
+      ok: false as const,
+      status: 403,
+      message: "Professor não está vinculado a esta turma.",
+      details: null,
+    };
+  }
+
+  return {
+    ok: true as const,
+  };
+}
+
+async function getApplicableBlockedDates(params: {
+  schoolId: string;
+  classId: string;
+  classShift: string | null;
+  startISO: string;
   endISO: string;
 }) {
-  const { schoolId, classId, endISO } = params;
+  const { data, error } = await supabaseAdmin
+    .from("school_calendar_blocks")
+    .select(
+      `
+      id,
+      block_date,
+      type,
+      title,
+      description,
+      target_scope,
+      class_id,
+      shift,
+      affects_all_classes
+    `
+    )
+    .eq("school_id", params.schoolId)
+    .gte("block_date", params.startISO)
+    .lte("block_date", params.endISO)
+    .order("block_date", { ascending: true })
+    .order("created_at", { ascending: true });
 
+  if (error) {
+    return {
+      ok: false as const,
+      error: error.message,
+      blockedDates: new Set<string>(),
+      blocksByDate: new Map<string, CalendarBlock[]>(),
+    };
+  }
+
+  const blockedDates = new Set<string>();
+  const blocksByDate = new Map<string, CalendarBlock[]>();
+
+  for (const block of (data || []) as CalendarBlock[]) {
+    let applies = false;
+
+    if (block.affects_all_classes === true) {
+      applies = true;
+    } else {
+      const scope = cleanText(block.target_scope);
+
+      if (isAllSchoolScope(scope)) {
+        applies = true;
+      } else if (isClassScope(scope)) {
+        applies = cleanText(block.class_id) === params.classId;
+      } else if (isShiftScope(scope)) {
+        applies =
+          !!cleanText(block.shift) &&
+          normalizeComparable(block.shift) === normalizeComparable(params.classShift);
+      }
+    }
+
+    if (!applies) continue;
+
+    const date = cleanText(block.block_date);
+    if (!date) continue;
+
+    blockedDates.add(date);
+
+    const list = blocksByDate.get(date) || [];
+    list.push(block);
+    blocksByDate.set(date, list);
+  }
+
+  return {
+    ok: true as const,
+    error: null,
+    blockedDates,
+    blocksByDate,
+  };
+}
+
+async function getRosterAcrossPeriod(params: {
+  schoolId: string;
+  classId: string;
+  startISO: string;
+  endISO: string;
+}) {
+  const { schoolId, classId, startISO, endISO } = params;
+
+  const dates = datesBetweenInclusive(startISO, endISO);
   const all = new Set<string>();
 
-  const candidateTables = [
-    { table: "class_students", studentCol: "student_id", classCol: "class_id" },
-    { table: "student_classes", studentCol: "student_id", classCol: "class_id" },
-    { table: "enrollments", studentCol: "student_id", classCol: "class_id" },
-    { table: "matriculas", studentCol: "student_id", classCol: "class_id" },
-  ];
-
-  for (const t of candidateTables) {
+  for (const date of dates) {
     try {
-      const { data, error } = await supabaseAdmin
-        .from(t.table as any)
-        .select(`${t.studentCol}`)
-        .eq("school_id", schoolId)
-        .eq(t.classCol, classId);
+      const { data } = await supabaseAdmin.rpc("get_active_students_for_class_on_date", {
+        p_class_id: classId,
+        p_date: date,
+      });
 
-      if (error) continue;
-
-      for (const r of (data || []) as any[]) {
-        const id = (r as any)?.[t.studentCol];
-
-        if (typeof id === "string" && id.length > 0) {
-          all.add(id);
-        }
+      for (const row of data || []) {
+        const id = String((row as any)?.student_id ?? (row as any)?.id ?? "").trim();
+        if (id) all.add(id);
       }
-    } catch {}
+    } catch {
+      // segue para fallback
+    }
   }
 
   try {
-    const { data } = await supabaseAdmin.rpc("get_active_students_for_class_on_date", {
-      p_class_id: classId,
-      p_date: endISO,
-    });
+    const { data } = await supabaseAdmin
+      .from("student_classes")
+      .select("student_id")
+      .eq("school_id", schoolId)
+      .eq("class_id", classId)
+      .eq("is_active", true);
 
-    for (const r of (data || []) as any[]) {
-      const id = r?.student_id ?? r?.id;
-
-      if (typeof id === "string" && id.length > 0) {
-        all.add(id);
-      }
+    for (const row of data || []) {
+      const id = String((row as any)?.student_id || "").trim();
+      if (id) all.add(id);
     }
-  } catch {}
+  } catch {
+    // mantém dados já encontrados
+  }
 
   return Array.from(all);
 }
 
-async function fetchStudentsByIds(params: {
-  schoolId: string;
-  studentIds: string[];
-}): Promise<StudentRow[]> {
-  const { schoolId, studentIds } = params;
-
+async function fetchStudentsByIds(schoolId: string, studentIds: string[]): Promise<StudentRow[]> {
   if (studentIds.length === 0) return [];
-
-  try {
-    const { data, error } = await supabaseAdmin
-      .from("students")
-      .select("id, full_name, registration_number")
-      .in("id", studentIds)
-      .eq("school_id", schoolId);
-
-    if (!error) return (data || []) as StudentRow[];
-  } catch {}
 
   try {
     const { data } = await supabaseAdmin
       .from("students")
       .select("id, full_name, registration_number")
+      .eq("school_id", schoolId)
       .in("id", studentIds);
 
     return (data || []) as StudentRow[];
@@ -345,6 +528,7 @@ function drawReportHeader(params: {
   datePages: number;
   studentPage: number;
   studentPages: number;
+  removedDatesCount: number;
 }) {
   const {
     doc,
@@ -359,33 +543,138 @@ function drawReportHeader(params: {
     datePages,
     studentPage,
     studentPages,
+    removedDatesCount,
   } = params;
 
-  const headerTop = 18;
+  const headerTop = 16;
 
   if (logoBuffer) {
     try {
       doc.image(logoBuffer, 22, headerTop, { fit: [100, 55] });
-    } catch {}
+    } catch {
+      // ignora logo inválida
+    }
   }
 
   const dateStart = dateChunk[0] || startISO;
   const dateEnd = dateChunk[dateChunk.length - 1] || endISO;
 
   doc.fillColor("#000");
-  doc.font("Helvetica-Bold").fontSize(15).text(schoolName || "Diário de Classe", 135, headerTop + 2);
+  doc.font("Helvetica-Bold").fontSize(15).text(schoolName || "Chamada Escolar", 135, headerTop + 2, {
+    width: doc.page.width - 160,
+    ellipsis: true,
+  });
 
   doc.font("Helvetica").fontSize(9).fillColor("#333");
-  doc.text(`Turma: ${className}`, 135, headerTop + 23);
-  doc.text(`Professor(a): ${teacherName || "—"}`, 135, headerTop + 37);
-  doc.text(`Período geral: ${brDateFromISO(startISO)} até ${brDateFromISO(endISO)}`, 135, headerTop + 51);
-  doc.text(`Bloco exibido: ${brDateFromISO(dateStart)} até ${brDateFromISO(dateEnd)}`, 135, headerTop + 65);
+
+  doc.text(`Turma: ${className}`, 135, headerTop + 22, {
+    width: doc.page.width - 160,
+    ellipsis: true,
+  });
+
+  doc.text(`Professor(a): ${teacherName}`, 135, headerTop + 35, {
+    width: doc.page.width - 160,
+    ellipsis: true,
+  });
+
+  doc.text(`Período geral: ${brDateFromISO(startISO)} até ${brDateFromISO(endISO)}`, 135, headerTop + 48);
+
+  const removedInfo =
+    removedDatesCount > 0
+      ? ` | ${removedDatesCount} dia(s) sem aula removido(s)`
+      : "";
 
   doc.text(
-    `Legenda: • = Presente | F = Falta | T = Atraso | Datas ${datePage}/${datePages} | Alunos ${studentPage}/${studentPages}`,
-    480,
-    headerTop + 65,
-    { width: 330, align: "right", lineBreak: false }
+    `Dias exibidos: ${brDateFromISO(dateStart)} até ${brDateFromISO(dateEnd)} | Legenda: • = Presente | F = Falta | T = Atraso${removedInfo} | Datas ${datePage}/${datePages} | Alunos ${studentPage}/${studentPages}`,
+    135,
+    headerTop + 61,
+    {
+      width: doc.page.width - 160,
+      ellipsis: true,
+    }
+  );
+}
+
+function drawNoSchoolDaysDocument(params: {
+  doc: PDFKit.PDFDocument;
+  logoBuffer: Buffer | null;
+  schoolName: string;
+  className: string;
+  teacherName: string;
+  startISO: string;
+  endISO: string;
+  removedDatesCount: number;
+}) {
+  const { doc, logoBuffer, schoolName, className, teacherName, startISO, endISO, removedDatesCount } = params;
+
+  const pageW = doc.page.width;
+  const margin = 46;
+  const headerTop = 44;
+
+  if (logoBuffer) {
+    try {
+      doc.image(logoBuffer, margin, headerTop, { fit: [90, 90] });
+    } catch {
+      // ignora logo inválida
+    }
+  }
+
+  const titleX = margin + 110;
+
+  doc.font("Helvetica-Bold").fontSize(24).fillColor("#0f172a").text(
+    schoolName,
+    titleX,
+    headerTop + 4,
+    {
+      width: pageW - titleX - margin,
+      ellipsis: true,
+    }
+  );
+
+  doc.font("Helvetica").fontSize(11).fillColor("#334155");
+  doc.text(`Turma: ${className}`, titleX, headerTop + 42);
+  doc.text(`Professor(a): ${teacherName}`, titleX, headerTop + 60);
+  doc.text(`Período: ${brDateFromISO(startISO)} até ${brDateFromISO(endISO)}`, titleX, headerTop + 78);
+
+  const boxY = headerTop + 140;
+
+  doc.roundedRect(margin, boxY, pageW - margin * 2, 240, 22).fill("#f8fafc");
+
+  doc
+    .roundedRect(margin + 22, boxY + 22, pageW - margin * 2 - 44, 196, 18)
+    .strokeColor("#cbd5e1")
+    .lineWidth(1.2)
+    .stroke();
+
+  doc.font("Helvetica-Bold").fontSize(25).fillColor("#0f172a").text(
+    "Nenhum dia letivo exibido no período",
+    margin + 44,
+    boxY + 56,
+    {
+      width: pageW - margin * 2 - 88,
+      align: "center",
+    }
+  );
+
+  doc.font("Helvetica").fontSize(12).fillColor("#475569").text(
+    `Todos os ${removedDatesCount} dia(s) do período foram marcados como dia sem aula, recesso, feriado ou bloqueio de calendário para esta turma/turno/escola.`,
+    margin + 70,
+    boxY + 116,
+    {
+      width: pageW - margin * 2 - 140,
+      align: "center",
+      lineGap: 4,
+    }
+  );
+
+  doc.font("Helvetica").fontSize(10).fillColor("#64748b").text(
+    "Este documento não contabiliza faltas, atrasos ou presenças em dias removidos pelo calendário escolar.",
+    margin,
+    boxY + 270,
+    {
+      width: pageW - margin * 2,
+      align: "center",
+    }
   );
 }
 
@@ -401,31 +690,44 @@ function drawAttendanceTable(params: {
   const pageW = doc.page.width;
   const pageH = doc.page.height;
 
-  const tableX = 22;
-  const tableY = 98;
-  const tableW = pageW - 44;
-  const tableBottom = pageH - 55;
+  const tableX = 18;
+  const tableY = 96;
+  const tableW = pageW - 36;
+  const tableBottom = pageH - 34;
   const tableH = tableBottom - tableY;
 
-  const colNumW = 24;
-  const colNameW = 250;
-  const colRegW = 58;
-
-  const fixedW = colNumW + colNameW + colRegW;
-  const dateAreaW = tableW - fixedW;
-
   const cols = dateChunk.length;
-  const cellW = Math.max(12, Math.min(18, dateAreaW / Math.max(1, cols)));
-  const usedVarW = cellW * cols;
-  const startVarX = tableX + fixedW + Math.max(0, (dateAreaW - usedVarW) / 2);
+
+  const colNumW = 24;
+  const colRegW = 54;
+
+  const preferredNameW = cols >= 30 ? 210 : cols >= 26 ? 230 : 250;
+  const minDateCellW = cols >= 30 ? 12.4 : cols >= 26 ? 13.2 : 14;
+
+  const fixedBaseW = colNumW + preferredNameW + colRegW;
+  const dateAreaW = tableW - fixedBaseW;
+  const rawCellW = dateAreaW / Math.max(1, cols);
+
+  const cellW = Math.max(minDateCellW, Math.min(18, rawCellW));
+  const usedDateW = cellW * cols;
+
+  let colNameW = preferredNameW;
+  let startVarX = tableX + colNumW + colNameW + colRegW;
+
+  const overflow = startVarX + usedDateW - (tableX + tableW);
+
+  if (overflow > 0) {
+    colNameW = Math.max(175, colNameW - overflow - 2);
+    startVarX = tableX + colNumW + colNameW + colRegW;
+  }
 
   const headerRowH = 46;
   const rowH = 16;
 
-  const fontHeader = cols > 26 ? 7 : 8;
+  const fontHeader = cols >= 30 ? 6.4 : cols >= 26 ? 7 : 8;
   const fontCell = 7;
 
-  doc.lineWidth(0.7).strokeColor("#000");
+  doc.lineWidth(0.65).strokeColor("#000");
 
   doc.rect(tableX, tableY, tableW, headerRowH).stroke();
 
@@ -436,7 +738,10 @@ function drawAttendanceTable(params: {
     .lineTo(tableX + colNumW + colNameW, tableY + tableH)
     .stroke();
 
-  doc.moveTo(tableX + fixedW, tableY).lineTo(tableX + fixedW, tableY + tableH).stroke();
+  doc
+    .moveTo(tableX + colNumW + colNameW + colRegW, tableY)
+    .lineTo(tableX + colNumW + colNameW + colRegW, tableY + tableH)
+    .stroke();
 
   doc.fillColor("#000").font("Helvetica-Bold").fontSize(8);
   doc.text("N°", tableX + 5, tableY + 15, { width: colNumW - 10 });
@@ -497,21 +802,13 @@ function drawAttendanceTable(params: {
         doc.save();
         doc.fillColor("#C00000");
         doc.font("Helvetica-Bold").fontSize(8);
-        doc.text("F", x, y + 3, {
-          width: cellW,
-          align: "center",
-          lineBreak: false,
-        });
+        doc.text("F", x, y + 3, { width: cellW, align: "center", lineBreak: false });
         doc.restore();
       } else if (status === "late") {
         doc.save();
         doc.fillColor("#000");
         doc.font("Helvetica-Bold").fontSize(8);
-        doc.text("T", x, y + 3, {
-          width: cellW,
-          align: "center",
-          lineBreak: false,
-        });
+        doc.text("T", x, y + 3, { width: cellW, align: "center", lineBreak: false });
         doc.restore();
       }
     }
@@ -520,11 +817,6 @@ function drawAttendanceTable(params: {
   }
 
   doc.moveTo(tableX, y).lineTo(tableX + tableW, y).stroke();
-
-  const footerY = pageH - 40;
-  doc.moveTo(22, footerY).lineTo(pageW - 22, footerY).stroke();
-  doc.font("Helvetica").fontSize(9).fillColor("#000");
-  doc.text("Professor(a)", 22, footerY + 6);
 }
 
 export async function GET(req: Request) {
@@ -540,10 +832,14 @@ export async function GET(req: Request) {
 
   if (!guard.ok) return guard.res;
 
-  const { schoolId } = guard as any;
-
-  const teacherUserId =
+  const schoolId = (guard as any).schoolId as string;
+  const userId =
     (guard as any).userId || (guard as any).user?.id || (guard as any).authUserId;
+
+  const role = (guard as any).role || (guard as any).schoolRole || (guard as any).user?.role;
+
+  if (!schoolId) return jsonError("Escola não identificada.", 401);
+  if (!userId) return jsonError("Usuário não identificado.", 401);
 
   const url = new URL(req.url);
   const classId = (url.searchParams.get("classId") || "").trim();
@@ -552,25 +848,26 @@ export async function GET(req: Request) {
   const start = (url.searchParams.get("start") || "").trim();
   const end = (url.searchParams.get("end") || "").trim();
 
-  if (!teacherUserId) return jsonError("Professor não identificado (token).", 401);
   if (!classId) return jsonError("classId é obrigatório.", 400);
 
-  const { data: link, error: linkErr } = await supabaseAdmin
-    .from("teacher_classes")
-    .select("id")
-    .eq("school_id", schoolId)
-    .eq("class_id", classId)
-    .eq("teacher_user_id", teacherUserId)
-    .limit(1);
+  const classInfo = await tryGetClassInfo({ schoolId, classId });
 
-  if (linkErr) {
-    return jsonError("Erro ao validar vínculo professor-turma.", 500, {
-      details: linkErr.message,
-    });
+  if (!classInfo?.id || classInfo.id === classId && classInfo.displayName === classId) {
+    // mantém fallback, mas ainda deixa validação por escola acontecer por vínculo abaixo
   }
 
-  if (!link || link.length === 0) {
-    return jsonError("Professor não está vinculado a esta turma.", 403);
+  if (isTeacherRole(role)) {
+    const link = await validateTeacherClassLink({
+      schoolId,
+      classId,
+      teacherUserId: userId,
+    });
+
+    if (!link.ok) {
+      return jsonError(link.message, link.status, {
+        details: link.details,
+      });
+    }
   }
 
   let startISO = "";
@@ -582,40 +879,103 @@ export async function GET(req: Request) {
   } else if (month) {
     const r = rangeFromMonth(month);
     if (!r) return jsonError("month inválido (use YYYY-MM).", 400);
+
     startISO = r.startISO;
     endISO = r.endISO;
   } else {
     return jsonError("Envie month=YYYY-MM ou start=YYYY-MM-DD&end=YYYY-MM-DD.", 400);
   }
 
-  const dateCols = datesBetweenInclusive(startISO, endISO);
+  const fullDateCols = datesBetweenInclusive(startISO, endISO);
 
-  if (dateCols.length === 0) {
+  if (fullDateCols.length === 0) {
     return jsonError("Período inválido.", 400);
   }
 
-  let schoolName = "";
+  let schoolName = "Chamada Escolar";
   let brandLogoUrl = "";
 
   try {
-    const { data: sch } = await supabaseAdmin
+    const { data: school } = await supabaseAdmin
       .from("schools")
-      .select("name, brand_logo_url, logo_url")
+      .select("name, brand_name, brand_logo_url, logo_url")
       .eq("id", schoolId)
-      .single();
+      .maybeSingle();
 
-    schoolName = safeText((sch as any)?.name);
-    brandLogoUrl = safeText((sch as any)?.brand_logo_url || (sch as any)?.logo_url);
-  } catch {}
+    schoolName =
+      safeText((school as any)?.brand_name) ||
+      safeText((school as any)?.name) ||
+      schoolName;
 
-  const className = (await tryGetClassName(classId)) || classId;
+    brandLogoUrl = safeText((school as any)?.brand_logo_url || (school as any)?.logo_url);
+  } catch {
+    // segue com fallback
+  }
 
-  const teacherName = await getTeacherDisplayName({
-    teacherUserId,
+  const className = classInfo.displayName || classId;
+  const classShift = classInfo.shift || null;
+
+  let teacherName = "Professor(a)";
+
+  try {
+    teacherName = await getTeacherDisplayName({
+      teacherUserId: userId,
+      schoolId,
+    });
+  } catch {
+    teacherName = "Professor(a)";
+  }
+
+  const blockedResult = await getApplicableBlockedDates({
     schoolId,
+    classId,
+    classShift,
+    startISO,
+    endISO,
   });
 
-  const { data: sessions, error: sessErr } = await supabaseAdmin
+  if (!blockedResult.ok) {
+    return jsonError("Erro ao verificar dias sem aula no calendário escolar.", 500, {
+      details: blockedResult.error,
+    });
+  }
+
+  const blockedDates = blockedResult.blockedDates;
+  const dateCols = fullDateCols.filter((dateISO) => !blockedDates.has(dateISO));
+  const removedDatesCount = fullDateCols.length - dateCols.length;
+
+  const logoBuffer = await getLogoBuffer(brandLogoUrl);
+
+  if (dateCols.length === 0) {
+    const doc = new PDFDocument({
+      size: "A4",
+      layout: "landscape",
+      margin: 22,
+    });
+
+    drawNoSchoolDaysDocument({
+      doc,
+      logoBuffer,
+      schoolName,
+      className,
+      teacherName,
+      startISO,
+      endISO,
+      removedDatesCount,
+    });
+
+    const buffer = await pdfToBuffer(doc);
+
+    return new NextResponse(new Uint8Array(buffer), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="frequencia-${classId}-${startISO}-a-${endISO}.pdf"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  const { data: sessions, error: sessionErr } = await supabaseAdmin
     .from("attendance_sessions")
     .select("id, lesson_date, lesson_number")
     .eq("school_id", schoolId)
@@ -625,76 +985,87 @@ export async function GET(req: Request) {
     .order("lesson_date", { ascending: true })
     .order("lesson_number", { ascending: true });
 
-  if (sessErr) {
+  if (sessionErr) {
     return jsonError("Falha ao buscar sessões no período.", 500, {
-      details: sessErr.message,
+      details: sessionErr.message,
     });
   }
 
-  const sessList = (sessions || []) as SessionRow[];
-  const sessionIds = sessList.map((s) => s.id);
+  const sessionList = ((sessions || []) as SessionRow[]).filter(
+    (session) => !blockedDates.has(session.lesson_date)
+  );
 
-  let recList: RecordRow[] = [];
+  const sessionIds = sessionList.map((session) => session.id);
+
+  let recordList: RecordRow[] = [];
 
   if (sessionIds.length > 0) {
-    const { data: recs, error: recErr } = await supabaseAdmin
+    const { data: records, error: recordErr } = await supabaseAdmin
       .from("attendance_records")
       .select("session_id, student_id, status, note")
       .eq("school_id", schoolId)
       .in("session_id", sessionIds);
 
-    if (recErr) {
+    if (recordErr) {
       return jsonError("Falha ao buscar registros de presença.", 500, {
-        details: recErr.message,
+        details: recordErr.message,
       });
     }
 
-    recList = (recs || []) as RecordRow[];
+    recordList = (records || []) as RecordRow[];
   }
 
-  const rosterIdsRaw = await getRosterStudentIdsRobust({
+  const rosterIdsFromPeriod = await getRosterAcrossPeriod({
     schoolId,
     classId,
+    startISO,
     endISO,
   });
 
-  const fallbackIds = Array.from(
-    new Set(recList.map((r) => String(r.student_id || "").trim()).filter(Boolean))
+  const rosterIdsFromRecords = Array.from(
+    new Set(recordList.map((record) => String(record.student_id || "").trim()).filter(Boolean))
   );
 
-  const rosterIds = rosterIdsRaw.length > 0 ? rosterIdsRaw : fallbackIds;
+  const allStudentIds = Array.from(new Set([...rosterIdsFromPeriod, ...rosterIdsFromRecords]));
 
-  const students = await fetchStudentsByIds({
-    schoolId,
-    studentIds: rosterIds,
-  });
+  const students = await fetchStudentsByIds(schoolId, allStudentIds);
 
-  const validStudentIds = students.length > 0 ? students.map((s) => s.id) : rosterIds;
+  const studentMap = new Map<string, StudentRow>();
 
-  const stuMap = new Map<string, StudentRow>();
-
-  for (const s of students) {
-    stuMap.set(s.id, s);
+  for (const student of students) {
+    studentMap.set(String(student.id), student);
   }
 
-  const sessIdToDate = new Map<string, string>();
+  const finalStudents: FinalStudent[] = allStudentIds
+    .map((id) => {
+      const student = studentMap.get(id);
 
-  for (const s of sessList) {
-    sessIdToDate.set(s.id, s.lesson_date);
+      return {
+        id,
+        name: safeText(student?.full_name) || id,
+        reg: safeText(student?.registration_number) || "—",
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+
+  const sessionIdToDate = new Map<string, string>();
+
+  for (const session of sessionList) {
+    sessionIdToDate.set(session.id, session.lesson_date);
   }
 
   const tempAgg = new Map<string, Map<string, AttendanceStatus[]>>();
 
-  for (const r of recList) {
-    const studentId = String(r.student_id || "").trim();
-
+  for (const record of recordList) {
+    const studentId = String(record.student_id || "").trim();
     if (!studentId) continue;
-    if (!validStudentIds.includes(studentId)) continue;
+    if (!allStudentIds.includes(studentId)) continue;
 
-    const dateISO = sessIdToDate.get(r.session_id);
+    const dateISO = sessionIdToDate.get(record.session_id);
     if (!dateISO) continue;
+    if (blockedDates.has(dateISO)) continue;
 
-    const normalized = normalizeStatus(r.status);
+    const normalized = normalizeStatus(record.status);
     if (!normalized) continue;
 
     if (!tempAgg.has(studentId)) tempAgg.set(studentId, new Map());
@@ -707,7 +1078,7 @@ export async function GET(req: Request) {
 
   const byStudentDate = new Map<string, Map<string, AttendanceStatus>>();
 
-  for (const studentId of validStudentIds) {
+  for (const studentId of allStudentIds) {
     byStudentDate.set(studentId, new Map());
   }
 
@@ -715,24 +1086,12 @@ export async function GET(req: Request) {
     const finalMap = byStudentDate.get(studentId) || new Map<string, AttendanceStatus>();
 
     for (const [dateISO, statuses] of byDate.entries()) {
-      const agg = aggregateStatus(statuses);
-      if (agg) finalMap.set(dateISO, agg);
+      const aggregate = aggregateStatus(statuses);
+      if (aggregate) finalMap.set(dateISO, aggregate);
     }
 
     byStudentDate.set(studentId, finalMap);
   }
-
-  const finalStudents: FinalStudent[] = validStudentIds
-    .map((id) => {
-      const st = stuMap.get(id);
-
-      return {
-        id,
-        name: safeText(st?.full_name) || id,
-        reg: safeText(st?.registration_number) || "—",
-      };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 
   const doc = new PDFDocument({
     size: "A4",
@@ -741,9 +1100,7 @@ export async function GET(req: Request) {
     autoFirstPage: false,
   });
 
-  const logoBuffer = await getLogoBuffer(brandLogoUrl);
-
-  const MAX_DATES_PER_PAGE = 28;
+  const MAX_DATES_PER_PAGE = 31;
   const MAX_STUDENTS_PER_PAGE = 27;
 
   const dateChunks = chunkArray(dateCols, MAX_DATES_PER_PAGE);
@@ -751,11 +1108,11 @@ export async function GET(req: Request) {
     ? chunkArray(finalStudents, MAX_STUDENTS_PER_PAGE)
     : [[] as FinalStudent[]];
 
-  for (let dIndex = 0; dIndex < dateChunks.length; dIndex++) {
-    const dateChunk = dateChunks[dIndex];
+  for (let dateIndex = 0; dateIndex < dateChunks.length; dateIndex++) {
+    const dateChunk = dateChunks[dateIndex];
 
-    for (let sIndex = 0; sIndex < studentChunks.length; sIndex++) {
-      const studentChunk = studentChunks[sIndex];
+    for (let studentIndex = 0; studentIndex < studentChunks.length; studentIndex++) {
+      const studentChunk = studentChunks[studentIndex];
 
       doc.addPage();
 
@@ -768,16 +1125,17 @@ export async function GET(req: Request) {
         startISO,
         endISO,
         dateChunk,
-        datePage: dIndex + 1,
+        datePage: dateIndex + 1,
         datePages: dateChunks.length,
-        studentPage: sIndex + 1,
+        studentPage: studentIndex + 1,
         studentPages: studentChunks.length,
+        removedDatesCount,
       });
 
       drawAttendanceTable({
         doc,
         students: studentChunk,
-        allStudentStartIndex: sIndex * MAX_STUDENTS_PER_PAGE,
+        allStudentStartIndex: studentIndex * MAX_STUDENTS_PER_PAGE,
         dateChunk,
         byStudentDate,
       });
@@ -789,7 +1147,7 @@ export async function GET(req: Request) {
   return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="relatorio-${startISO}-a-${endISO}.pdf"`,
+      "Content-Disposition": `inline; filename="frequencia-${classId}-${startISO}-a-${endISO}.pdf"`,
       "Cache-Control": "no-store",
     },
   });
