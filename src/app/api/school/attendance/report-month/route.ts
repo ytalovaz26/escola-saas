@@ -33,12 +33,38 @@ type FinalStudent = {
   reg: string;
 };
 
+type CalendarBlock = {
+  id: string;
+  block_date: string;
+  type: string;
+  title: string;
+  description: string | null;
+  target_scope: string | null;
+  class_id: string | null;
+  shift: string | null;
+  affects_all_classes: boolean | null;
+};
+
 function jsonError(message: string, status = 400, extra?: any) {
-  return NextResponse.json({ ok: false, error: message, ...extra }, { status });
+  return NextResponse.json(
+    { ok: false, error: message, ...extra },
+    { status, headers: { "Cache-Control": "no-store" } }
+  );
 }
 
 function safeText(v: any) {
   return typeof v === "string" ? v.trim() : "";
+}
+
+function cleanText(value: unknown) {
+  return String(value || "").trim();
+}
+
+function normalizeComparable(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function brDateFromISO(iso: string) {
@@ -106,6 +132,45 @@ function aggregateStatus(statuses: AttendanceStatus[]) {
   if (statuses.includes("late")) return "late";
   if (statuses.includes("present")) return "present";
   return null;
+}
+
+function isAllSchoolScope(value: unknown) {
+  const scope = normalizeComparable(value);
+
+  return (
+    !scope ||
+    scope === "all" ||
+    scope === "school" ||
+    scope === "all_school" ||
+    scope === "allschool" ||
+    scope === "all_classes" ||
+    scope === "allclasses" ||
+    scope === "toda_escola" ||
+    scope === "todaescola"
+  );
+}
+
+function isClassScope(value: unknown) {
+  const scope = normalizeComparable(value);
+  return scope === "class" || scope === "turma";
+}
+
+function isShiftScope(value: unknown) {
+  const scope = normalizeComparable(value);
+  return scope === "shift" || scope === "period" || scope === "periodo" || scope === "turno";
+}
+
+function blockTypeLabel(type: string) {
+  const safe = cleanText(type);
+
+  if (safe === "holiday") return "Feriado";
+  if (safe === "recess") return "Recesso escolar";
+  if (safe === "no_class") return "Dia sem aula";
+  if (safe === "pedagogical_day") return "Dia pedagógico";
+  if (safe === "exam_day") return "Dia de avaliação";
+  if (safe === "event") return "Evento escolar";
+
+  return "Calendário escolar";
 }
 
 async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
@@ -219,24 +284,124 @@ function drawHeaderDateVerticalCentered(
   doc.restore();
 }
 
-async function tryGetClassName(params: { schoolId: string; classId: string }) {
+async function tryGetClassInfo(params: { schoolId: string; classId: string }) {
   const { schoolId, classId } = params;
 
   try {
-    const { data } = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("classes")
       .select("id, name, grade, shift")
       .eq("id", classId)
       .eq("school_id", schoolId)
       .maybeSingle();
 
-    const candidates = [data?.name, data?.grade, data?.shift];
-    const found = candidates.map(safeText).find((x) => x.trim().length > 0);
+    if (error || !data?.id) {
+      return {
+        id: classId,
+        name: classId,
+        grade: null,
+        shift: null,
+        displayName: classId,
+      };
+    }
 
-    return found || "";
+    const parts = [data?.name, data?.grade, data?.shift].map(safeText).filter(Boolean);
+
+    return {
+      id: String(data.id),
+      name: safeText(data.name) || classId,
+      grade: safeText(data.grade) || null,
+      shift: safeText(data.shift) || null,
+      displayName: parts.join(" • ") || classId,
+    };
   } catch {
-    return "";
+    return {
+      id: classId,
+      name: classId,
+      grade: null,
+      shift: null,
+      displayName: classId,
+    };
   }
+}
+
+async function getApplicableBlockedDates(params: {
+  schoolId: string;
+  classId: string;
+  classShift: string | null;
+  startISO: string;
+  endISO: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("school_calendar_blocks")
+    .select(
+      `
+      id,
+      block_date,
+      type,
+      title,
+      description,
+      target_scope,
+      class_id,
+      shift,
+      affects_all_classes
+    `
+    )
+    .eq("school_id", params.schoolId)
+    .gte("block_date", params.startISO)
+    .lte("block_date", params.endISO)
+    .order("block_date", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    return {
+      ok: false as const,
+      error: error.message,
+      blockedDates: new Set<string>(),
+      blocksByDate: new Map<string, CalendarBlock[]>(),
+    };
+  }
+
+  const blockedDates = new Set<string>();
+  const blocksByDate = new Map<string, CalendarBlock[]>();
+
+  for (const block of (data || []) as CalendarBlock[]) {
+    let applies = false;
+
+    if (block.affects_all_classes === true) {
+      applies = true;
+    } else {
+      const scope = cleanText(block.target_scope);
+
+      if (isAllSchoolScope(scope)) {
+        applies = true;
+      } else if (isClassScope(scope)) {
+        applies = cleanText(block.class_id) === params.classId;
+      } else if (isShiftScope(scope)) {
+        applies =
+          !!cleanText(block.shift) &&
+          normalizeComparable(block.shift) === normalizeComparable(params.classShift);
+      }
+    }
+
+    if (!applies) continue;
+
+    const date = cleanText(block.block_date);
+    if (!date) continue;
+
+    blockedDates.add(date);
+
+    const list = blocksByDate.get(date) || [];
+    list.push(block);
+    blocksByDate.set(date, list);
+  }
+
+  return {
+    ok: true as const,
+    error: null,
+    blockedDates,
+    blocksByDate,
+  };
 }
 
 async function getRosterAcrossPeriod(params: {
@@ -319,6 +484,7 @@ function drawReportHeader(params: {
   datePages: number;
   studentPage: number;
   studentPages: number;
+  removedDatesCount: number;
 }) {
   const {
     doc,
@@ -332,9 +498,10 @@ function drawReportHeader(params: {
     datePages,
     studentPage,
     studentPages,
+    removedDatesCount,
   } = params;
 
-  const headerTop = 18;
+  const headerTop = 16;
 
   if (logoBuffer) {
     try {
@@ -352,19 +519,106 @@ function drawReportHeader(params: {
   });
 
   doc.font("Helvetica").fontSize(9).fillColor("#333");
-  doc.text(`Turma: ${className}`, 135, headerTop + 23, {
+  doc.text(`Turma: ${className}`, 135, headerTop + 22, {
     width: doc.page.width - 160,
     ellipsis: true,
   });
-  doc.text(`Período geral: ${brDateFromISO(startISO)} até ${brDateFromISO(endISO)}`, 135, headerTop + 37);
-  doc.text(`Bloco exibido: ${brDateFromISO(dateStart)} até ${brDateFromISO(dateEnd)}`, 135, headerTop + 51);
+
+  doc.text(`Período geral: ${brDateFromISO(startISO)} até ${brDateFromISO(endISO)}`, 135, headerTop + 35);
+
+  doc.text(`Dias exibidos: ${brDateFromISO(dateStart)} até ${brDateFromISO(dateEnd)}`, 135, headerTop + 48);
+
+  const removedInfo =
+    removedDatesCount > 0
+      ? ` | ${removedDatesCount} dia(s) sem aula removido(s)`
+      : "";
+
   doc.text(
-    `Legenda: • = Presente | F = Falta | T = Atraso | Datas ${datePage}/${datePages} | Alunos ${studentPage}/${studentPages}`,
+    `Legenda: • = Presente | F = Falta | T = Atraso${removedInfo} | Datas ${datePage}/${datePages} | Alunos ${studentPage}/${studentPages}`,
     135,
-    headerTop + 65,
+    headerTop + 61,
     {
       width: doc.page.width - 160,
       ellipsis: true,
+    }
+  );
+}
+
+function drawNoSchoolDaysDocument(params: {
+  doc: PDFKit.PDFDocument;
+  logoBuffer: Buffer | null;
+  schoolName: string;
+  className: string;
+  startISO: string;
+  endISO: string;
+  removedDatesCount: number;
+}) {
+  const { doc, logoBuffer, schoolName, className, startISO, endISO, removedDatesCount } = params;
+
+  const pageW = doc.page.width;
+  const margin = 46;
+  const headerTop = 44;
+
+  if (logoBuffer) {
+    try {
+      doc.image(logoBuffer, margin, headerTop, { fit: [90, 90] });
+    } catch {}
+  }
+
+  const titleX = margin + 110;
+
+  doc.font("Helvetica-Bold").fontSize(24).fillColor("#0f172a").text(
+    schoolName,
+    titleX,
+    headerTop + 4,
+    {
+      width: pageW - titleX - margin,
+      ellipsis: true,
+    }
+  );
+
+  doc.font("Helvetica").fontSize(11).fillColor("#334155");
+  doc.text(`Turma: ${className}`, titleX, headerTop + 42);
+  doc.text(`Período: ${brDateFromISO(startISO)} até ${brDateFromISO(endISO)}`, titleX, headerTop + 60);
+
+  const boxY = headerTop + 140;
+
+  doc.roundedRect(margin, boxY, pageW - margin * 2, 240, 22).fill("#f8fafc");
+
+  doc
+    .roundedRect(margin + 22, boxY + 22, pageW - margin * 2 - 44, 196, 18)
+    .strokeColor("#cbd5e1")
+    .lineWidth(1.2)
+    .stroke();
+
+  doc.font("Helvetica-Bold").fontSize(25).fillColor("#0f172a").text(
+    "Nenhum dia letivo exibido no período",
+    margin + 44,
+    boxY + 56,
+    {
+      width: pageW - margin * 2 - 88,
+      align: "center",
+    }
+  );
+
+  doc.font("Helvetica").fontSize(12).fillColor("#475569").text(
+    `Todos os ${removedDatesCount} dia(s) do período foram marcados como dia sem aula, recesso, feriado ou bloqueio de calendário para esta turma/turno/escola.`,
+    margin + 70,
+    boxY + 116,
+    {
+      width: pageW - margin * 2 - 140,
+      align: "center",
+      lineGap: 4,
+    }
+  );
+
+  doc.font("Helvetica").fontSize(10).fillColor("#64748b").text(
+    "Este documento não contabiliza faltas, atrasos ou presenças em dias removidos pelo calendário escolar.",
+    margin,
+    boxY + 270,
+    {
+      width: pageW - margin * 2,
+      align: "center",
     }
   );
 }
@@ -381,37 +635,56 @@ function drawAttendanceTable(params: {
   const pageW = doc.page.width;
   const pageH = doc.page.height;
 
-  const tableX = 22;
-  const tableY = 98;
-  const tableW = pageW - 44;
-  const tableBottom = pageH - 38;
+  const tableX = 18;
+  const tableY = 96;
+  const tableW = pageW - 36;
+  const tableBottom = pageH - 34;
   const tableH = tableBottom - tableY;
 
-  const colNumW = 24;
-  const colNameW = 250;
-  const colRegW = 58;
-
-  const fixedW = colNumW + colNameW + colRegW;
-  const dateAreaW = tableW - fixedW;
-
   const cols = dateChunk.length;
-  const cellW = Math.max(12, Math.min(18, dateAreaW / Math.max(1, cols)));
-  const usedVarW = cellW * cols;
-  const startVarX = tableX + fixedW + Math.max(0, (dateAreaW - usedVarW) / 2);
+
+  const colNumW = 24;
+  const colRegW = 54;
+
+  const preferredNameW = cols >= 30 ? 210 : cols >= 26 ? 230 : 250;
+  const minDateCellW = cols >= 30 ? 12.4 : cols >= 26 ? 13.2 : 14;
+
+  const fixedBaseW = colNumW + preferredNameW + colRegW;
+  const dateAreaW = tableW - fixedBaseW;
+  const rawCellW = dateAreaW / Math.max(1, cols);
+
+  const cellW = Math.max(minDateCellW, Math.min(18, rawCellW));
+  const usedDateW = cellW * cols;
+
+  let colNameW = preferredNameW;
+  let startVarX = tableX + colNumW + colNameW + colRegW;
+
+  const overflow = startVarX + usedDateW - (tableX + tableW);
+
+  if (overflow > 0) {
+    colNameW = Math.max(175, colNameW - overflow - 2);
+    startVarX = tableX + colNumW + colNameW + colRegW;
+  }
 
   const headerRowH = 46;
   const rowH = 16;
 
-  const fontHeader = cols > 26 ? 7 : 8;
+  const fontHeader = cols >= 30 ? 6.4 : cols >= 26 ? 7 : 8;
   const fontCell = 7;
 
-  doc.lineWidth(0.7).strokeColor("#000");
+  doc.lineWidth(0.65).strokeColor("#000");
 
   doc.rect(tableX, tableY, tableW, headerRowH).stroke();
 
   doc.moveTo(tableX + colNumW, tableY).lineTo(tableX + colNumW, tableY + tableH).stroke();
-  doc.moveTo(tableX + colNumW + colNameW, tableY).lineTo(tableX + colNumW + colNameW, tableY + tableH).stroke();
-  doc.moveTo(tableX + fixedW, tableY).lineTo(tableX + fixedW, tableY + tableH).stroke();
+  doc
+    .moveTo(tableX + colNumW + colNameW, tableY)
+    .lineTo(tableX + colNumW + colNameW, tableY + tableH)
+    .stroke();
+  doc
+    .moveTo(tableX + colNumW + colNameW + colRegW, tableY)
+    .lineTo(tableX + colNumW + colNameW + colRegW, tableY + tableH)
+    .stroke();
 
   doc.fillColor("#000").font("Helvetica-Bold").fontSize(8);
   doc.text("N°", tableX + 5, tableY + 15, { width: colNumW - 10 });
@@ -501,7 +774,7 @@ export async function GET(req: Request) {
 
   if (!guard.ok) return guard.res;
 
-  const schoolId = guard.schoolId;
+  const schoolId = (guard as any).schoolId as string;
 
   const url = new URL(req.url);
   const classId = (url.searchParams.get("classId") || "").trim();
@@ -527,9 +800,9 @@ export async function GET(req: Request) {
     return jsonError("Envie month=YYYY-MM ou start=YYYY-MM-DD&end=YYYY-MM-DD.", 400);
   }
 
-  const dateCols = datesBetweenInclusive(startISO, endISO);
+  const fullDateCols = datesBetweenInclusive(startISO, endISO);
 
-  if (dateCols.length === 0) {
+  if (fullDateCols.length === 0) {
     return jsonError("Período inválido.", 400);
   }
 
@@ -547,7 +820,58 @@ export async function GET(req: Request) {
     brandLogoUrl = safeText((sch as any)?.brand_logo_url || (sch as any)?.logo_url);
   } catch {}
 
-  const className = (await tryGetClassName({ schoolId, classId })) || classId;
+  const classInfo = await tryGetClassInfo({ schoolId, classId });
+  const className = classInfo.displayName || classId;
+  const classShift = classInfo.shift || null;
+
+  const blockedResult = await getApplicableBlockedDates({
+    schoolId,
+    classId,
+    classShift,
+    startISO,
+    endISO,
+  });
+
+  if (!blockedResult.ok) {
+    return jsonError("Erro ao verificar dias sem aula no calendário escolar.", 500, {
+      details: blockedResult.error,
+    });
+  }
+
+  const blockedDates = blockedResult.blockedDates;
+
+  const dateCols = fullDateCols.filter((dateISO) => !blockedDates.has(dateISO));
+  const removedDatesCount = fullDateCols.length - dateCols.length;
+
+  const logoBuffer = await getLogoBuffer(brandLogoUrl);
+
+  if (dateCols.length === 0) {
+    const doc = new PDFDocument({
+      size: "A4",
+      layout: "landscape",
+      margin: 22,
+    });
+
+    drawNoSchoolDaysDocument({
+      doc,
+      logoBuffer,
+      schoolName,
+      className,
+      startISO,
+      endISO,
+      removedDatesCount,
+    });
+
+    const buffer = await pdfToBuffer(doc);
+
+    return new NextResponse(new Uint8Array(buffer), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="frequencia-${classId}-${startISO}-a-${endISO}.pdf"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
 
   const { data: sessions, error: sessErr } = await supabaseAdmin
     .from("attendance_sessions")
@@ -565,7 +889,10 @@ export async function GET(req: Request) {
     });
   }
 
-  const sessList = (sessions || []) as SessionRow[];
+  const sessList = ((sessions || []) as SessionRow[]).filter(
+    (session) => !blockedDates.has(session.lesson_date)
+  );
+
   const sessionIds = sessList.map((s) => s.id);
 
   let recList: RecordRow[] = [];
@@ -632,6 +959,7 @@ export async function GET(req: Request) {
 
     const dateISO = sessIdToDate.get(r.session_id);
     if (!dateISO) continue;
+    if (blockedDates.has(dateISO)) continue;
 
     const normalized = normalizeStatus(r.status);
     if (!normalized) continue;
@@ -668,9 +996,7 @@ export async function GET(req: Request) {
     autoFirstPage: false,
   });
 
-  const logoBuffer = await getLogoBuffer(brandLogoUrl);
-
-  const MAX_DATES_PER_PAGE = 28;
+  const MAX_DATES_PER_PAGE = 31;
   const MAX_STUDENTS_PER_PAGE = 27;
 
   const dateChunks = chunkArray(dateCols, MAX_DATES_PER_PAGE);
@@ -698,6 +1024,7 @@ export async function GET(req: Request) {
         datePages: dateChunks.length,
         studentPage: sIndex + 1,
         studentPages: studentChunks.length,
+        removedDatesCount,
       });
 
       drawAttendanceTable({
