@@ -17,6 +17,18 @@ type DayMark = {
   status: string;
 };
 
+type CalendarBlock = {
+  id: string;
+  date: string;
+  type: string;
+  typeLabel: string;
+  title: string;
+  description: string;
+  targetScope?: string | null;
+  classId?: string | null;
+  shift?: string | null;
+};
+
 type ParentChildrenResponse = {
   ok: boolean;
   children?: Array<{
@@ -40,11 +52,13 @@ type MonthlyApiPayload = {
   student?: {
     id: string;
     full_name: string | null;
+    registration_number?: string | null;
   };
   month?: string;
   range?: {
     startYMD: string;
     endYMD: string;
+    endInclusiveYMD?: string;
   };
   sessions?: Array<{
     id: string;
@@ -54,13 +68,28 @@ type MonthlyApiPayload = {
   records?: Array<{
     session_id: string;
     status: string;
+    lesson_date?: string;
+    lesson_number?: number | null;
+    statusLabel?: string;
   }>;
+  calendarBlocks?: CalendarBlock[];
+  blockedDates?: string[];
+  summary?: {
+    totalSessions: number;
+    totalRecords: number;
+    present: number;
+    absent: number;
+    late: number;
+    blockedDaysRemoved: number;
+    attendancePercentage: number | null;
+  };
   error?: string;
 };
 
 async function safeJson(res: Response) {
   const text = await res.text();
   if (!text) return null;
+
   try {
     return JSON.parse(text);
   } catch {
@@ -84,10 +113,6 @@ function firstDayOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
 
-function firstDayOfNextMonth(d: Date) {
-  return new Date(d.getFullYear(), d.getMonth() + 1, 1);
-}
-
 function monthLabel(month: string) {
   const [y, m] = month.split("-").map(Number);
   const d = new Date(y, (m || 1) - 1, 1);
@@ -98,12 +123,24 @@ function monthLabel(month: string) {
   });
 }
 
+function formatDateBr(dateYmd: string) {
+  const [y, m, d] = String(dateYmd || "").split("-").map(Number);
+  if (!y || !m || !d) return dateYmd;
+
+  return new Date(y, m - 1, d).toLocaleDateString("pt-BR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+}
+
 function statusLetter(status: string) {
   const s = String(status || "").toLowerCase().trim();
 
-  if (s === "present" || s === "presente") return "P";
-  if (s === "late" || s === "tardy" || s === "atraso" || s === "tarde") return "A";
-  if (s === "absent" || s === "ausente" || s === "falta") return "F";
+  if (s === "present" || s === "presente" || s === "p") return "P";
+  if (s === "late" || s === "tardy" || s === "atraso" || s === "tarde" || s === "t") return "A";
+  if (s === "absent" || s === "ausente" || s === "falta" || s === "f") return "F";
 
   return s ? s.slice(0, 1).toUpperCase() : "-";
 }
@@ -111,9 +148,11 @@ function statusLetter(status: string) {
 function normalizeStatus(status: string) {
   const s = String(status || "").toLowerCase().trim();
 
-  if (s === "present" || s === "presente") return "present";
-  if (s === "late" || s === "tardy" || s === "atraso" || s === "tarde") return "late";
-  if (s === "absent" || s === "ausente" || s === "falta") return "absent";
+  if (s === "present" || s === "presente" || s === "p") return "present";
+  if (s === "late" || s === "tardy" || s === "atraso" || s === "tarde" || s === "t") {
+    return "late";
+  }
+  if (s === "absent" || s === "ausente" || s === "falta" || s === "f") return "absent";
 
   return "unknown";
 }
@@ -132,6 +171,16 @@ function statusBadgeClass(status: string) {
   if (normalized === "absent") {
     return "border-red-200 bg-red-50 text-red-700";
   }
+
+  return "border-slate-200 bg-slate-100 text-slate-700";
+}
+
+function blockBadgeClass(type: string) {
+  const t = String(type || "").toLowerCase().trim();
+
+  if (t === "holiday") return "border-purple-200 bg-purple-50 text-purple-700";
+  if (t === "recess") return "border-blue-200 bg-blue-50 text-blue-700";
+  if (t === "no_class") return "border-orange-200 bg-orange-50 text-orange-700";
 
   return "border-slate-200 bg-slate-100 text-slate-700";
 }
@@ -201,14 +250,14 @@ export default function MonthlyPage() {
   const [relationship, setRelationship] = useState<string | null>(null);
 
   const [dayMap, setDayMap] = useState<Record<string, DayMark[]>>({});
+  const [blockedDates, setBlockedDates] = useState<string[]>([]);
+  const [calendarBlocks, setCalendarBlocks] = useState<CalendarBlock[]>([]);
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const monthStart = useMemo(() => {
     const [y, m] = month.split("-").map(Number);
     return new Date(y, (m || 1) - 1, 1);
   }, [month]);
-
-  const monthEnd = useMemo(() => firstDayOfNextMonth(monthStart), [monthStart]);
 
   const calendarDays = useMemo(() => {
     const first = firstDayOfMonth(monthStart);
@@ -220,13 +269,30 @@ export default function MonthlyPage() {
     for (let i = 0; i < startWeekday; i++) cells.push({ date: null });
 
     for (let d = 1; d <= daysInMonth; d++) {
-      cells.push({ date: new Date(first.getFullYear(), first.getMonth(), d), dayNumber: d });
+      cells.push({
+        date: new Date(first.getFullYear(), first.getMonth(), d),
+        dayNumber: d,
+      });
     }
 
     while (cells.length % 7 !== 0) cells.push({ date: null });
 
     return cells;
   }, [monthStart]);
+
+  const blockByDate = useMemo(() => {
+    const map = new Map<string, CalendarBlock[]>();
+
+    for (const block of calendarBlocks) {
+      const date = String(block.date || "").slice(0, 10);
+      if (!date) continue;
+
+      if (!map.has(date)) map.set(date, []);
+      map.get(date)!.push(block);
+    }
+
+    return map;
+  }, [calendarBlocks]);
 
   const summary = useMemo(() => {
     let totalMarks = 0;
@@ -236,6 +302,8 @@ export default function MonthlyPage() {
     let daysWithRecords = 0;
 
     for (const key of Object.keys(dayMap)) {
+      if (blockedDates.includes(key)) continue;
+
       const marks = dayMap[key] || [];
       if (marks.length > 0) daysWithRecords += 1;
 
@@ -255,8 +323,9 @@ export default function MonthlyPage() {
       late,
       absent,
       daysWithRecords,
+      blocked: blockedDates.length,
     };
-  }, [dayMap]);
+  }, [dayMap, blockedDates]);
 
   async function loadStudentAndMonthly() {
     setLoading(true);
@@ -283,6 +352,8 @@ export default function MonthlyPage() {
         if (childrenRes.status === 401) router.replace("/login");
         setStudent(null);
         setDayMap({});
+        setBlockedDates([]);
+        setCalendarBlocks([]);
         return;
       }
 
@@ -293,6 +364,8 @@ export default function MonthlyPage() {
         setErrMsg("Você não tem permissão para ver este aluno (não está vinculado).");
         setStudent(null);
         setDayMap({});
+        setBlockedDates([]);
+        setCalendarBlocks([]);
         return;
       }
 
@@ -307,9 +380,9 @@ export default function MonthlyPage() {
       setStudentClassLabel(classLabelFromChild(found));
 
       const monthlyRes = await fetch(
-        `/api/parent/attendance/monthly?studentId=${encodeURIComponent(studentId)}&month=${encodeURIComponent(
-          month
-        )}`,
+        `/api/parent/attendance/monthly?studentId=${encodeURIComponent(
+          studentId
+        )}&month=${encodeURIComponent(month)}`,
         {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
@@ -321,11 +394,19 @@ export default function MonthlyPage() {
       if (!monthlyRes.ok || !monthlyJson?.ok) {
         setErrMsg(monthlyJson?.error || "Falha ao carregar presença mensal.");
         setDayMap({});
+        setBlockedDates([]);
+        setCalendarBlocks([]);
         return;
       }
 
       const sessions = Array.isArray(monthlyJson.sessions) ? monthlyJson.sessions : [];
       const records = Array.isArray(monthlyJson.records) ? monthlyJson.records : [];
+      const apiBlockedDates = Array.isArray(monthlyJson.blockedDates)
+        ? monthlyJson.blockedDates.map((d: any) => String(d).slice(0, 10)).filter(Boolean)
+        : [];
+      const apiCalendarBlocks = Array.isArray(monthlyJson.calendarBlocks)
+        ? monthlyJson.calendarBlocks
+        : [];
 
       const sessionById = new Map<
         string,
@@ -334,6 +415,7 @@ export default function MonthlyPage() {
 
       for (const session of sessions) {
         if (!session?.id) continue;
+
         sessionById.set(String(session.id), {
           id: String(session.id),
           lesson_date: String(session.lesson_date || "").slice(0, 10),
@@ -345,13 +427,20 @@ export default function MonthlyPage() {
       const map: Record<string, DayMark[]> = {};
 
       for (const record of records) {
+        const directDate = String(record.lesson_date || "").slice(0, 10);
         const session = sessionById.get(String(record.session_id || ""));
-        if (!session?.lesson_date) continue;
+        const lessonDate = directDate || session?.lesson_date || "";
 
-        if (!map[session.lesson_date]) map[session.lesson_date] = [];
+        if (!lessonDate) continue;
+        if (apiBlockedDates.includes(lessonDate)) continue;
 
-        map[session.lesson_date].push({
-          lessonNumber: session.lesson_number,
+        if (!map[lessonDate]) map[lessonDate] = [];
+
+        map[lessonDate].push({
+          lessonNumber:
+            typeof record.lesson_number === "number"
+              ? record.lesson_number
+              : session?.lesson_number ?? null,
           status: String(record.status || ""),
         });
       }
@@ -361,9 +450,13 @@ export default function MonthlyPage() {
       }
 
       setDayMap(map);
+      setBlockedDates(apiBlockedDates);
+      setCalendarBlocks(apiCalendarBlocks);
     } catch (e: any) {
       setErrMsg(e?.message || "Erro inesperado ao carregar presença mensal.");
       setDayMap({});
+      setBlockedDates([]);
+      setCalendarBlocks([]);
     } finally {
       setLoading(false);
     }
@@ -413,7 +506,8 @@ export default function MonthlyPage() {
                 </h1>
 
                 <p className="mt-2 text-sm text-slate-200 md:text-base">
-                  Visualize o histórico completo do mês com clareza e organização.
+                  Visualize o histórico completo do mês, sem considerar recessos, feriados
+                  ou dias sem aula como falta.
                 </p>
 
                 <div className="mt-4 space-y-1 text-sm text-slate-200">
@@ -480,11 +574,11 @@ export default function MonthlyPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-4 md:p-6">
+          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-5 md:p-6">
             <MetricCard
               label="Dias com registro"
               value={String(summary.daysWithRecords)}
-              help="Dias do mês que possuem ao menos um lançamento de frequência."
+              help="Dias letivos do mês com ao menos um lançamento de frequência."
             />
 
             <MetricCard
@@ -503,6 +597,12 @@ export default function MonthlyPage() {
               label="Faltas"
               value={String(summary.absent)}
               help="Total de registros lançados como falta."
+            />
+
+            <MetricCard
+              label="Dias sem aula"
+              value={String(summary.blocked)}
+              help="Dias removidos do cálculo por calendário escolar."
             />
           </div>
         </section>
@@ -550,8 +650,11 @@ export default function MonthlyPage() {
             <span className="inline-flex rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-700">
               F = Falta
             </span>
+            <span className="inline-flex rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-medium text-orange-700">
+              Sem aula = calendário escolar
+            </span>
             <span className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
-              Sem registros = dia sem lançamento
+              Sem registros = dia letivo sem lançamento
             </span>
           </div>
 
@@ -568,7 +671,7 @@ export default function MonthlyPage() {
               Calendário do mês
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Toque em “abrir” em qualquer dia com registros para ver o detalhe diário.
+              Dias sem aula aparecem destacados e não contam como falta ou ausência.
             </p>
           </div>
 
@@ -595,13 +698,17 @@ export default function MonthlyPage() {
 
                 const dateStr = ymd(cell.date);
                 const marks = dayMap[dateStr] || [];
+                const blocks = blockByDate.get(dateStr) || [];
+                const isBlocked = blockedDates.includes(dateStr) || blocks.length > 0;
                 const dailyHref = `/parent/students/${studentId}/daily?date=${dateStr}`;
 
                 const hasPresent = marks.some((m) => normalizeStatus(m.status) === "present");
                 const hasLate = marks.some((m) => normalizeStatus(m.status) === "late");
                 const hasAbsent = marks.some((m) => normalizeStatus(m.status) === "absent");
 
-                const dominantClass = hasAbsent
+                const dominantClass = isBlocked
+                  ? "border-orange-200 bg-orange-50"
+                  : hasAbsent
                   ? "border-red-200 bg-red-50/50"
                   : hasLate
                   ? "border-amber-200 bg-amber-50/50"
@@ -626,7 +733,37 @@ export default function MonthlyPage() {
                     </div>
 
                     <div className="mt-3">
-                      {marks.length === 0 ? (
+                      {isBlocked ? (
+                        <div className="space-y-2">
+                          {(blocks.length > 0 ? blocks.slice(0, 2) : []).map((block) => (
+                            <div
+                              key={block.id}
+                              className={`rounded-2xl border px-3 py-2 text-xs font-medium ${blockBadgeClass(
+                                block.type
+                              )}`}
+                            >
+                              <div className="font-semibold">
+                                {block.typeLabel || "Sem aula"}
+                              </div>
+                              <div className="mt-1 line-clamp-2">
+                                {block.title || "Não haverá aula"}
+                              </div>
+                            </div>
+                          ))}
+
+                          {blocks.length === 0 ? (
+                            <div className="rounded-2xl border border-orange-200 bg-white px-3 py-2 text-xs font-medium text-orange-700">
+                              Sem aula
+                            </div>
+                          ) : null}
+
+                          {blocks.length > 2 ? (
+                            <div className="text-[11px] text-orange-700">
+                              +{blocks.length - 2} comunicado(s)
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : marks.length === 0 ? (
                         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
                           Sem registros
                         </div>
@@ -647,7 +784,7 @@ export default function MonthlyPage() {
                       )}
                     </div>
 
-                    {marks.length > 0 ? (
+                    {!isBlocked && marks.length > 0 ? (
                       <div className="mt-3 space-y-1">
                         {marks.slice(0, 3).map((mark, markIdx) => (
                           <div
@@ -666,13 +803,20 @@ export default function MonthlyPage() {
                         ) : null}
                       </div>
                     ) : null}
+
+                    {isBlocked ? (
+                      <div className="mt-3 text-[11px] leading-5 text-orange-700">
+                        Este dia não entra no cálculo de faltas.
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
             </div>
 
             <div className="mt-5 text-sm text-slate-500">
-              Dica: clique em <b>abrir</b> em qualquer dia para consultar a presença diária detalhada.
+              Dica: clique em <b>abrir</b> para consultar o detalhe diário. Em dias marcados como
+              <b> sem aula</b>, a diária mostrará o motivo informado pela escola.
             </div>
           </div>
         </section>

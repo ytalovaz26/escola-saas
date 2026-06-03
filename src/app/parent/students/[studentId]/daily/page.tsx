@@ -9,41 +9,83 @@ type StudentRow = {
   id: string;
   full_name: string | null;
   registration_number: string | null;
+  activeClass?: {
+    id: string;
+    name: string;
+    grade: string | null;
+    shift: string | null;
+    label: string;
+  } | null;
 };
 
-type SessionRow = {
-  id: string;
-  lesson_date: string;
-  lesson_number: number | null;
-};
-
-type RecordRow = {
-  session_id: string;
+type AttendanceItem = {
+  date: string;
   status: string;
+  statusLabel?: string;
+  class_id?: string | null;
+  session_id: string;
+  lesson_number: number | null;
   note: string | null;
 };
+
+type CalendarBlock = {
+  id: string;
+  date: string;
+  type: string;
+  typeLabel: string;
+  title: string;
+  description: string;
+  targetScope?: string | null;
+  classId?: string | null;
+  shift?: string | null;
+};
+
+type DailyApiPayload = {
+  ok: boolean;
+  student?: StudentRow;
+  range?: {
+    from: string;
+    to: string;
+  };
+  items?: AttendanceItem[];
+  sessions?: Array<{
+    id: string;
+    lesson_date: string;
+    lesson_number: number | null;
+  }>;
+  calendarBlocks?: CalendarBlock[];
+  blockedDates?: string[];
+  summary?: {
+    totalItems: number;
+    present: number;
+    absent: number;
+    late: number;
+    blockedDaysRemoved: number;
+  };
+  error?: string;
+};
+
+async function safeJson(res: Response) {
+  const text = await res.text();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: false, error: text || "Resposta inválida do servidor" };
+  }
+}
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
-function ymd(d: Date) {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-function parseYMDToLocalDate(ymdStr: string) {
-  const [y, m, d] = ymdStr.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
-
-function addDays(date: Date, days: number) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
+function ymd(date: Date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
 function formatDateBr(dateYmd: string) {
-  const [y, m, d] = dateYmd.split("-").map(Number);
+  const [y, m, d] = String(dateYmd || "").split("-").map(Number);
   if (!y || !m || !d) return dateYmd;
 
   return new Date(y, m - 1, d).toLocaleDateString("pt-BR", {
@@ -57,9 +99,11 @@ function formatDateBr(dateYmd: string) {
 function normalizeStatus(status: string) {
   const s = String(status || "").toLowerCase().trim();
 
-  if (s === "present" || s === "presente") return "present";
-  if (s === "late" || s === "atraso" || s === "tarde" || s === "tardy") return "late";
-  if (s === "absent" || s === "falta" || s === "ausente") return "absent";
+  if (s === "present" || s === "presente" || s === "p") return "present";
+  if (s === "late" || s === "atraso" || s === "tarde" || s === "tardy" || s === "t") {
+    return "late";
+  }
+  if (s === "absent" || s === "falta" || s === "ausente" || s === "f") return "absent";
 
   return "unknown";
 }
@@ -88,6 +132,16 @@ function statusBadgeClass(status: string) {
   if (normalized === "absent") {
     return "border-red-200 bg-red-50 text-red-700";
   }
+
+  return "border-slate-200 bg-slate-100 text-slate-700";
+}
+
+function blockBadgeClass(type: string) {
+  const t = String(type || "").toLowerCase().trim();
+
+  if (t === "holiday") return "border-purple-200 bg-purple-50 text-purple-700";
+  if (t === "recess") return "border-blue-200 bg-blue-50 text-blue-700";
+  if (t === "no_class") return "border-orange-200 bg-orange-50 text-orange-700";
 
   return "border-slate-200 bg-slate-100 text-slate-700";
 }
@@ -130,16 +184,29 @@ export default function DailyAttendancePage() {
   const [dateYMD, setDateYMD] = useState(initialDate);
   const [loading, setLoading] = useState(true);
   const [student, setStudent] = useState<StudentRow | null>(null);
-  const [records, setRecords] = useState<Array<{ session: SessionRow; record: RecordRow }>>([]);
+  const [items, setItems] = useState<AttendanceItem[]>([]);
+  const [calendarBlocks, setCalendarBlocks] = useState<CalendarBlock[]>([]);
+  const [blockedDates, setBlockedDates] = useState<string[]>([]);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  const isBlockedDay = blockedDates.includes(dateYMD) || calendarBlocks.some((b) => b.date === dateYMD);
 
   const totals = useMemo(() => {
     let present = 0;
     let late = 0;
     let absent = 0;
 
-    for (const item of records) {
-      const normalized = normalizeStatus(item.record.status);
+    if (isBlockedDay) {
+      return {
+        present: 0,
+        late: 0,
+        absent: 0,
+        total: 0,
+      };
+    }
+
+    for (const item of items) {
+      const normalized = normalizeStatus(item.status);
 
       if (normalized === "present") present += 1;
       else if (normalized === "late") late += 1;
@@ -150,85 +217,55 @@ export default function DailyAttendancePage() {
       present,
       late,
       absent,
-      total: records.length,
+      total: items.length,
     };
-  }, [records]);
+  }, [items, isBlockedDay]);
 
   async function loadDaily() {
     setLoading(true);
     setErrMsg(null);
 
     try {
-      const { data: st, error: stErr } = await supabase
-        .from("students")
-        .select("id, full_name, registration_number")
-        .eq("id", studentId)
-        .maybeSingle();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
 
-      if (stErr || !st) {
-        setErrMsg("Aluno não encontrado ou sem permissão.");
+      if (!token) {
+        router.replace("/login");
+        return;
+      }
+
+      const res = await fetch(
+        `/api/parent/attendance/day?studentId=${encodeURIComponent(studentId)}&from=${encodeURIComponent(
+          dateYMD
+        )}&to=${encodeURIComponent(dateYMD)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          cache: "no-store",
+        }
+      );
+
+      const json = (await safeJson(res)) as DailyApiPayload | any;
+
+      if (!res.ok || !json?.ok) {
+        setErrMsg(json?.error || "Falha ao carregar presença diária.");
         setStudent(null);
-        setRecords([]);
+        setItems([]);
+        setCalendarBlocks([]);
+        setBlockedDates([]);
         return;
       }
 
-      setStudent(st);
-
-      const dayStart = parseYMDToLocalDate(dateYMD);
-      const nextDay = addDays(dayStart, 1);
-
-      const start = ymd(dayStart);
-      const end = ymd(nextDay);
-
-      const { data: sessions, error: sErr } = await supabase
-        .from("attendance_sessions")
-        .select("id, lesson_date, lesson_number")
-        .gte("lesson_date", start)
-        .lt("lesson_date", end)
-        .order("lesson_number", { ascending: true });
-
-      if (sErr) {
-        setErrMsg(`Erro ao buscar sessões do dia: ${sErr.message}`);
-        setRecords([]);
-        return;
-      }
-
-      const sess = (sessions || []) as SessionRow[];
-
-      if (sess.length === 0) {
-        setRecords([]);
-        return;
-      }
-
-      const sessionIds = sess.map((x) => x.id);
-
-      const { data: recs, error: rErr } = await supabase
-        .from("attendance_records")
-        .select("session_id, status, note")
-        .eq("student_id", studentId)
-        .in("session_id", sessionIds);
-
-      if (rErr) {
-        setErrMsg(`Erro ao buscar registros do dia: ${rErr.message}`);
-        setRecords([]);
-        return;
-      }
-
-      const recList = (recs || []) as RecordRow[];
-      const recBySession = new Map(recList.map((r) => [r.session_id, r]));
-
-      const merged = sess
-        .map((s) => {
-          const r = recBySession.get(s.id);
-          if (!r) return null;
-          return { session: s, record: r };
-        })
-        .filter(Boolean) as Array<{ session: SessionRow; record: RecordRow }>;
-
-      setRecords(merged);
+      setStudent(json.student ?? null);
+      setItems(Array.isArray(json.items) ? json.items : []);
+      setCalendarBlocks(Array.isArray(json.calendarBlocks) ? json.calendarBlocks : []);
+      setBlockedDates(Array.isArray(json.blockedDates) ? json.blockedDates : []);
     } catch (e: any) {
       setErrMsg(e?.message || "Erro inesperado.");
-      setRecords([]);
+      setItems([]);
+      setCalendarBlocks([]);
+      setBlockedDates([]);
     } finally {
       setLoading(false);
     }
@@ -255,8 +292,8 @@ export default function DailyAttendancePage() {
                 </h1>
 
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
-                  Consulte a frequência do aluno em um dia específico, com visão clara
-                  por aula e resumo rápido do dia letivo.
+                  Consulte a frequência do aluno em um dia específico, respeitando os dias
+                  sem aula, recessos e feriados cadastrados pela escola.
                 </p>
 
                 <div className="mt-4 space-y-1 text-sm text-slate-200">
@@ -274,6 +311,12 @@ export default function DailyAttendancePage() {
                   <div>
                     <span className="font-semibold">Data selecionada:</span> {formatDateBr(dateYMD)}
                   </div>
+
+                  {student?.activeClass?.label ? (
+                    <div>
+                      <span className="font-semibold">Turma:</span> {student.activeClass.label}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -311,9 +354,13 @@ export default function DailyAttendancePage() {
 
           <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-4 md:p-6">
             <SummaryCard
-              label="Aulas no dia"
-              value={String(totals.total)}
-              help="Total de aulas com frequência registrada nesta data."
+              label={isBlockedDay ? "Dia sem aula" : "Aulas no dia"}
+              value={isBlockedDay ? "Sim" : String(totals.total)}
+              help={
+                isBlockedDay
+                  ? "A escola bloqueou esta data no calendário escolar."
+                  : "Total de aulas com frequência registrada nesta data."
+              }
             />
 
             <SummaryCard
@@ -331,7 +378,7 @@ export default function DailyAttendancePage() {
             <SummaryCard
               label="Faltas"
               value={String(totals.absent)}
-              help="Aulas em que o aluno esteve ausente."
+              help="Dias sem aula não entram como falta."
             />
           </div>
         </section>
@@ -376,76 +423,132 @@ export default function DailyAttendancePage() {
           ) : null}
         </section>
 
-        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 px-5 py-4 md:px-6">
-            <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-              Registros do dia
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Visualização detalhada da frequência por aula.
-            </p>
-          </div>
+        {isBlockedDay ? (
+          <section className="overflow-hidden rounded-[32px] border border-orange-200 bg-orange-50 shadow-sm">
+            <div className="border-b border-orange-200 px-5 py-4 md:px-6">
+              <h2 className="text-xl font-semibold tracking-tight text-orange-950">
+                Sem aula nesta data
+              </h2>
+              <p className="mt-1 text-sm text-orange-800">
+                Este dia foi bloqueado pela escola e não deve ser interpretado como falta ou
+                ausência do aluno.
+              </p>
+            </div>
 
-          <div className="p-4 md:p-6">
-            {loading ? (
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
-                Carregando...
-              </div>
-            ) : records.length === 0 ? (
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
-                Nenhum registro de presença nesta data.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                {records.map(({ session, record }) => (
+            <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 md:p-6">
+              {calendarBlocks.length > 0 ? (
+                calendarBlocks.map((block) => (
                   <div
-                    key={session.id}
-                    className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
+                    key={block.id}
+                    className="rounded-[28px] border border-orange-200 bg-white p-5 shadow-sm"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          Aula
-                        </div>
-                        <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
-                          {session.lesson_number != null ? `${session.lesson_number}ª aula` : "—"}
-                        </div>
-                      </div>
-
+                    <div className="flex flex-wrap items-center gap-2">
                       <span
-                        className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${statusBadgeClass(
-                          record.status
+                        className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${blockBadgeClass(
+                          block.type
                         )}`}
                       >
-                        {statusLabel(record.status)}
+                        {block.typeLabel || "Calendário escolar"}
+                      </span>
+
+                      <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
+                        {formatDateBr(block.date)}
                       </span>
                     </div>
 
-                    <div className="mt-5 grid grid-cols-1 gap-4">
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          Situação registrada
+                    <h3 className="mt-4 text-xl font-semibold text-slate-950">
+                      {block.title || "Não haverá aula"}
+                    </h3>
+
+                    <p className="mt-2 text-sm leading-6 text-slate-600">
+                      {block.description || "A escola informou que não haverá aula nesta data."}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-[28px] border border-orange-200 bg-white p-5 shadow-sm">
+                  <h3 className="text-xl font-semibold text-slate-950">
+                    Data bloqueada pela escola
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
+                    Não há registro de frequência porque a data foi marcada como dia sem aula.
+                  </p>
+                </div>
+              )}
+            </div>
+          </section>
+        ) : (
+          <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 px-5 py-4 md:px-6">
+              <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+                Registros do dia
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Visualização detalhada da frequência por aula.
+              </p>
+            </div>
+
+            <div className="p-4 md:p-6">
+              {loading ? (
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+                  Carregando...
+                </div>
+              ) : items.length === 0 ? (
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
+                  Nenhum registro de presença nesta data.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  {items.map((item) => (
+                    <div
+                      key={item.session_id}
+                      className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Aula
+                          </div>
+                          <div className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                            {item.lesson_number != null ? `${item.lesson_number}ª aula` : "—"}
+                          </div>
                         </div>
-                        <div className="mt-2 text-sm font-medium text-slate-900">
-                          {statusLabel(record.status)}
-                        </div>
+
+                        <span
+                          className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${statusBadgeClass(
+                            item.status
+                          )}`}
+                        >
+                          {item.statusLabel || statusLabel(item.status)}
+                        </span>
                       </div>
 
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          Observação
+                      <div className="mt-5 grid grid-cols-1 gap-4">
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Situação registrada
+                          </div>
+                          <div className="mt-2 text-sm font-medium text-slate-900">
+                            {item.statusLabel || statusLabel(item.status)}
+                          </div>
                         </div>
-                        <div className="mt-2 text-sm leading-6 text-slate-700">
-                          {record.note ? record.note : "Nenhuma observação registrada para esta aula."}
+
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Observação
+                          </div>
+                          <div className="mt-2 text-sm leading-6 text-slate-700">
+                            {item.note ? item.note : "Nenhuma observação registrada para esta aula."}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         <section className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -482,14 +585,6 @@ export default function DailyAttendancePage() {
             </div>
           </div>
         </section>
-
-        <div className="text-xs text-slate-500">
-          Dica: para voltar ao painel do aluno,{" "}
-          <Link href={`/parent/students/${studentId}`} className="underline">
-            clique aqui
-          </Link>
-          .
-        </div>
       </div>
     </main>
   );
