@@ -11,12 +11,19 @@ type ParentChild = {
   relationship: string | null;
 };
 
-type ParentCalendarEvent = {
+type ParentCalendarItem = {
   id: string;
+  source: "calendar_event" | "calendar_block";
+  type: string;
+  typeLabel: string;
   title: string;
   description: string | null;
   date: string;
   createdAt: string | null;
+  targetScope?: string | null;
+  classId?: string | null;
+  shift?: string | null;
+  affectsAllClasses?: boolean | null;
 };
 
 function jsonOk(body: Record<string, any> = {}, status = 200) {
@@ -43,22 +50,31 @@ function cleanText(value: unknown) {
   return String(value || "").trim();
 }
 
+function normalizeDate(value: unknown) {
+  const safe = cleanText(value);
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(safe)) return safe;
+
+  return new Date().toISOString().slice(0, 10);
+}
+
 function getBearerToken(req: Request) {
   const auth = req.headers.get("authorization") || "";
   const match = auth.match(/^Bearer\s+(.+)$/i);
   return match?.[1] || null;
 }
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
+function blockTypeLabel(type: string) {
+  const safe = cleanText(type);
 
-function normalizeDate(value: unknown) {
-  const safe = cleanText(value);
+  if (safe === "holiday") return "Feriado";
+  if (safe === "recess") return "Recesso escolar";
+  if (safe === "no_class") return "Dia sem aula";
+  if (safe === "pedagogical_day") return "Dia pedagógico";
+  if (safe === "exam_day") return "Dia de avaliação";
+  if (safe === "event") return "Evento escolar";
 
-  if (/^\d{4}-\d{2}-\d{2}$/.test(safe)) return safe;
-
-  return todayISO();
+  return "Calendário escolar";
 }
 
 async function getParentContext(req: Request) {
@@ -179,8 +195,11 @@ async function loadSchoolEvents(params: {
     throw new Error("Falha ao buscar eventos da escola: " + error.message);
   }
 
-  const events: ParentCalendarEvent[] = (data || []).map((ev: any) => ({
-    id: String(ev.id),
+  const events: ParentCalendarItem[] = (data || []).map((ev: any) => ({
+    id: `event-${String(ev.id)}`,
+    source: "calendar_event",
+    type: "event",
+    typeLabel: "Evento escolar",
     title: cleanText(ev.title) || "Evento escolar",
     description: cleanText(ev.description) || null,
     date: normalizeDate(ev.event_date),
@@ -190,13 +209,71 @@ async function loadSchoolEvents(params: {
   return events;
 }
 
+async function loadSchoolCalendarBlocks(params: {
+  schoolId: string;
+}) {
+  const { data, error } = await supabaseAdmin
+    .from("school_calendar_blocks")
+    .select(
+      `
+      id,
+      school_id,
+      block_date,
+      type,
+      title,
+      description,
+      target_scope,
+      class_id,
+      shift,
+      affects_all_classes,
+      created_at
+    `
+    )
+    .eq("school_id", params.schoolId)
+    .order("block_date", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error("Falha ao buscar dias sem aula: " + error.message);
+  }
+
+  const blocks: ParentCalendarItem[] = (data || []).map((block: any) => ({
+    id: `block-${String(block.id)}`,
+    source: "calendar_block",
+    type: cleanText(block.type) || "no_class",
+    typeLabel: blockTypeLabel(cleanText(block.type)),
+    title: cleanText(block.title) || blockTypeLabel(cleanText(block.type)),
+    description:
+      cleanText(block.description) ||
+      "A escola informou alteração no calendário escolar para esta data.",
+    date: normalizeDate(block.block_date),
+    createdAt: block.created_at || null,
+    targetScope: cleanText(block.target_scope) || null,
+    classId: cleanText(block.class_id) || null,
+    shift: cleanText(block.shift) || null,
+    affectsAllClasses: block.affects_all_classes === true,
+  }));
+
+  return blocks;
+}
+
+function sortItemsAsc(a: ParentCalendarItem, b: ParentCalendarItem) {
+  const byDate = String(a.date).localeCompare(String(b.date));
+  if (byDate !== 0) return byDate;
+
+  const priorityA = a.source === "calendar_block" ? 0 : 1;
+  const priorityB = b.source === "calendar_block" ? 0 : 1;
+
+  return priorityA - priorityB;
+}
+
 export async function GET(req: Request) {
   const ctx = await getParentContext(req);
 
   if (!ctx.ok) return ctx.response;
 
   try {
-    const [children, events] = await Promise.all([
+    const [children, schoolEvents, calendarBlocks] = await Promise.all([
       loadChildren({
         schoolId: ctx.schoolId,
         parentId: ctx.parentId,
@@ -204,7 +281,12 @@ export async function GET(req: Request) {
       loadSchoolEvents({
         schoolId: ctx.schoolId,
       }),
+      loadSchoolCalendarBlocks({
+        schoolId: ctx.schoolId,
+      }),
     ]);
+
+    const items = [...schoolEvents, ...calendarBlocks].sort(sortItemsAsc);
 
     return jsonOk({
       parent: {
@@ -214,13 +296,17 @@ export async function GET(req: Request) {
       },
       schoolId: ctx.schoolId,
       children,
-      events,
+      events: schoolEvents,
+      calendarBlocks,
+      items,
       summary: {
-        total: events.length,
+        total: items.length,
+        events: schoolEvents.length,
+        calendarBlocks: calendarBlocks.length,
         children: children.length,
       },
       meta: {
-        source: "parent_calendar_school_events",
+        source: "parent_calendar_events_and_blocks_v1",
       },
     });
   } catch (e: any) {
