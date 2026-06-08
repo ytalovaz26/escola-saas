@@ -8,6 +8,7 @@ type MessageRecipient = {
   id: string;
   deliveredAt: string | null;
   readAt: string | null;
+  createdAt?: string | null;
 };
 
 type MessageRow = {
@@ -16,16 +17,33 @@ type MessageRow = {
   body: string;
   status: string;
   audienceType?: string | null;
+  audienceLabel?: string | null;
   publishedAt?: string | null;
   createdAt?: string | null;
   created_at?: string | null;
   recipient?: MessageRecipient | null;
+  flags?: {
+    unread?: boolean;
+    delivered?: boolean;
+    read?: boolean;
+    recent?: boolean;
+  };
+};
+
+type ChildRow = {
+  id: string;
+  fullName: string;
+  registrationNumber: string | null;
+  relationship: string | null;
 };
 
 type ApiSummary = {
   total: number;
   unread: number;
   read: number;
+  delivered?: number;
+  recent?: number;
+  children?: number;
 };
 
 async function safeJson(res: Response) {
@@ -77,15 +95,13 @@ function formatShortDateBR(value?: string | null) {
   });
 }
 
-function getRelativeTone(index: number) {
-  const tones = [
-    "bg-blue-50 text-blue-700 border-blue-200",
-    "bg-emerald-50 text-emerald-700 border-emerald-200",
-    "bg-amber-50 text-amber-700 border-amber-200",
-    "bg-violet-50 text-violet-700 border-violet-200",
-  ];
+function daysSince(value?: string | null) {
+  if (!value) return 9999;
 
-  return tones[index % tones.length];
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 9999;
+
+  return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function getAudienceLabel(value?: string | null) {
@@ -93,6 +109,7 @@ function getAudienceLabel(value?: string | null) {
 
   if (type === "class") return "Turma específica";
   if (type === "all_parents") return "Todos os responsáveis";
+  if (type === "parents") return "Todos os responsáveis";
   if (type === "teachers") return "Professores";
   if (type === "secretaria") return "Secretaria";
   if (type === "staff") return "Equipe escolar";
@@ -118,26 +135,59 @@ function getReadBadgeClass(message: MessageRow) {
   return "border-slate-200 bg-slate-100 text-slate-600";
 }
 
+function getAudienceBadgeClass(message: MessageRow) {
+  const type = String(message.audienceType || "").toLowerCase();
+
+  if (type === "class") return "border-violet-200 bg-violet-50 text-violet-700";
+  if (type === "all_parents" || type === "parents") {
+    return "border-blue-200 bg-blue-50 text-blue-700";
+  }
+
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function isRecent(message: MessageRow) {
+  if (message.flags?.recent === true) return true;
+  return daysSince(getDateValue(message)) <= 7;
+}
+
+function isUnread(message: MessageRow) {
+  return !message.recipient?.readAt;
+}
+
 function SummaryCard({
   label,
   value,
   help,
+  tone = "default",
 }: {
   label: string;
   value: string;
   help: string;
+  tone?: "default" | "blue" | "green" | "amber" | "red";
 }) {
+  const toneClass =
+    tone === "blue"
+      ? "border-blue-200 bg-blue-50"
+      : tone === "green"
+        ? "border-emerald-200 bg-emerald-50"
+        : tone === "amber"
+          ? "border-amber-200 bg-amber-50"
+          : tone === "red"
+            ? "border-red-200 bg-red-50"
+            : "border-slate-200 bg-white";
+
   return (
-    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+    <div className={`rounded-[28px] border p-5 shadow-sm ${toneClass}`}>
+      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
         {label}
       </div>
 
-      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+      <div className="mt-3 text-3xl font-bold tracking-tight text-slate-950">
         {value}
       </div>
 
-      <div className="mt-2 text-sm leading-6 text-slate-500">{help}</div>
+      <div className="mt-2 text-sm leading-6 text-slate-600">{help}</div>
     </div>
   );
 }
@@ -147,21 +197,45 @@ function MessageTag({
   variant = "default",
 }: {
   children: React.ReactNode;
-  variant?: "default" | "highlight" | "success" | "warning";
+  variant?: "default" | "highlight" | "success" | "warning" | "danger";
 }) {
   const className =
     variant === "highlight"
-      ? "bg-blue-50 text-blue-700"
+      ? "border-blue-200 bg-blue-50 text-blue-700"
       : variant === "success"
-        ? "bg-emerald-50 text-emerald-700"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
         : variant === "warning"
-          ? "bg-amber-50 text-amber-700"
-          : "bg-slate-100 text-slate-600";
+          ? "border-amber-200 bg-amber-50 text-amber-700"
+          : variant === "danger"
+            ? "border-red-200 bg-red-50 text-red-700"
+            : "border-slate-200 bg-slate-100 text-slate-600";
 
   return (
-    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${className}`}>
+    <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${className}`}>
       {children}
     </span>
+  );
+}
+
+function EmptyState({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-[32px] border border-dashed border-slate-300 bg-slate-50 p-10 text-center">
+      <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-3xl bg-white text-3xl shadow-sm">
+        📭
+      </div>
+
+      <h3 className="mt-5 text-xl font-bold text-slate-950">{title}</h3>
+
+      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+        {description}
+      </p>
+    </div>
   );
 }
 
@@ -170,15 +244,21 @@ export default function ParentMessagesPage() {
 
   const [loading, setLoading] = useState(true);
   const [markingRead, setMarkingRead] = useState(false);
-  const [schoolId, setSchoolId] = useState<string | null>(null);
-  const [parentId, setParentId] = useState<string | null>(null);
+  const [schoolName, setSchoolName] = useState<string | null>(null);
+  const [parentName, setParentName] = useState<string | null>(null);
+  const [children, setChildren] = useState<ChildRow[]>([]);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [summary, setSummary] = useState<ApiSummary>({
     total: 0,
     unread: 0,
     read: 0,
+    delivered: 0,
+    recent: 0,
+    children: 0,
   });
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"all" | "recent" | "unread" | "read">("all");
+  const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
 
   async function getAccessToken() {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -235,6 +315,13 @@ export default function ParentMessagesPage() {
               id: message.recipient?.id || "",
               deliveredAt: message.recipient?.deliveredAt || now,
               readAt: now,
+              createdAt: message.recipient?.createdAt || null,
+            },
+            flags: {
+              ...(message.flags || {}),
+              unread: false,
+              delivered: true,
+              read: true,
             },
           };
         })
@@ -244,6 +331,7 @@ export default function ParentMessagesPage() {
         ...prev,
         read: prev.total,
         unread: 0,
+        delivered: prev.total,
       }));
     } catch (e: any) {
       setError(e?.message || "Erro ao registrar visualização dos comunicados.");
@@ -281,13 +369,19 @@ export default function ParentMessagesPage() {
 
       const loadedMessages = (json.messages ?? []) as MessageRow[];
 
-      setSchoolId(json.schoolId ? String(json.schoolId) : null);
-      setParentId(json.parentId ? String(json.parentId) : null);
+      setSchoolName(json.schoolName || json.school?.name || null);
+      setParentName(json.parentName || null);
+      setChildren(Array.isArray(json.children) ? json.children : []);
       setMessages(loadedMessages);
+      setSelectedMessageId(loadedMessages[0]?.id || null);
+
       setSummary({
         total: Number(json.summary?.total || loadedMessages.length || 0),
         unread: Number(json.summary?.unread || 0),
         read: Number(json.summary?.read || 0),
+        delivered: Number(json.summary?.delivered || 0),
+        recent: Number(json.summary?.recent || 0),
+        children: Number(json.summary?.children || 0),
       });
 
       await markMessagesAsRead(token, loadedMessages);
@@ -308,13 +402,22 @@ export default function ParentMessagesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
+  const visibleMessages = useMemo(() => {
+    if (filter === "recent") return messages.filter(isRecent);
+    if (filter === "unread") return messages.filter(isUnread);
+    if (filter === "read") return messages.filter((message) => !!message.recipient?.readAt);
+
+    return messages;
+  }, [messages, filter]);
+
   const latestMessage = useMemo(() => {
     return messages.length > 0 ? messages[0] : null;
   }, [messages]);
 
-  const oldestMessage = useMemo(() => {
-    return messages.length > 0 ? messages[messages.length - 1] : null;
-  }, [messages]);
+  const selectedMessage = useMemo(() => {
+    if (!selectedMessageId) return latestMessage;
+    return messages.find((message) => message.id === selectedMessageId) || latestMessage;
+  }, [messages, selectedMessageId, latestMessage]);
 
   const unreadCount = useMemo(() => {
     return messages.filter((message) => !message.recipient?.readAt).length;
@@ -324,18 +427,24 @@ export default function ParentMessagesPage() {
     return messages.filter((message) => !!message.recipient?.readAt).length;
   }, [messages]);
 
+  const recentCount = useMemo(() => {
+    return messages.filter(isRecent).length;
+  }, [messages]);
+
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-100">
         <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
           <div className="animate-pulse space-y-4">
-            <div className="h-48 rounded-[32px] bg-slate-200" />
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="h-32 rounded-[28px] bg-slate-100" />
-              <div className="h-32 rounded-[28px] bg-slate-100" />
-              <div className="h-32 rounded-[28px] bg-slate-100" />
+            <div className="h-56 rounded-[36px] bg-slate-200" />
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
+              <div className="h-32 rounded-[28px] bg-white" />
+              <div className="h-32 rounded-[28px] bg-white" />
+              <div className="h-32 rounded-[28px] bg-white" />
+              <div className="h-32 rounded-[28px] bg-white" />
+              <div className="h-32 rounded-[28px] bg-white" />
             </div>
-            <div className="h-96 rounded-[28px] bg-slate-100" />
+            <div className="h-96 rounded-[32px] bg-white" />
           </div>
         </div>
       </main>
@@ -345,50 +454,53 @@ export default function ParentMessagesPage() {
   return (
     <main className="min-h-screen bg-slate-100">
       <div className="mx-auto max-w-7xl space-y-6 p-4 md:p-6">
-        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
-          <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-8 text-white md:px-8">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-              <div className="min-w-0">
-                <div className="inline-flex rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-slate-100">
-                  Comunicação escolar
+        <section className="overflow-hidden rounded-[36px] border border-slate-200 bg-white shadow-sm">
+          <div className="relative overflow-hidden bg-slate-950 px-6 py-10 text-white md:px-8 md:py-12">
+            <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-blue-500/20 blur-3xl" />
+            <div className="absolute -bottom-24 left-20 h-72 w-72 rounded-full bg-emerald-500/20 blur-3xl" />
+
+            <div className="relative flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
+              <div className="max-w-3xl">
+                <div className="inline-flex rounded-full bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-200">
+                  Comunicação oficial
                 </div>
 
-                <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-4xl">
-                  Comunicados
+                <h1 className="mt-5 text-4xl font-bold tracking-tight md:text-5xl">
+                  Comunicados da escola
                 </h1>
 
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-200 md:text-base">
-                  Avisos, recados e publicações oficiais da escola em um mural organizado
-                  para o responsável acompanhar com clareza.
+                <p className="mt-4 text-base leading-8 text-slate-200">
+                  Acompanhe avisos importantes, recados oficiais e publicações enviadas pela
+                  escola para sua família.
                 </p>
 
-                <div className="mt-4 flex flex-col gap-1 text-sm text-slate-200 md:flex-row md:flex-wrap md:gap-3">
-                  {schoolId ? (
-                    <span>
-                      Escola vinculada: <span className="font-mono">{schoolId}</span>
+                <div className="mt-5 flex flex-wrap gap-2 text-sm text-slate-200">
+                  {schoolName ? (
+                    <span className="rounded-full bg-white/10 px-3 py-1">
+                      Escola: <strong>{schoolName}</strong>
                     </span>
                   ) : null}
 
-                  {parentId ? (
-                    <span>
-                      Responsável: <span className="font-mono">{parentId}</span>
+                  {parentName ? (
+                    <span className="rounded-full bg-white/10 px-3 py-1">
+                      Responsável: <strong>{parentName}</strong>
                     </span>
                   ) : null}
 
                   {markingRead ? (
-                    <span className="font-semibold text-emerald-200">
-                      Registrando visualização...
+                    <span className="rounded-full bg-emerald-500/20 px-3 py-1 font-semibold text-emerald-100">
+                      Registrando leitura...
                     </span>
                   ) : null}
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-3">
                 <button
                   type="button"
                   onClick={loadMessages}
                   disabled={markingRead}
-                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15 disabled:opacity-60"
+                  className="rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/15 disabled:opacity-60"
                 >
                   Recarregar
                 </button>
@@ -396,7 +508,7 @@ export default function ParentMessagesPage() {
                 <button
                   type="button"
                   onClick={() => router.push("/parent/calendar")}
-                  className="rounded-2xl border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/15"
+                  className="rounded-2xl border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/15"
                 >
                   Ver agenda
                 </button>
@@ -404,7 +516,7 @@ export default function ParentMessagesPage() {
                 <button
                   type="button"
                   onClick={() => router.push("/parent")}
-                  className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 transition hover:opacity-90"
+                  className="rounded-2xl bg-white px-5 py-3 text-sm font-bold text-slate-950 transition hover:opacity-90"
                 >
                   Voltar ao portal
                 </button>
@@ -412,155 +524,246 @@ export default function ParentMessagesPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-4 md:p-6">
+          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-5 md:p-6">
             <SummaryCard
               label="Comunicados"
               value={String(summary.total || messages.length)}
-              help="Total de comunicados recebidos por este responsável."
+              help="Total de comunicados recebidos."
+              tone="blue"
+            />
+
+            <SummaryCard
+              label="Recentes"
+              value={String(recentCount)}
+              help="Publicados nos últimos 7 dias."
+              tone="amber"
             />
 
             <SummaryCard
               label="Visualizados"
               value={String(readCount)}
-              help="Comunicados que já foram abertos neste portal."
+              help="Comunicados já marcados como lidos."
+              tone="green"
             />
 
             <SummaryCard
               label="Pendentes"
               value={String(unreadCount)}
-              help="Comunicados ainda não marcados como visualizados."
+              help="Ainda não marcados como visualizados."
+              tone="red"
             />
 
             <SummaryCard
-              label="Última publicação"
-              value={latestMessage ? formatShortDateBR(getDateValue(latestMessage)) : "—"}
-              help={
-                latestMessage
-                  ? latestMessage.title
-                  : "Nenhum comunicado publicado até o momento."
-              }
+              label="Filhos"
+              value={String(children.length)}
+              help="Alunos vinculados à sua conta."
             />
           </div>
         </section>
 
-        <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1.3fr_0.7fr]">
-          <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-            <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-              Visão do mural
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Aqui ficam concentradas as publicações mais importantes da escola.
-            </p>
-
-            {error ? (
-              <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {error}
-              </div>
-            ) : (
-              <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                Os comunicados aparecem do mais recente para o mais antigo. Ao abrir esta
-                tela, o sistema registra automaticamente a leitura para a escola acompanhar
-                quem já visualizou.
-              </div>
-            )}
+        {error ? (
+          <div className="rounded-[28px] border border-red-200 bg-red-50 px-5 py-4 text-sm font-medium text-red-700">
+            {error}
           </div>
+        ) : null}
 
-          <div className="rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+        <section className="grid grid-cols-1 gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
               Destaque do mural
             </div>
 
-            {latestMessage ? (
-              <div className="mt-3">
-                <div className="text-lg font-semibold text-slate-900">
-                  {latestMessage.title}
+            {selectedMessage ? (
+              <div className="mt-4 rounded-[28px] bg-slate-950 p-6 text-white">
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold">
+                    {formatShortDateBR(getDateValue(selectedMessage))}
+                  </span>
+
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold">
+                    {selectedMessage.audienceLabel || getAudienceLabel(selectedMessage.audienceType)}
+                  </span>
+
+                  {isRecent(selectedMessage) ? (
+                    <span className="rounded-full bg-amber-400 px-3 py-1 text-xs font-bold text-slate-950">
+                      Recente
+                    </span>
+                  ) : null}
+                </div>
+
+                <h2 className="mt-5 text-2xl font-bold leading-tight">
+                  {selectedMessage.title}
+                </h2>
+
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-slate-300">
+                  {selectedMessage.body || "Sem conteúdo adicional."}
+                </p>
+              </div>
+            ) : (
+              <EmptyState
+                title="Nenhum comunicado disponível"
+                description="Quando a escola publicar novos comunicados, eles aparecerão neste mural."
+              />
+            )}
+
+            {children.length > 0 ? (
+              <div className="mt-5 rounded-[28px] border border-slate-200 bg-slate-50 p-5">
+                <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
+                  Alunos vinculados
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <MessageTag variant="highlight">
-                    Publicado em {formatDateTimeBR(getDateValue(latestMessage))}
-                  </MessageTag>
-
-                  <MessageTag variant={latestMessage.recipient?.readAt ? "success" : "warning"}>
-                    {getReadLabel(latestMessage)}
-                  </MessageTag>
-                </div>
-
-                <div className="mt-4 text-sm leading-6 text-slate-600 line-clamp-5">
-                  {latestMessage.body}
+                  {children.map((child) => (
+                    <span
+                      key={child.id}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700"
+                    >
+                      {child.fullName}
+                      {child.registrationNumber ? ` • Mat. ${child.registrationNumber}` : ""}
+                    </span>
+                  ))}
                 </div>
               </div>
-            ) : (
-              <div className="mt-3 text-sm leading-6 text-slate-500">
-                Ainda não há comunicados disponíveis no mural.
-              </div>
-            )}
+            ) : null}
+          </div>
 
-            <div className="mt-5 border-t border-slate-200 pt-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Registro mais antigo
+          <div className="rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">
+                  Filtro do mural
+                </div>
+
+                <h2 className="mt-2 text-2xl font-bold text-slate-950">
+                  Publicações recebidas
+                </h2>
               </div>
 
-              <div className="mt-2 text-sm text-slate-700">
-                {oldestMessage ? formatDateTimeBR(getDateValue(oldestMessage)) : "—"}
+              <div className="flex flex-wrap gap-2">
+                {[
+                  ["all", "Todos"],
+                  ["recent", "Recentes"],
+                  ["unread", "Pendentes"],
+                  ["read", "Lidos"],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setFilter(value as any)}
+                    className={[
+                      "rounded-2xl px-4 py-2 text-sm font-bold transition",
+                      filter === value
+                        ? "bg-slate-950 text-white"
+                        : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50",
+                    ].join(" ")}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
+            </div>
+
+            <div className="mt-6 rounded-[24px] bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+              Ao abrir esta tela, o sistema registra automaticamente a leitura dos comunicados
+              recebidos. Isso ajuda a escola a acompanhar se os responsáveis visualizaram os
+              avisos importantes.
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                Todos os responsáveis
+              </span>
+
+              <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-bold text-violet-700">
+                Turma específica
+              </span>
+
+              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+                Visualizado
+              </span>
+
+              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
+                Recente
+              </span>
             </div>
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+        <section className="overflow-hidden rounded-[36px] border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4 md:px-6">
-            <h2 className="text-xl font-semibold tracking-tight text-slate-900">
-              Mural da escola
-            </h2>
+            <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+              <div>
+                <h2 className="text-xl font-bold tracking-tight text-slate-900">
+                  Mural da escola
+                </h2>
 
-            <p className="mt-1 text-sm text-slate-500">
-              Mensagens publicadas oficialmente para os responsáveis.
-            </p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Mensagens publicadas oficialmente para os responsáveis.
+                </p>
+              </div>
+
+              <div className="text-sm text-slate-500">
+                {visibleMessages.length} comunicado(s)
+              </div>
+            </div>
           </div>
 
           <div className="p-4 md:p-6">
-            {messages.length === 0 ? (
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
-                Nenhum comunicado publicado ainda.
-              </div>
+            {visibleMessages.length === 0 ? (
+              <EmptyState
+                title="Nenhum comunicado nesta visualização"
+                description="Altere o filtro ou aguarde novas publicações da escola."
+              />
             ) : (
               <div className="space-y-4">
-                {messages.map((message, index) => {
+                {visibleMessages.map((message) => {
                   const dateValue = getDateValue(message);
+                  const selected = selectedMessageId === message.id;
 
                   return (
                     <article
                       key={message.id}
+                      onClick={() => setSelectedMessageId(message.id)}
                       className={[
-                        "rounded-[28px] border bg-white p-5 shadow-sm",
-                        message.recipient?.readAt
-                          ? "border-slate-200"
-                          : "border-blue-200 ring-2 ring-blue-50",
+                        "cursor-pointer rounded-[28px] border bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md",
+                        selected
+                          ? "border-slate-950 ring-2 ring-slate-100"
+                          : message.recipient?.readAt
+                            ? "border-slate-200"
+                            : "border-blue-200 ring-2 ring-blue-50",
                       ].join(" ")}
                     >
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div className="min-w-0">
                           <div className="flex flex-wrap gap-2">
-                            <div
-                              className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${getRelativeTone(
-                                index
-                              )}`}
-                            >
+                            <div className="inline-flex rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
                               Comunicado oficial
                             </div>
 
                             <div
-                              className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${getReadBadgeClass(
+                              className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${getReadBadgeClass(
                                 message
                               )}`}
                             >
                               {getReadLabel(message)}
                             </div>
+
+                            <div
+                              className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${getAudienceBadgeClass(
+                                message
+                              )}`}
+                            >
+                              {message.audienceLabel || getAudienceLabel(message.audienceType)}
+                            </div>
+
+                            {isRecent(message) ? (
+                              <div className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
+                                Recente
+                              </div>
+                            ) : null}
                           </div>
 
-                          <h3 className="mt-3 text-lg font-semibold text-slate-900">
+                          <h3 className="mt-3 text-lg font-bold text-slate-950">
                             {message.title}
                           </h3>
 
@@ -568,8 +771,6 @@ export default function ParentMessagesPage() {
                             <MessageTag variant="highlight">
                               Publicado em {formatDateTimeBR(dateValue)}
                             </MessageTag>
-
-                            <MessageTag>{getAudienceLabel(message.audienceType)}</MessageTag>
 
                             {message.recipient?.deliveredAt ? (
                               <MessageTag>
@@ -587,9 +788,17 @@ export default function ParentMessagesPage() {
                           </div>
                         </div>
 
-                        <div className="text-[11px] font-mono text-slate-400">
-                          {message.id.slice(0, 8)}…
-                        </div>
+                        <button
+                          type="button"
+                          className={[
+                            "rounded-2xl px-4 py-2 text-xs font-bold transition",
+                            selected
+                              ? "bg-slate-950 text-white"
+                              : "border border-slate-300 text-slate-700 hover:bg-slate-50",
+                          ].join(" ")}
+                        >
+                          {selected ? "Selecionado" : "Ver destaque"}
+                        </button>
                       </div>
 
                       <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700 whitespace-pre-wrap">
