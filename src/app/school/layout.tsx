@@ -40,6 +40,7 @@ const BRANDING_HREF = "/school/settings/branding";
 const STAFF_HREF = "/school/staff";
 const SCHEDULE_HREF = "/school/schedule";
 const CALENDAR_BLOCKS_HREF = "/school/calendar-blocks";
+const MENU_HREF = "/school/menu";
 
 function safeJson(text: string) {
   if (!text) return null;
@@ -243,6 +244,13 @@ export default function SchoolLayout({
         roles: ["diretor", "coordenador", "secretaria", "admin"],
       },
       {
+        label: "Cardápio",
+        href: MENU_HREF,
+        icon: "🍽️",
+        section: "operacao",
+        roles: ["diretor", "coordenador", "secretaria", "admin"],
+      },
+      {
         label: "Presença",
         href: "/school/attendance",
         icon: "✅",
@@ -309,6 +317,8 @@ export default function SchoolLayout({
   const canOpenSchedule =
     role === "diretor" || role === "coordenador" || role === "secretaria" || role === "admin";
   const canOpenCalendarBlocks =
+    role === "diretor" || role === "coordenador" || role === "secretaria" || role === "admin";
+  const canOpenMenu =
     role === "diretor" || role === "coordenador" || role === "secretaria" || role === "admin";
 
   useEffect(() => {
@@ -432,26 +442,9 @@ export default function SchoolLayout({
 
             <div className="flex-1 overflow-y-auto px-4 py-5">
               <div className="space-y-6">
-                <NavSection
-                  title="Principal"
-                  items={mainItems}
-                  pathname={pathname}
-                  onGo={go}
-                />
-
-                <NavSection
-                  title="Operação"
-                  items={operationItems}
-                  pathname={pathname}
-                  onGo={go}
-                />
-
-                <NavSection
-                  title="Configuração"
-                  items={configItems}
-                  pathname={pathname}
-                  onGo={go}
-                />
+                <NavSection title="Principal" items={mainItems} pathname={pathname} onGo={go} />
+                <NavSection title="Operação" items={operationItems} pathname={pathname} onGo={go} />
+                <NavSection title="Configuração" items={configItems} pathname={pathname} onGo={go} />
               </div>
             </div>
 
@@ -544,6 +537,16 @@ export default function SchoolLayout({
                   </button>
                 ) : null}
 
+                {canOpenMenu ? (
+                  <button
+                    type="button"
+                    onClick={() => go(MENU_HREF)}
+                    className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Cardápio
+                  </button>
+                ) : null}
+
                 {canOpenBranding ? (
                   <button
                     type="button"
@@ -591,26 +594,9 @@ export default function SchoolLayout({
                 </div>
 
                 <div className="space-y-5">
-                  <NavSection
-                    title="Principal"
-                    items={mainItems}
-                    pathname={pathname}
-                    onGo={go}
-                  />
-
-                  <NavSection
-                    title="Operação"
-                    items={operationItems}
-                    pathname={pathname}
-                    onGo={go}
-                  />
-
-                  <NavSection
-                    title="Configuração"
-                    items={configItems}
-                    pathname={pathname}
-                    onGo={go}
-                  />
+                  <NavSection title="Principal" items={mainItems} pathname={pathname} onGo={go} />
+                  <NavSection title="Operação" items={operationItems} pathname={pathname} onGo={go} />
+                  <NavSection title="Configuração" items={configItems} pathname={pathname} onGo={go} />
                 </div>
 
                 <button
