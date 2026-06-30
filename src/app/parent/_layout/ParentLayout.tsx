@@ -322,6 +322,12 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       description: "Rotina escolar do filho",
     },
     {
+      href: "/parent/menu",
+      icon: "🍽️",
+      title: "Cardápio",
+      description: "Alimentação escolar",
+    },
+    {
       href: "/parent/messages",
       icon: "📩",
       title: "Comunicados",
@@ -473,7 +479,7 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
               <div className="mt-2 text-lg font-semibold">Portal familiar</div>
 
               <p className="mt-2 text-sm leading-6 text-slate-300">
-                Acompanhe filhos, agenda, horários, comunicados e financeiro em um
+                Acompanhe filhos, agenda, horários, cardápio, comunicados e financeiro em um
                 ambiente seguro.
               </p>
 
