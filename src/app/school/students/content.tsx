@@ -17,6 +17,10 @@ type StudentRow = {
   birth_date: string | null;
   registration_number: string | null;
   student_photo_url?: string | null;
+  status?: "active" | "archived" | "inactive" | string | null;
+  is_active?: boolean | null;
+  archived_at?: string | null;
+  archive_reason?: string | null;
 };
 
 type StudentActiveClassRow = {
@@ -150,6 +154,28 @@ function field(value?: string | null) {
 
 function rawField(value?: string | null) {
   return String(value || "").trim();
+}
+
+function isStudentArchived(student: StudentRow) {
+  return student.status === "archived" || student.is_active === false;
+}
+
+function studentStatusLabel(student: StudentRow) {
+  if (isStudentArchived(student)) return "Arquivado";
+  if (student.status === "inactive") return "Inativo";
+  return "Ativo";
+}
+
+function studentStatusBadgeClass(student: StudentRow) {
+  if (isStudentArchived(student)) {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+
+  if (student.status === "inactive") {
+    return "border-slate-200 bg-slate-100 text-slate-600";
+  }
+
+  return "border-emerald-200 bg-emerald-50 text-emerald-700";
 }
 
 function getStudentPhotoUrl(profile: StudentProfilePayload | null) {
@@ -333,6 +359,7 @@ export default function StudentsPage() {
   const [links, setLinks] = useState<StudentActiveClassRow[]>([]);
 
   const [filterClassId, setFilterClassId] = useState("");
+  const [studentStatusFilter, setStudentStatusFilter] = useState<"active" | "archived" | "all">("active");
   const [searchTerm, setSearchTerm] = useState("");
 
   const [fullName, setFullName] = useState("");
@@ -342,6 +369,7 @@ export default function StudentsPage() {
 
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [archivingId, setArchivingId] = useState<string | null>(null);
   const [unassigningId, setUnassigningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -379,6 +407,14 @@ export default function StudentsPage() {
     const q = searchTerm.trim().toLowerCase();
     let list = students;
 
+    if (studentStatusFilter === "active") {
+      list = list.filter((s) => !isStudentArchived(s));
+    }
+
+    if (studentStatusFilter === "archived") {
+      list = list.filter((s) => isStudentArchived(s));
+    }
+
     if (filterClassId) {
       list = list.filter((s) => activeMap.get(s.id) === filterClassId);
     }
@@ -392,7 +428,7 @@ export default function StudentsPage() {
     }
 
     return list;
-  }, [students, filterClassId, activeMap, searchTerm]);
+  }, [students, filterClassId, studentStatusFilter, activeMap, searchTerm]);
 
   async function getAccessToken() {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -696,6 +732,95 @@ export default function StudentsPage() {
       }
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function archiveStudent(studentId: string, studentName: string) {
+    const reason = window.prompt(
+      `Informe o motivo para arquivar o aluno "${studentName}":`,
+      "Aluno arquivado pela escola."
+    );
+
+    if (reason === null) return;
+
+    try {
+      setArchivingId(studentId);
+      setError(null);
+
+      const token = await getAccessToken();
+
+      const res = await fetch(`/api/school/students/${studentId}/archive`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+        body: JSON.stringify({
+          action: "archive",
+          reason: reason.trim() || "Aluno arquivado pela escola.",
+        }),
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "Não foi possível arquivar o aluno.");
+        return;
+      }
+
+      await loadAll();
+    } catch (e: any) {
+      const msg = e?.message || "Erro inesperado ao arquivar aluno.";
+      setError(msg);
+
+      if (msg === "Not authenticated") {
+        router.replace("/login");
+      }
+    } finally {
+      setArchivingId(null);
+    }
+  }
+
+  async function reactivateStudent(studentId: string, studentName: string) {
+    const confirmed = window.confirm(`Deseja reativar o aluno "${studentName}"?`);
+    if (!confirmed) return;
+
+    try {
+      setArchivingId(studentId);
+      setError(null);
+
+      const token = await getAccessToken();
+
+      const res = await fetch(`/api/school/students/${studentId}/archive`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+        body: JSON.stringify({
+          action: "reactivate",
+        }),
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(json?.error || "Não foi possível reativar o aluno.");
+        return;
+      }
+
+      await loadAll();
+    } catch (e: any) {
+      const msg = e?.message || "Erro inesperado ao reativar aluno.";
+      setError(msg);
+
+      if (msg === "Not authenticated") {
+        router.replace("/login");
+      }
+    } finally {
+      setArchivingId(null);
     }
   }
 
@@ -1054,7 +1179,7 @@ export default function StudentsPage() {
       </section>
 
       <section className="rounded-3xl border bg-white p-6">
-        <div className="grid gap-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+        <div className="grid gap-4 xl:grid-cols-[1fr_1fr_0.8fr_auto] xl:items-end">
           <div>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
               Buscar aluno
@@ -1087,6 +1212,21 @@ export default function StudentsPage() {
             </select>
           </div>
 
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Status
+            </label>
+            <select
+              className="input w-full"
+              value={studentStatusFilter}
+              onChange={(e) => setStudentStatusFilter(e.target.value as "active" | "archived" | "all")}
+            >
+              <option value="active">Ativos</option>
+              <option value="archived">Arquivados</option>
+              <option value="all">Todos</option>
+            </select>
+          </div>
+
           <button
             type="button"
             onClick={loadAll}
@@ -1097,9 +1237,15 @@ export default function StudentsPage() {
           </button>
         </div>
 
-        <div className="mt-4 text-sm text-slate-500">
-          Exibindo <span className="font-semibold text-slate-800">{filtered.length}</span>{" "}
-          aluno(s).
+        <div className="mt-4 flex flex-col gap-2 text-sm text-slate-500 md:flex-row md:items-center md:justify-between">
+          <div>
+            Exibindo <span className="font-semibold text-slate-800">{filtered.length}</span>{" "}
+            aluno(s).
+          </div>
+
+          <div className="text-xs text-slate-500">
+            Por padrão, a lista mostra apenas alunos ativos. Use o filtro Status para ver arquivados.
+          </div>
         </div>
       </section>
 
@@ -1111,6 +1257,7 @@ export default function StudentsPage() {
             {filtered.map((s) => {
               const classId = activeMap.get(s.id);
               const cls = classMap.get(classId || "");
+              const archived = isStudentArchived(s);
 
               return (
                 <div
@@ -1139,6 +1286,23 @@ export default function StudentsPage() {
                       <div className="mt-1 text-xs text-slate-500">
                         Turma: {cls?.name || "Sem turma"}
                       </div>
+
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <span
+                          className={[
+                            "inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+                            studentStatusBadgeClass(s),
+                          ].join(" ")}
+                        >
+                          {studentStatusLabel(s)}
+                        </span>
+
+                        {archived && s.archive_reason ? (
+                          <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-500">
+                            {s.archive_reason}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
 
@@ -1156,9 +1320,15 @@ export default function StudentsPage() {
                       className="input"
                       value={classId || ""}
                       onChange={(e) => changeClass(s.id, e.target.value)}
-                      disabled={saving || deletingId === s.id || unassigningId === s.id}
+                      disabled={
+                        archived ||
+                        saving ||
+                        deletingId === s.id ||
+                        unassigningId === s.id ||
+                        archivingId === s.id
+                      }
                     >
-                      <option value="">Trocar</option>
+                      <option value="">{archived ? "Arquivado" : "Trocar"}</option>
                       {classes.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}
@@ -1170,17 +1340,43 @@ export default function StudentsPage() {
                       <button
                         type="button"
                         onClick={() => unassignStudent(s.id, s.full_name)}
-                        disabled={saving || deletingId === s.id || unassigningId === s.id}
+                        disabled={
+                          archived ||
+                          saving ||
+                          deletingId === s.id ||
+                          unassigningId === s.id ||
+                          archivingId === s.id
+                        }
                         className="rounded-xl border px-4 py-2 text-sm font-medium transition hover:bg-slate-50 disabled:opacity-60"
                       >
                         {unassigningId === s.id ? "Removendo..." : "Remover da turma"}
                       </button>
                     ) : null}
 
+                    {archived ? (
+                      <button
+                        type="button"
+                        onClick={() => reactivateStudent(s.id, s.full_name)}
+                        disabled={saving || deletingId === s.id || unassigningId === s.id || archivingId === s.id}
+                        className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-60"
+                      >
+                        {archivingId === s.id ? "Reativando..." : "Reativar"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => archiveStudent(s.id, s.full_name)}
+                        disabled={saving || deletingId === s.id || unassigningId === s.id || archivingId === s.id}
+                        className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 transition hover:bg-amber-100 disabled:opacity-60"
+                      >
+                        {archivingId === s.id ? "Arquivando..." : "Arquivar"}
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => deleteStudent(s.id, s.full_name)}
-                      disabled={saving || deletingId === s.id || unassigningId === s.id}
+                      disabled={saving || deletingId === s.id || unassigningId === s.id || archivingId === s.id}
                       className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-100 disabled:opacity-60"
                     >
                       {deletingId === s.id ? "Excluindo..." : "Excluir"}
