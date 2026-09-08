@@ -92,6 +92,28 @@ function blockTypeLabel(type: string) {
   return "Calendário escolar";
 }
 
+function getWeekendBlock(date: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+
+  const parsed = new Date(`${date}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  const day = parsed.getUTCDay();
+  if (day !== 0 && day !== 6) return null;
+
+  return {
+    id: `weekend-${date}`,
+    date,
+    type: "weekend",
+    typeLabel: "Fim de semana",
+    title: day === 6 ? "Sábado — sem aula" : "Domingo — sem aula",
+    description: "Fim de semana não é considerado dia letivo para a chamada regular.",
+    targetScope: "all_school",
+    classId: null,
+    shift: null,
+  };
+}
+
 async function getClassInfo(params: { schoolId: string; classId: string }) {
   const { data, error } = await supabaseAdmin
     .from("classes")
@@ -430,14 +452,16 @@ export async function POST(req: Request) {
     });
   }
 
-  if (calendarBlocksResult.blocks.length > 0) {
-    const formattedBlocks = calendarBlocksResult.blocks.map(formatCalendarBlockForResponse);
+  const formattedBlocks = calendarBlocksResult.blocks.map(formatCalendarBlockForResponse);
+  const weekendBlock = getWeekendBlock(date);
+  const effectiveBlocks = weekendBlock ? [weekendBlock, ...formattedBlocks] : formattedBlocks;
 
+  if (effectiveBlocks.length > 0) {
     return jsonError("Não é possível salvar chamada em dia sem aula.", 409, {
       attendanceBlock: {
         isBlocked: true,
-        blocks: formattedBlocks,
-        mainBlock: formattedBlocks[0] || null,
+        blocks: effectiveBlocks,
+        mainBlock: effectiveBlocks[0] || null,
         message: "Não haverá aula neste dia. A chamada não precisa ser realizada.",
       },
     });
