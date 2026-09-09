@@ -18,6 +18,7 @@ type CalendarBlock = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  calendar_action: "block" | "allow" | string | null;
 };
 
 type SchoolClass = {
@@ -140,6 +141,7 @@ export default function SchoolCalendarBlocksPage() {
   const [referenceDate, setReferenceDate] = useState(todayISO());
 
   const [blockDate, setBlockDate] = useState(todayISO());
+  const [calendarAction, setCalendarAction] = useState<"block" | "allow">("block");
   const [type, setType] = useState("no_class");
   const [title, setTitle] = useState("Não haverá aula");
   const [description, setDescription] = useState("");
@@ -252,17 +254,29 @@ export default function SchoolCalendarBlocksPage() {
       if (!token) return;
 
       if (!title.trim()) {
-        setError("Informe o título do bloqueio.");
+        setError(
+          calendarAction === "allow"
+            ? "Informe o título do dia letivo excepcional."
+            : "Informe o título do bloqueio."
+        );
         return;
       }
 
       if (targetScope === "class" && !selectedClassId) {
-        setError("Selecione a turma que será bloqueada.");
+        setError(
+          calendarAction === "allow"
+            ? "Selecione a turma que será liberada."
+            : "Selecione a turma que será bloqueada."
+        );
         return;
       }
 
       if (targetScope === "shift" && !selectedShift) {
-        setError("Selecione o turno/período que será bloqueado.");
+        setError(
+          calendarAction === "allow"
+            ? "Selecione o turno/período que será liberado."
+            : "Selecione o turno/período que será bloqueado."
+        );
         return;
       }
 
@@ -274,7 +288,8 @@ export default function SchoolCalendarBlocksPage() {
         },
         body: JSON.stringify({
           blockDate,
-          type,
+          calendarAction,
+          type: calendarAction === "allow" ? "other" : type,
           title,
           description,
           targetScope,
@@ -291,7 +306,11 @@ export default function SchoolCalendarBlocksPage() {
         return;
       }
 
-      setSuccess("Bloqueio cadastrado com sucesso.");
+      setSuccess(
+        calendarAction === "allow"
+          ? "Dia letivo excepcional cadastrado com sucesso."
+          : "Bloqueio cadastrado com sucesso."
+      );
       setDescription("");
       await loadBlocks();
     } catch (e: any) {
@@ -426,6 +445,30 @@ export default function SchoolCalendarBlocksPage() {
             <div className="mt-6 space-y-4">
               <div>
                 <label className="mb-1 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+                  Ação da data
+                </label>
+
+                <select
+                  value={calendarAction}
+                  onChange={(e) => {
+                    const next = e.target.value as "block" | "allow";
+                    setCalendarAction(next);
+
+                    if (next === "allow") {
+                      setTitle("Reposição de aula");
+                    } else if (title === "Reposição de aula") {
+                      setTitle("Não haverá aula");
+                    }
+                  }}
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-slate-500"
+                >
+                  <option value="block">🔴 Dia não letivo</option>
+                  <option value="allow">🟢 Dia letivo excepcional</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
                   Data
                 </label>
 
@@ -437,6 +480,8 @@ export default function SchoolCalendarBlocksPage() {
                 />
               </div>
 
+              {calendarAction === "block" ? (
+                <>
               <div>
                 <label className="mb-1 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
                   Tipo
@@ -468,9 +513,23 @@ export default function SchoolCalendarBlocksPage() {
                 </select>
               </div>
 
+                </>
+              ) : (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+                  <div className="text-sm font-bold text-emerald-800">
+                    Dia letivo excepcional
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-emerald-700">
+                    Use esta opção para reposição de aula, sábado letivo ou outra data excepcional.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="mb-1 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
-                  Aplicar bloqueio em
+                  {calendarAction === "allow"
+                    ? "Liberar aula em"
+                    : "Aplicar bloqueio em"}
                 </label>
 
                 <select
@@ -555,7 +614,11 @@ export default function SchoolCalendarBlocksPage() {
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Ex: Feriado municipal"
+                  placeholder={
+                    calendarAction === "allow"
+                      ? "Ex: Reposição de aula"
+                      : "Ex: Feriado municipal"
+                  }
                   className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-slate-500"
                 />
               </div>
@@ -568,7 +631,11 @@ export default function SchoolCalendarBlocksPage() {
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Ex: Não haverá aula devido ao feriado municipal."
+                  placeholder={
+                    calendarAction === "allow"
+                      ? "Ex: Reposição referente a uma data sem aula."
+                      : "Ex: Não haverá aula devido ao feriado municipal."
+                  }
                   rows={4}
                   className="w-full resize-none rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-slate-500"
                 />
@@ -580,7 +647,11 @@ export default function SchoolCalendarBlocksPage() {
                 disabled={saving}
                 className="w-full rounded-2xl bg-slate-950 px-5 py-4 text-sm font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? "Salvando..." : "Cadastrar bloqueio"}
+                {saving
+                  ? "Salvando..."
+                  : calendarAction === "allow"
+                    ? "Cadastrar dia letivo"
+                    : "Cadastrar bloqueio"}
               </button>
             </div>
           </div>
@@ -664,6 +735,18 @@ export default function SchoolCalendarBlocksPage() {
                       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                         <div>
                           <div className="flex flex-wrap gap-2">
+                            <span
+                              className={`rounded-full border px-3 py-1 text-xs font-bold ${
+                                block.calendar_action === "allow"
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  : "border-red-200 bg-red-50 text-red-700"
+                              }`}
+                            >
+                              {block.calendar_action === "allow"
+                                ? "Dia letivo excepcional"
+                                : "Dia não letivo"}
+                            </span>
+
                             <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
                               {blockTypeLabels[block.type] || "Bloqueio"}
                             </span>

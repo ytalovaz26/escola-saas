@@ -22,6 +22,7 @@ type CalendarBlock = {
   class_id: string | null;
   shift: string | null;
   affects_all_classes: boolean | null;
+  calendar_action: "block" | "allow" | string | null;
 };
 
 function jsonError(message: string, status = 400, extra?: any) {
@@ -154,7 +155,8 @@ async function getApplicableCalendarBlocks(params: {
       target_scope,
       class_id,
       shift,
-      affects_all_classes
+      affects_all_classes,
+      calendar_action
     `
     )
     .eq("school_id", params.schoolId)
@@ -192,6 +194,77 @@ async function getApplicableCalendarBlocks(params: {
     ok: true as const,
     error: null,
     blocks: applicableBlocks,
+  };
+}
+
+
+function normalizeCalendarAction(value: unknown) {
+  return cleanText(value) === "allow" ? "allow" : "block";
+}
+
+function calendarScopePriority(block: CalendarBlock) {
+  const scope = cleanText(block.target_scope) || "all_school";
+
+  if (scope === "class") return 3;
+  if (scope === "shift") return 2;
+
+  return 1;
+}
+
+function resolveAttendanceCalendar(params: {
+  date: string;
+  blocks: CalendarBlock[];
+}) {
+  const explicitBlocks = params.blocks || [];
+
+  if (explicitBlocks.length > 0) {
+    const highestPriority = Math.max(
+      ...explicitBlocks.map(calendarScopePriority)
+    );
+
+    const winningRules = explicitBlocks.filter(
+      (block) => calendarScopePriority(block) === highestPriority
+    );
+
+    const blockingRules = winningRules.filter(
+      (block) => normalizeCalendarAction(block.calendar_action) === "block"
+    );
+
+    if (blockingRules.length > 0) {
+      return {
+        isBlocked: true,
+        blockingRules,
+        weekendBlock: null,
+      };
+    }
+
+    const allowingRules = winningRules.filter(
+      (block) => normalizeCalendarAction(block.calendar_action) === "allow"
+    );
+
+    if (allowingRules.length > 0) {
+      return {
+        isBlocked: false,
+        blockingRules: [] as CalendarBlock[],
+        weekendBlock: null,
+      };
+    }
+  }
+
+  const weekendBlock = getWeekendBlock(params.date);
+
+  if (weekendBlock) {
+    return {
+      isBlocked: true,
+      blockingRules: [] as CalendarBlock[],
+      weekendBlock,
+    };
+  }
+
+  return {
+    isBlocked: false,
+    blockingRules: [] as CalendarBlock[],
+    weekendBlock: null,
   };
 }
 
@@ -422,9 +495,18 @@ export async function GET(req: Request) {
     });
   }
 
-  const formattedBlocks = calendarBlocksResult.blocks.map(formatCalendarBlockForResponse);
-  const weekendBlock = getWeekendBlock(date);
-  const effectiveBlocks = weekendBlock ? [weekendBlock, ...formattedBlocks] : formattedBlocks;
+  const calendarDecision = resolveAttendanceCalendar({
+    date,
+    blocks: calendarBlocksResult.blocks,
+  });
+
+  const effectiveBlocks = calendarDecision.isBlocked
+    ? calendarDecision.blockingRules.length > 0
+      ? calendarDecision.blockingRules.map(formatCalendarBlockForResponse)
+      : calendarDecision.weekendBlock
+        ? [calendarDecision.weekendBlock]
+        : []
+    : [];
 
   const attendanceBlock = {
     isBlocked: effectiveBlocks.length > 0,
