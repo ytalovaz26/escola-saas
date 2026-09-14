@@ -13,7 +13,7 @@ type RosterRow = {
 
 type MarkRow = {
   student_id: string;
-  status: "present" | "absent" | "late";
+  status: "present" | "absent" | "late" | "transferred";
   note: string | null;
 };
 
@@ -153,7 +153,10 @@ export default function TeacherAttendancePage() {
     );
   }
 
-  function setStatus(studentId: string, status: "present" | "absent" | "late") {
+  function setStatus(
+    studentId: string,
+    status: "present" | "absent" | "late" | "transferred"
+  ) {
     if (isLocked || isAttendanceBlocked) return;
 
     setMarks((prev) => ({
@@ -169,6 +172,7 @@ export default function TeacherAttendancePage() {
   const counts = useMemo(() => {
     let p = 0;
     let f = 0;
+    let a = 0;
     let t = 0;
 
     for (const row of roster) {
@@ -176,10 +180,11 @@ export default function TeacherAttendancePage() {
 
       if (status === "present") p++;
       else if (status === "absent") f++;
-      else if (status === "late") t++;
+      else if (status === "late") a++;
+      else if (status === "transferred") t++;
     }
 
-    return { p, f, t };
+    return { p, f, a, t };
   }, [roster, marks]);
 
   function setAllPresent() {
@@ -715,7 +720,7 @@ export default function TeacherAttendancePage() {
             </div>
           ) : (
             <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              Marque <b>P</b>, <b>F</b> ou <b>T</b> individualmente e salve para registrar a presença.
+              Marque <b>P</b> (Presente), <b>F</b> (Falta), <b>A</b> (Atraso) ou <b>T</b> (Transferido) individualmente e salve para registrar a situação.
             </div>
           )}
 
@@ -752,6 +757,13 @@ export default function TeacherAttendancePage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div className="text-xs text-slate-500">Atrasos</div>
                 <div className="text-2xl font-semibold text-amber-600">
+                  {isAttendanceBlocked ? "—" : counts.a}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs text-slate-500">Transferidos</div>
+                <div className="text-2xl font-semibold text-blue-600">
                   {isAttendanceBlocked ? "—" : counts.t}
                 </div>
               </div>
@@ -843,9 +855,24 @@ export default function TeacherAttendancePage() {
                                     type="button"
                                     onClick={() => setStatus(r.student_id, "late")}
                                     disabled={isLocked}
+                                    title="Atraso"
                                     className={`rounded-2xl px-4 py-2 text-sm font-semibold ${
                                       mk.status === "late"
                                         ? "bg-amber-500 text-white"
+                                        : "border border-slate-300 text-slate-700"
+                                    }`}
+                                  >
+                                    A
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setStatus(r.student_id, "transferred")}
+                                    disabled={isLocked}
+                                    title="Transferido"
+                                    className={`rounded-2xl px-4 py-2 text-sm font-semibold ${
+                                      mk.status === "transferred"
+                                        ? "bg-blue-600 text-white"
                                         : "border border-slate-300 text-slate-700"
                                     }`}
                                   >
@@ -909,9 +936,24 @@ export default function TeacherAttendancePage() {
                               type="button"
                               onClick={() => setStatus(r.student_id, "late")}
                               disabled={isLocked}
+                              title="Atraso"
                               className={`flex-1 rounded-2xl px-4 py-2 text-sm font-semibold ${
                                 mk.status === "late"
                                   ? "bg-amber-500 text-white"
+                                  : "border border-slate-300 text-slate-700"
+                              }`}
+                            >
+                              A
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setStatus(r.student_id, "transferred")}
+                              disabled={isLocked}
+                              title="Transferido"
+                              className={`flex-1 rounded-2xl px-4 py-2 text-sm font-semibold ${
+                                mk.status === "transferred"
+                                  ? "bg-blue-600 text-white"
                                   : "border border-slate-300 text-slate-700"
                               }`}
                             >

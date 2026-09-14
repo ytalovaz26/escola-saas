@@ -7,7 +7,7 @@ import { getTeacherDisplayName } from "@/lib/getTeacherDisplayName";
 
 export const runtime = "nodejs";
 
-type AttendanceStatus = "present" | "absent" | "late";
+type AttendanceStatus = "present" | "absent" | "late" | "transferred";
 
 type RosterStudent = {
   id: string;
@@ -58,6 +58,7 @@ function normalizeStatus(raw: any): AttendanceStatus | null {
   if (s === "present" || s === "presente" || s === "p") return "present";
   if (s === "absent" || s === "ausente" || s === "f" || s === "falta") return "absent";
   if (s === "late" || s === "tarde" || s === "atraso" || s === "t") return "late";
+  if (s === "transferred" || s === "transferido" || s === "transferida" || s === "tr") return "transferred";
 
   return null;
 }
@@ -66,6 +67,7 @@ function statusLabel(status: AttendanceStatus | undefined) {
   if (status === "present") return "Presente";
   if (status === "absent") return "Falta";
   if (status === "late") return "Atraso";
+  if (status === "transferred") return "Transferido";
   return "Sem registro";
 }
 
@@ -782,7 +784,7 @@ export async function GET(req: Request) {
     .font("Helvetica")
     .fontSize(10)
     .fillColor("#475569")
-    .text("Legenda: P=Presente | F=Falta | T=Atraso", margin, headerTop + 74, {
+    .text("Legenda: P=Presente | F=Falta | A=Atraso | T=Transferido", margin, headerTop + 74, {
       width: pageW - margin * 2,
       align: "right",
     });
@@ -805,8 +807,9 @@ export async function GET(req: Request) {
   const colSit = 120;
   const colP = 34;
   const colF = 34;
+  const colA = 34;
   const colT = 34;
-  const colNomeFinal = totalWidth - colN - colMat - colSit - colP - colF - colT;
+  const colNomeFinal = totalWidth - colN - colMat - colSit - colP - colF - colA - colT;
 
   doc.roundedRect(startX, y - 6, totalWidth, 28, 8).fill("#f8fafc");
 
@@ -816,7 +819,8 @@ export async function GET(req: Request) {
   drawCellText(doc, "Situação", startX + colN + colNomeFinal + colMat, y, colSit, "center", "#0f172a", 10, "Helvetica-Bold");
   drawCellText(doc, "P", startX + colN + colNomeFinal + colMat + colSit, y, colP, "center", "#0f172a", 10, "Helvetica-Bold");
   drawCellText(doc, "F", startX + colN + colNomeFinal + colMat + colSit + colP, y, colF, "center", "#0f172a", 10, "Helvetica-Bold");
-  drawCellText(doc, "T", startX + colN + colNomeFinal + colMat + colSit + colP + colF, y, colT, "center", "#0f172a", 10, "Helvetica-Bold");
+  drawCellText(doc, "A", startX + colN + colNomeFinal + colMat + colSit + colP + colF, y, colA, "center", "#0f172a", 10, "Helvetica-Bold");
+  drawCellText(doc, "T", startX + colN + colNomeFinal + colMat + colSit + colP + colF + colA, y, colT, "center", "#0f172a", 10, "Helvetica-Bold");
 
   y += 34;
 
@@ -824,6 +828,7 @@ export async function GET(req: Request) {
   let totalPresent = 0;
   let totalAbsent = 0;
   let totalLate = 0;
+  let totalTransferred = 0;
 
   for (const s of students) {
     if (y > pageH - margin - 30) {
@@ -836,6 +841,7 @@ export async function GET(req: Request) {
     if (status === "present") totalPresent++;
     if (status === "absent") totalAbsent++;
     if (status === "late") totalLate++;
+    if (status === "transferred") totalTransferred++;
 
     const rowTop = y - 4;
     doc.roundedRect(startX, rowTop, totalWidth, 26, 6).fill(idx % 2 === 0 ? "#ffffff" : "#fcfdff");
@@ -867,7 +873,8 @@ export async function GET(req: Request) {
 
     drawCellText(doc, status === "present" ? "X" : "", startX + colN + colNomeFinal + colMat + colSit, y, colP, "center", "#166534", 10, "Helvetica-Bold");
     drawCellText(doc, status === "absent" ? "X" : "", startX + colN + colNomeFinal + colMat + colSit + colP, y, colF, "center", "#dc2626", 10, "Helvetica-Bold");
-    drawCellText(doc, status === "late" ? "X" : "", startX + colN + colNomeFinal + colMat + colSit + colP + colF, y, colT, "center", "#92400e", 10, "Helvetica-Bold");
+    drawCellText(doc, status === "late" ? "X" : "", startX + colN + colNomeFinal + colMat + colSit + colP + colF, y, colA, "center", "#92400e", 10, "Helvetica-Bold");
+    drawCellText(doc, status === "transferred" ? "X" : "", startX + colN + colNomeFinal + colMat + colSit + colP + colF + colA, y, colT, "center", "#1d4ed8", 10, "Helvetica-Bold");
 
     y += 30;
     idx += 1;
@@ -880,7 +887,7 @@ export async function GET(req: Request) {
     .fontSize(10)
     .fillColor("#475569")
     .text(
-      `Resumo do dia: ${totalPresent} presentes | ${totalAbsent} faltas | ${totalLate} atrasos`,
+      `Resumo do dia: ${totalPresent} presentes | ${totalAbsent} faltas | ${totalLate} atrasos | ${totalTransferred} transferidos`,
       startX,
       y
     );

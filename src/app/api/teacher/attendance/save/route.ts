@@ -4,7 +4,7 @@ import { requireStaff } from "@/lib/requireStaff";
 
 export const runtime = "nodejs";
 
-type AttendanceStatus = "present" | "absent" | "late";
+type AttendanceStatus = "present" | "absent" | "late" | "transferred";
 
 type PayloadItem = {
   studentId?: string;
@@ -76,6 +76,14 @@ function normalizeStatus(raw: any): AttendanceStatus {
 
   if (value === "absent" || value === "f" || value === "ausente") return "absent";
   if (value === "late" || value === "t" || value === "atraso" || value === "tarde") return "late";
+  if (
+    value === "transferred" ||
+    value === "transferido" ||
+    value === "transferida" ||
+    value === "tr"
+  ) {
+    return "transferred";
+  }
 
   return "present";
 }
