@@ -661,7 +661,7 @@ function drawReportHeader(params: {
       : "";
 
   doc.text(
-    `Dias exibidos: ${brDateFromISO(dateStart)} até ${brDateFromISO(dateEnd)} | Legenda: • = Presente | F = Falta | T = Atraso${removedInfo} | Datas ${datePage}/${datePages} | Alunos ${studentPage}/${studentPages}`,
+    `Dias exibidos: ${brDateFromISO(dateStart)} até ${brDateFromISO(dateEnd)} | Legenda: • = Presente | F = Falta | A = Atraso | T = Transferido${removedInfo} | Datas ${datePage}/${datePages} | Alunos ${studentPage}/${studentPages}`,
     135,
     headerTop + 61,
     {
@@ -884,7 +884,7 @@ function drawAttendanceTable(params: {
         doc.save();
         doc.fillColor("#000");
         doc.font("Helvetica-Bold").fontSize(8);
-        doc.text("T", x, y + 3, { width: cellW, align: "center", lineBreak: false });
+        doc.text("A", x, y + 3, { width: cellW, align: "center", lineBreak: false });
         doc.restore();
       }
     }
