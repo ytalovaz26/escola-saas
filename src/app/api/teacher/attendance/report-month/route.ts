@@ -6,7 +6,7 @@ import { getTeacherDisplayName } from "@/lib/getTeacherDisplayName";
 
 export const runtime = "nodejs";
 
-type AttendanceStatus = "present" | "absent" | "late";
+type AttendanceStatus = "present" | "absent" | "late" | "transferred";
 
 type SessionRow = {
   id: string;
@@ -136,12 +136,14 @@ function normalizeStatus(raw: any): AttendanceStatus | null {
   if (s === "present" || s === "presente" || s === "p") return "present";
   if (s === "absent" || s === "ausente" || s === "f" || s === "falta") return "absent";
   if (s === "late" || s === "tarde" || s === "atraso" || s === "t") return "late";
+  if (s === "transferred" || s === "transferido" || s === "transferida" || s === "tr") return "transferred";
 
   return null;
 }
 
 function aggregateStatus(statuses: AttendanceStatus[]) {
   if (statuses.includes("absent")) return "absent";
+  if (statuses.includes("transferred")) return "transferred";
   if (statuses.includes("late")) return "late";
   if (statuses.includes("present")) return "present";
   return null;
@@ -885,6 +887,12 @@ function drawAttendanceTable(params: {
         doc.fillColor("#000");
         doc.font("Helvetica-Bold").fontSize(8);
         doc.text("A", x, y + 3, { width: cellW, align: "center", lineBreak: false });
+        doc.restore();
+      } else if (status === "transferred") {
+        doc.save();
+        doc.fillColor("#000");
+        doc.font("Helvetica-Bold").fontSize(8);
+        doc.text("T", x, y + 3, { width: cellW, align: "center", lineBreak: false });
         doc.restore();
       }
     }
