@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -191,6 +191,7 @@ export default function SchoolClassDiaryPage() {
 
   const [lastPdfUrl, setLastPdfUrl] = useState<string | null>(null);
   const [lastPdfName, setLastPdfName] = useState<string>("diario-de-classe.pdf");
+  const loadRequestIdRef = useRef(0);
 
   async function ensureToken() {
     const { data } = await supabase.auth.getSession();
@@ -261,12 +262,19 @@ export default function SchoolClassDiaryPage() {
   }
 
   async function load() {
+    const requestId = ++loadRequestIdRef.current;
+
     setLoading(true);
     setError(null);
     setMessage(null);
 
     const token = await ensureToken();
-    if (!token) return;
+    if (!token) {
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+      }
+      return;
+    }
 
     try {
       const query = new URLSearchParams({
@@ -281,6 +289,10 @@ export default function SchoolClassDiaryPage() {
       });
 
       const json = await safeJson(res);
+
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
 
       if (!res.ok || !json?.ok) {
         setError(json?.error || "Falha ao carregar diários.");
@@ -314,12 +326,18 @@ export default function SchoolClassDiaryPage() {
         setSelectedDailyEntryId("");
       }
     } catch (e: any) {
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
+
       setError(e?.message || "Erro inesperado ao carregar diários.");
       setGroups([]);
       setSelectedDiaryId("");
       setSelectedDailyEntryId("");
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -368,6 +386,7 @@ export default function SchoolClassDiaryPage() {
     try {
       const query = new URLSearchParams({
         classId: selectedGroup.diary.class_id,
+        teacherUserId: selectedGroup.diary.teacher_user_id || "",
         referenceMonth: selectedGroup.diary.reference_month || referenceMonth,
         subjectName: selectedGroup.diary.subject_name || "",
         termLabel: selectedGroup.diary.term_label || "",
@@ -433,6 +452,7 @@ export default function SchoolClassDiaryPage() {
     try {
       const query = new URLSearchParams({
         classId: selectedGroup.diary.class_id,
+        teacherUserId: selectedGroup.diary.teacher_user_id || "",
         referenceMonth: selectedGroup.diary.reference_month || referenceMonth,
         subjectName: selectedGroup.diary.subject_name || "",
         termLabel: selectedGroup.diary.term_label || "",

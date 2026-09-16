@@ -697,6 +697,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
 
   const classId = (url.searchParams.get("classId") || "").trim();
+  const teacherUserId = (url.searchParams.get("teacherUserId") || "").trim();
   const referenceMonth = (url.searchParams.get("referenceMonth") || "").trim();
   const subjectName = (url.searchParams.get("subjectName") || "").trim();
   const termLabel = (url.searchParams.get("termLabel") || "").trim();
@@ -790,6 +791,10 @@ export async function GET(req: Request) {
     .eq("class_id", classId)
     .eq("subject_name", subjectName)
     .order("reference_month", { ascending: true });
+
+  if (teacherUserId) {
+    diaryQuery = diaryQuery.eq("teacher_user_id", teacherUserId);
+  }
 
   if (isDailyReport) {
     diaryQuery = diaryQuery.eq("reference_month", referenceMonth);
