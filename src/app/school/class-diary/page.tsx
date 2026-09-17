@@ -28,7 +28,16 @@ type DiaryGroup = {
   entries: DiaryEntry[];
 };
 
-type PeriodPreset = "month" | "bimester" | "semester" | "year" | "custom";
+type PeriodPreset = "month" | "academic" | "year" | "custom";
+
+type AcademicPeriod = {
+  id: string;
+  periodNumber: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+};
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -80,46 +89,6 @@ function yearEnd(referenceMonth: string) {
   if (!y) return `${new Date().getFullYear()}-12-31`;
 
   return `${y}-12-31`;
-}
-
-function bimesterRange(referenceMonth: string) {
-  const [y, m] = referenceMonth.split("-").map(Number);
-  if (!y || !m) {
-    const now = new Date();
-    return {
-      start: `${now.getFullYear()}-01-01`,
-      end: `${now.getFullYear()}-02-28`,
-    };
-  }
-
-  const bimesterStartMonth = Math.floor((m - 1) / 2) * 2 + 1;
-  const start = `${y}-${pad2(bimesterStartMonth)}-01`;
-  const end = toYMD(new Date(y, bimesterStartMonth + 1, 0));
-
-  return { start, end };
-}
-
-function semesterRange(referenceMonth: string) {
-  const [y, m] = referenceMonth.split("-").map(Number);
-  if (!y || !m) {
-    const now = new Date();
-    return {
-      start: `${now.getFullYear()}-01-01`,
-      end: `${now.getFullYear()}-06-30`,
-    };
-  }
-
-  if (m <= 6) {
-    return {
-      start: `${y}-01-01`,
-      end: `${y}-06-30`,
-    };
-  }
-
-  return {
-    start: `${y}-07-01`,
-    end: `${y}-12-31`,
-  };
 }
 
 function formatDateBR(iso: string) {
@@ -181,6 +150,8 @@ export default function SchoolClassDiaryPage() {
   const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("month");
   const [startDate, setStartDate] = useState(monthStart(currentMonthISO()));
   const [endDate, setEndDate] = useState(monthEnd(currentMonthISO()));
+  const [academicPeriods, setAcademicPeriods] = useState<AcademicPeriod[]>([]);
+  const [selectedAcademicPeriodId, setSelectedAcademicPeriodId] = useState<string>("");
 
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -209,30 +180,53 @@ export default function SchoolClassDiaryPage() {
     setPeriodPreset(nextPreset);
 
     if (nextPreset === "month") {
+      setSelectedAcademicPeriodId("");
       setStartDate(monthStart(monthValue));
       setEndDate(monthEnd(monthValue));
       return;
     }
 
-    if (nextPreset === "bimester") {
-      const range = bimesterRange(monthValue);
-      setStartDate(range.start);
-      setEndDate(range.end);
-      return;
-    }
+    if (nextPreset === "academic") {
+      const monthFirstDay = `${monthValue}-01`;
+      const matchingPeriod =
+        academicPeriods.find(
+          (period) =>
+            period.isActive &&
+            period.startDate <= monthEnd(monthValue) &&
+            period.endDate >= monthFirstDay
+        ) ||
+        academicPeriods.find((period) => period.isActive) ||
+        null;
 
-    if (nextPreset === "semester") {
-      const range = semesterRange(monthValue);
-      setStartDate(range.start);
-      setEndDate(range.end);
+      if (matchingPeriod) {
+        setSelectedAcademicPeriodId(matchingPeriod.id);
+        setStartDate(matchingPeriod.startDate);
+        setEndDate(matchingPeriod.endDate);
+      }
       return;
     }
 
     if (nextPreset === "year") {
+      setSelectedAcademicPeriodId("");
       setStartDate(yearStart(monthValue));
       setEndDate(yearEnd(monthValue));
       return;
     }
+
+    if (nextPreset === "custom") {
+      setSelectedAcademicPeriodId("");
+    }
+  }
+
+  function applyAcademicPeriod(periodId: string) {
+    setSelectedAcademicPeriodId(periodId);
+    setPeriodPreset("academic");
+
+    const period = academicPeriods.find((item) => item.id === periodId);
+    if (!period) return;
+
+    setStartDate(period.startDate);
+    setEndDate(period.endDate);
   }
 
   function clearLastPdf() {
@@ -259,6 +253,39 @@ export default function SchoolClassDiaryPage() {
     }
 
     setMessage("PDF gerado com sucesso.");
+  }
+
+  async function loadAcademicPeriods(year: number) {
+    const token = await ensureToken();
+    if (!token) return;
+
+    try {
+      const query = new URLSearchParams({ academicYear: String(year) });
+      const res = await fetch(`/api/school/academic-periods?${query.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setAcademicPeriods([]);
+        return;
+      }
+
+      const periods: AcademicPeriod[] = Array.isArray(json.periods)
+        ? json.periods.filter(
+            (period: AcademicPeriod) =>
+              period?.id &&
+              period?.startDate &&
+              period?.endDate &&
+              period?.isActive !== false
+          )
+        : [];
+
+      setAcademicPeriods(periods);
+    } catch {
+      setAcademicPeriods([]);
+    }
   }
 
   async function load() {
@@ -340,6 +367,14 @@ export default function SchoolClassDiaryPage() {
       }
     }
   }
+
+  useEffect(() => {
+    const year = Number(referenceMonth.slice(0, 4));
+    if (Number.isInteger(year)) {
+      loadAcademicPeriods(year);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [referenceMonth]);
 
   useEffect(() => {
     load();
@@ -508,7 +543,7 @@ export default function SchoolClassDiaryPage() {
 
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                 Acompanhe os lançamentos pedagógicos feitos pelos professores e gere
-                relatórios por dia, mês, bimestre, semestre, ano ou período personalizado.
+                relatórios por dia, mês, período letivo configurado, ano ou período personalizado.
               </p>
             </div>
 
@@ -542,7 +577,9 @@ export default function SchoolClassDiaryPage() {
                 onChange={(e) => {
                   const nextMonth = e.target.value;
                   setReferenceMonth(nextMonth);
-                  applyPreset(periodPreset, nextMonth);
+                  if (periodPreset !== "academic") {
+                    applyPreset(periodPreset, nextMonth);
+                  }
                 }}
                 className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
               />
@@ -558,12 +595,32 @@ export default function SchoolClassDiaryPage() {
                 className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
               >
                 <option value="month">Mensal</option>
-                <option value="bimester">Bimestre</option>
-                <option value="semester">Semestre</option>
+                <option value="academic">Período letivo configurado</option>
                 <option value="year">Anual</option>
                 <option value="custom">Personalizado</option>
               </select>
             </div>
+
+            {periodPreset === "academic" ? (
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Período letivo
+                </label>
+                <select
+                  value={selectedAcademicPeriodId}
+                  onChange={(e) => applyAcademicPeriod(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
+                  disabled={academicPeriods.length === 0}
+                >
+                  <option value="">Selecione o período</option>
+                  {academicPeriods.map((period) => (
+                    <option key={period.id} value={period.id}>
+                      {period.name} • {formatDateBR(period.startDate)} até {formatDateBR(period.endDate)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
 
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -574,6 +631,7 @@ export default function SchoolClassDiaryPage() {
                 value={startDate}
                 onChange={(e) => {
                   setPeriodPreset("custom");
+                  setSelectedAcademicPeriodId("");
                   setStartDate(e.target.value);
                 }}
                 className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
@@ -589,6 +647,7 @@ export default function SchoolClassDiaryPage() {
                 value={endDate}
                 onChange={(e) => {
                   setPeriodPreset("custom");
+                  setSelectedAcademicPeriodId("");
                   setEndDate(e.target.value);
                 }}
                 className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
@@ -727,7 +786,7 @@ export default function SchoolClassDiaryPage() {
           <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <p className="text-sm leading-6 text-slate-500">
               O relatório do período é resumido e exibe apenas a data e o conteúdo ministrado,
-              no modelo tradicional mensal/bimestral.
+              respeitando exatamente as datas do período letivo configurado ou do intervalo escolhido.
             </p>
 
             <button
