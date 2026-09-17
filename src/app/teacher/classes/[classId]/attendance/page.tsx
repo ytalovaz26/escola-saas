@@ -103,6 +103,7 @@ export default function TeacherAttendancePage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [generatingDailyPdf, setGeneratingDailyPdf] = useState(false);
   const [generatingReportPdf, setGeneratingReportPdf] = useState(false);
 
@@ -306,7 +307,11 @@ export default function TeacherAttendancePage() {
       setRoster(cleanRoster);
       setMarks(markMap);
       setAttendanceBlock(block);
-      setIsLocked((m || []).length > 0);
+      setIsLocked(
+        typeof json.hasAttendanceSession === "boolean"
+          ? json.hasAttendanceSession
+          : (m || []).length > 0
+      );
     } catch (e: any) {
       setErr(e?.message || "Erro inesperado.");
     } finally {
@@ -377,6 +382,54 @@ export default function TeacherAttendancePage() {
       setErr(e?.message || "Erro inesperado.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deleteAttendance() {
+    if (!isLocked) return;
+
+    const confirmed = window.confirm(
+      `Excluir a chamada de ${formatDateBR(date)}?\n\nTodos os registros de presença desta chamada serão removidos. Esta ação não pode ser desfeita.`
+    );
+
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setErr(null);
+    setMsg(null);
+
+    const token = await ensureToken();
+    if (!token) {
+      setDeleting(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `/api/teacher/attendance/save?classId=${encodeURIComponent(
+          classId
+        )}&date=${encodeURIComponent(date)}&lessonNumber=1`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        }
+      );
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setErr(json?.error || "Falha ao excluir chamada.");
+        return;
+      }
+
+      setIsLocked(false);
+      await load();
+      setMsg("Chamada excluída com sucesso.");
+    } catch (e: any) {
+      setErr(e?.message || "Erro inesperado ao excluir chamada.");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -673,6 +726,15 @@ export default function TeacherAttendancePage() {
               disabled={!isLocked || isAttendanceBlocked}
             >
               Editar
+            </button>
+
+            <button
+              type="button"
+              className="rounded-2xl border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 disabled:opacity-50"
+              onClick={deleteAttendance}
+              disabled={!isLocked || deleting || saving}
+            >
+              {deleting ? "Excluindo..." : "Excluir chamada"}
             </button>
 
             <button

@@ -42,7 +42,7 @@ type CalendarBlock = {
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
     "Cache-Control": "no-store",
@@ -458,6 +458,111 @@ async function loadAllowedStudentIds(params: {
   }
 
   return Array.from(ids);
+}
+
+export async function DELETE(req: Request) {
+  const guard = await requireStaff(req, ["professor", "teacher"]);
+
+  if (!guard.ok) return guard.res;
+
+  const schoolId = (guard as any).schoolId as string;
+  const teacherUserId =
+    (guard as any).userId || (guard as any).user?.id || (guard as any).authUserId;
+
+  if (!teacherUserId) {
+    return jsonError("Professor não identificado no token.", 401);
+  }
+
+  const url = new URL(req.url);
+  const classId = cleanText(url.searchParams.get("classId"));
+  const date = cleanText(url.searchParams.get("date"));
+  const lessonNumberRaw = Number(url.searchParams.get("lessonNumber") || "1");
+  const lessonNumber =
+    Number.isInteger(lessonNumberRaw) && lessonNumberRaw >= 1 ? lessonNumberRaw : 1;
+
+  if (!classId) return jsonError("classId é obrigatório.", 400);
+  if (!date) return jsonError("date é obrigatório (YYYY-MM-DD).", 400);
+
+  const { data: link, error: linkErr } = await supabaseAdmin
+    .from("teacher_classes")
+    .select("id")
+    .eq("school_id", schoolId)
+    .eq("class_id", classId)
+    .eq("teacher_user_id", teacherUserId)
+    .limit(1);
+
+  if (linkErr) {
+    return jsonError("Erro ao validar vínculo professor-turma.", 500, {
+      details: linkErr.message,
+    });
+  }
+
+  if (!link || link.length === 0) {
+    return jsonError("Professor não está vinculado a esta turma.", 403);
+  }
+
+  const { data: sessions, error: sessionsErr } = await supabaseAdmin
+    .from("attendance_sessions")
+    .select("id")
+    .eq("school_id", schoolId)
+    .eq("class_id", classId)
+    .eq("lesson_date", date)
+    .eq("lesson_number", lessonNumber);
+
+  if (sessionsErr) {
+    return jsonError("Falha ao localizar a chamada para exclusão.", 500, {
+      details: sessionsErr.message,
+    });
+  }
+
+  const sessionIds = (sessions || [])
+    .map((session: any) => cleanText(session?.id))
+    .filter(Boolean);
+
+  if (sessionIds.length === 0) {
+    return jsonError("Nenhuma chamada salva foi encontrada para esta turma e data.", 404);
+  }
+
+  const { error: recordsDeleteErr } = await supabaseAdmin
+    .from("attendance_records")
+    .delete()
+    .eq("school_id", schoolId)
+    .in("session_id", sessionIds);
+
+  if (recordsDeleteErr) {
+    return jsonError("Falha ao excluir os registros da chamada.", 500, {
+      details: recordsDeleteErr.message,
+    });
+  }
+
+  const { error: sessionsDeleteErr } = await supabaseAdmin
+    .from("attendance_sessions")
+    .delete()
+    .eq("school_id", schoolId)
+    .eq("class_id", classId)
+    .eq("lesson_date", date)
+    .eq("lesson_number", lessonNumber)
+    .in("id", sessionIds);
+
+  if (sessionsDeleteErr) {
+    return jsonError(
+      "Os registros da chamada foram removidos, mas houve falha ao remover a sessão. Recarregue a tela antes de tentar novamente.",
+      500,
+      { details: sessionsDeleteErr.message }
+    );
+  }
+
+  return NextResponse.json(
+    {
+      ok: true,
+      deletedSessionIds: sessionIds,
+      totalDeletedSessions: sessionIds.length,
+      classId,
+      date,
+      lessonNumber,
+    },
+    { headers: corsHeaders() }
+  );
 }
 
 export async function POST(req: Request) {

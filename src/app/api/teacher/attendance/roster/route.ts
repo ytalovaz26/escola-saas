@@ -389,6 +389,7 @@ async function loadExistingMarks(params: {
         status: AttendanceStatus;
         note: string | null;
       }[],
+      hasAttendanceSession: false,
     };
   }
 
@@ -418,6 +419,7 @@ async function loadExistingMarks(params: {
         ok: false as const,
         error: recordsErr.message,
         marks: [],
+        hasAttendanceSession: sessionIds.length > 0,
       };
     }
 
@@ -440,6 +442,7 @@ async function loadExistingMarks(params: {
     ok: true as const,
     error: null,
     marks: Array.from(marksMap.values()),
+    hasAttendanceSession: sessionIds.length > 0,
   };
 }
 
@@ -565,6 +568,7 @@ export async function GET(req: Request) {
         ok: true,
         roster: fallbackRoster.data,
         marks: marksResult.marks,
+        hasAttendanceSession: marksResult.hasAttendanceSession,
         attendanceBlock,
         roster_source: "active_links_fallback",
       },
@@ -614,6 +618,7 @@ export async function GET(req: Request) {
       ok: true,
       roster: finalRoster,
       marks: marksResult.marks,
+      hasAttendanceSession: marksResult.hasAttendanceSession,
       attendanceBlock,
       roster_source: finalRoster.length === rpcRoster.data.length ? "rpc" : "active_links_fallback",
     },
