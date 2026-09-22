@@ -237,7 +237,6 @@ function drawSummaryHeader(params: {
   teacherName: string;
   subjectName: string;
   termLabel: string;
-  referenceMonthLabel: string;
   periodText: string;
   logoBuffer: Buffer | null;
 }) {
@@ -248,7 +247,6 @@ function drawSummaryHeader(params: {
     teacherName,
     subjectName,
     termLabel,
-    referenceMonthLabel,
     periodText,
     logoBuffer,
   } = params;
@@ -287,7 +285,6 @@ function drawSummaryHeader(params: {
 
   doc.text(`Turma: ${className}`, leftX, boxY + 14);
   doc.text(`Professor(a): ${teacherName}`, leftX, boxY + 32);
-  doc.text(`Mês base: ${referenceMonthLabel}`, leftX, boxY + 50);
 
   doc.text(`Disciplina: ${subjectName}`, rightX, boxY + 14);
   doc.text(`Período letivo: ${termLabel || "—"}`, rightX, boxY + 32);
@@ -587,7 +584,6 @@ function drawSummaryReport(params: {
   teacherName: string;
   subjectName: string;
   termLabel: string;
-  referenceMonthLabel: string;
   periodText: string;
   logoBuffer: Buffer | null;
 }) {
@@ -599,7 +595,6 @@ function drawSummaryReport(params: {
     teacherName,
     subjectName,
     termLabel,
-    referenceMonthLabel,
     periodText,
     logoBuffer,
   } = params;
@@ -619,7 +614,6 @@ function drawSummaryReport(params: {
     teacherName,
     subjectName,
     termLabel,
-    referenceMonthLabel,
     periodText,
     logoBuffer,
   });
@@ -888,7 +882,6 @@ export async function GET(req: Request) {
       teacherName,
       subjectName,
       termLabel: finalTermLabel,
-      referenceMonthLabel,
       periodText: selectedPeriodLabel,
       logoBuffer,
     });

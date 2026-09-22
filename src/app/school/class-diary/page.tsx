@@ -145,6 +145,14 @@ export default function SchoolClassDiaryPage() {
   const [loading, setLoading] = useState(true);
   const [generatingPeriod, setGeneratingPeriod] = useState(false);
   const [generatingDaily, setGeneratingDaily] = useState(false);
+  const [savingEntry, setSavingEntry] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<string>("");
+  const [editLessonDate, setEditLessonDate] = useState("");
+  const [editContentTaught, setEditContentTaught] = useState("");
+  const [editMethodology, setEditMethodology] = useState("");
+  const [editActivities, setEditActivities] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editHomework, setEditHomework] = useState("");
 
   const [referenceMonth, setReferenceMonth] = useState(currentMonthISO());
   const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("month");
@@ -393,6 +401,89 @@ export default function SchoolClassDiaryPage() {
   const totalEntries = useMemo(() => {
     return groups.reduce((sum, group) => sum + group.entries.length, 0);
   }, [groups]);
+
+  function startEditingEntry(entry: DiaryEntry) {
+    setEditingEntryId(entry.id);
+    setEditLessonDate(entry.lesson_date || "");
+    setEditContentTaught(entry.content_taught || "");
+    setEditMethodology(entry.methodology || "");
+    setEditActivities(entry.activities || "");
+    setEditNotes(entry.notes || "");
+    setEditHomework(entry.homework || "");
+    setError(null);
+    setMessage(null);
+  }
+
+  function cancelEditingEntry() {
+    setEditingEntryId("");
+    setEditLessonDate("");
+    setEditContentTaught("");
+    setEditMethodology("");
+    setEditActivities("");
+    setEditNotes("");
+    setEditHomework("");
+  }
+
+  async function saveEditedEntry() {
+    if (!selectedGroup || !editingEntryId) return;
+
+    if (!editLessonDate) {
+      setError("Informe a data da aula.");
+      return;
+    }
+
+    if (!editContentTaught.trim()) {
+      setError("Informe o conteúdo ministrado.");
+      return;
+    }
+
+    const token = await ensureToken();
+    if (!token) return;
+
+    setSavingEntry(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const res = await fetch("/api/school/class-diary/update", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          diaryId: selectedGroup.diary.id,
+          entryId: editingEntryId,
+          classId: selectedGroup.diary.class_id,
+          teacherUserId: selectedGroup.diary.teacher_user_id,
+          lessonDate: editLessonDate,
+          contentTaught: editContentTaught.trim(),
+          methodology: editMethodology.trim(),
+          activities: editActivities.trim(),
+          notes: editNotes.trim(),
+          homework: editHomework.trim(),
+        }),
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(
+          (json?.error || "Falha ao alterar lançamento do diário.") +
+            (json?.details ? `\n\nDetalhes: ${json.details}` : "")
+        );
+        return;
+      }
+
+      cancelEditingEntry();
+      await load();
+      setMessage("Lançamento do diário alterado com sucesso.");
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao alterar lançamento do diário.");
+    } finally {
+      setSavingEntry(false);
+    }
+  }
 
   async function generatePeriodPdf() {
     setError(null);
@@ -832,6 +923,118 @@ export default function SchoolClassDiaryPage() {
           ) : null}
         </section>
 
+        {editingEntryId && selectedGroup ? (
+          <section className="rounded-3xl border border-amber-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                  Alterando lançamento
+                </div>
+                <h2 className="mt-1 text-xl font-semibold text-slate-900">
+                  Corrigir informações do Diário de Classe
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Diretor e coordenação podem corrigir o lançamento selecionado sem alterar os demais registros.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={cancelEditingEntry}
+                disabled={savingEntry}
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Data da aula
+                </label>
+                <input
+                  type="date"
+                  value={editLessonDate}
+                  onChange={(e) => setEditLessonDate(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Conteúdo ministrado
+                </label>
+                <textarea
+                  value={editContentTaught}
+                  onChange={(e) => setEditContentTaught(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Metodologia
+                </label>
+                <textarea
+                  value={editMethodology}
+                  onChange={(e) => setEditMethodology(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Atividades desenvolvidas
+                </label>
+                <textarea
+                  value={editActivities}
+                  onChange={(e) => setEditActivities(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Observações
+                </label>
+                <textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Tarefa de casa
+                </label>
+                <textarea
+                  value={editHomework}
+                  onChange={(e) => setEditHomework(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={saveEditedEntry}
+                disabled={savingEntry}
+                className="rounded-2xl bg-amber-600 px-5 py-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {savingEntry ? "Salvando alteração..." : "Salvar alteração"}
+              </button>
+            </div>
+          </section>
+        ) : null}
+
         {loading ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
             Carregando diários...
@@ -870,14 +1073,25 @@ export default function SchoolClassDiaryPage() {
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => generateDailyPdf(entry)}
-                        disabled={generatingDaily}
-                        className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        {generatingDaily ? "Gerando..." : "Gerar PDF do dia"}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startEditingEntry(entry)}
+                          disabled={savingEntry}
+                          className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                        >
+                          Alterar
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => generateDailyPdf(entry)}
+                          disabled={generatingDaily}
+                          className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {generatingDaily ? "Gerando..." : "Gerar PDF do dia"}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
