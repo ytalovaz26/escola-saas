@@ -172,10 +172,17 @@ async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
   });
 }
 
+function normalizePdfText(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFC")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "");
+}
+
 function getTextHeight(doc: PDFKit.PDFDocument, text: string, width: number, fontSize = 10) {
   doc.font("Helvetica").fontSize(fontSize);
 
-  return doc.heightOfString(text || "—", {
+  return doc.heightOfString(normalizePdfText(text) || "—", {
     width,
     align: "left",
   });
@@ -621,7 +628,7 @@ function drawSummaryReport(params: {
   let y = drawSummaryTableHeader(doc, tableTopFirstPage);
 
   for (const entry of entries) {
-    const content = String(entry.content_taught || "").trim() || "—";
+    const content = normalizePdfText(entry.content_taught).trim() || "—";
 
     doc.font("Helvetica").fontSize(9);
 
