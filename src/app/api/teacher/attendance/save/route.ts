@@ -4,7 +4,7 @@ import { requireStaff } from "@/lib/requireStaff";
 
 export const runtime = "nodejs";
 
-type AttendanceStatus = "present" | "absent" | "late";
+type AttendanceStatus = "present" | "absent" | "late" | "transferred";
 
 type PayloadItem = {
   studentId?: string;
@@ -36,12 +36,13 @@ type CalendarBlock = {
   class_id: string | null;
   shift: string | null;
   affects_all_classes: boolean | null;
+  calendar_action: "block" | "allow" | string | null;
 };
 
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
     "Cache-Control": "no-store",
@@ -75,6 +76,14 @@ function normalizeStatus(raw: any): AttendanceStatus {
 
   if (value === "absent" || value === "f" || value === "ausente") return "absent";
   if (value === "late" || value === "t" || value === "atraso" || value === "tarde") return "late";
+  if (
+    value === "transferred" ||
+    value === "transferido" ||
+    value === "transferida" ||
+    value === "tr"
+  ) {
+    return "transferred";
+  }
 
   return "present";
 }
@@ -90,6 +99,28 @@ function blockTypeLabel(type: string) {
   if (safe === "event") return "Evento escolar";
 
   return "Calendário escolar";
+}
+
+function getWeekendBlock(date: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+
+  const parsed = new Date(`${date}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  const day = parsed.getUTCDay();
+  if (day !== 0 && day !== 6) return null;
+
+  return {
+    id: `weekend-${date}`,
+    date,
+    type: "weekend",
+    typeLabel: "Fim de semana",
+    title: day === 6 ? "Sábado — sem aula" : "Domingo — sem aula",
+    description: "Fim de semana não é considerado dia letivo para a chamada regular.",
+    targetScope: "all_school",
+    classId: null,
+    shift: null,
+  };
 }
 
 async function getClassInfo(params: { schoolId: string; classId: string }) {
@@ -155,7 +186,8 @@ async function getApplicableCalendarBlocks(params: {
       target_scope,
       class_id,
       shift,
-      affects_all_classes
+      affects_all_classes,
+      calendar_action
     `
     )
     .eq("school_id", params.schoolId)
@@ -193,6 +225,77 @@ async function getApplicableCalendarBlocks(params: {
     ok: true as const,
     error: null,
     blocks: applicableBlocks,
+  };
+}
+
+
+function normalizeCalendarAction(value: unknown) {
+  return cleanText(value) === "allow" ? "allow" : "block";
+}
+
+function calendarScopePriority(block: CalendarBlock) {
+  const scope = cleanText(block.target_scope) || "all_school";
+
+  if (scope === "class") return 3;
+  if (scope === "shift") return 2;
+
+  return 1;
+}
+
+function resolveAttendanceCalendar(params: {
+  date: string;
+  blocks: CalendarBlock[];
+}) {
+  const explicitBlocks = params.blocks || [];
+
+  if (explicitBlocks.length > 0) {
+    const highestPriority = Math.max(
+      ...explicitBlocks.map(calendarScopePriority)
+    );
+
+    const winningRules = explicitBlocks.filter(
+      (block) => calendarScopePriority(block) === highestPriority
+    );
+
+    const blockingRules = winningRules.filter(
+      (block) => normalizeCalendarAction(block.calendar_action) === "block"
+    );
+
+    if (blockingRules.length > 0) {
+      return {
+        isBlocked: true,
+        blockingRules,
+        weekendBlock: null,
+      };
+    }
+
+    const allowingRules = winningRules.filter(
+      (block) => normalizeCalendarAction(block.calendar_action) === "allow"
+    );
+
+    if (allowingRules.length > 0) {
+      return {
+        isBlocked: false,
+        blockingRules: [] as CalendarBlock[],
+        weekendBlock: null,
+      };
+    }
+  }
+
+  const weekendBlock = getWeekendBlock(params.date);
+
+  if (weekendBlock) {
+    return {
+      isBlocked: true,
+      blockingRules: [] as CalendarBlock[],
+      weekendBlock,
+    };
+  }
+
+  return {
+    isBlocked: false,
+    blockingRules: [] as CalendarBlock[],
+    weekendBlock: null,
   };
 }
 
@@ -357,6 +460,111 @@ async function loadAllowedStudentIds(params: {
   return Array.from(ids);
 }
 
+export async function DELETE(req: Request) {
+  const guard = await requireStaff(req, ["professor", "teacher"]);
+
+  if (!guard.ok) return guard.res;
+
+  const schoolId = (guard as any).schoolId as string;
+  const teacherUserId =
+    (guard as any).userId || (guard as any).user?.id || (guard as any).authUserId;
+
+  if (!teacherUserId) {
+    return jsonError("Professor não identificado no token.", 401);
+  }
+
+  const url = new URL(req.url);
+  const classId = cleanText(url.searchParams.get("classId"));
+  const date = cleanText(url.searchParams.get("date"));
+  const lessonNumberRaw = Number(url.searchParams.get("lessonNumber") || "1");
+  const lessonNumber =
+    Number.isInteger(lessonNumberRaw) && lessonNumberRaw >= 1 ? lessonNumberRaw : 1;
+
+  if (!classId) return jsonError("classId é obrigatório.", 400);
+  if (!date) return jsonError("date é obrigatório (YYYY-MM-DD).", 400);
+
+  const { data: link, error: linkErr } = await supabaseAdmin
+    .from("teacher_classes")
+    .select("id")
+    .eq("school_id", schoolId)
+    .eq("class_id", classId)
+    .eq("teacher_user_id", teacherUserId)
+    .limit(1);
+
+  if (linkErr) {
+    return jsonError("Erro ao validar vínculo professor-turma.", 500, {
+      details: linkErr.message,
+    });
+  }
+
+  if (!link || link.length === 0) {
+    return jsonError("Professor não está vinculado a esta turma.", 403);
+  }
+
+  const { data: sessions, error: sessionsErr } = await supabaseAdmin
+    .from("attendance_sessions")
+    .select("id")
+    .eq("school_id", schoolId)
+    .eq("class_id", classId)
+    .eq("lesson_date", date)
+    .eq("lesson_number", lessonNumber);
+
+  if (sessionsErr) {
+    return jsonError("Falha ao localizar a chamada para exclusão.", 500, {
+      details: sessionsErr.message,
+    });
+  }
+
+  const sessionIds = (sessions || [])
+    .map((session: any) => cleanText(session?.id))
+    .filter(Boolean);
+
+  if (sessionIds.length === 0) {
+    return jsonError("Nenhuma chamada salva foi encontrada para esta turma e data.", 404);
+  }
+
+  const { error: recordsDeleteErr } = await supabaseAdmin
+    .from("attendance_records")
+    .delete()
+    .eq("school_id", schoolId)
+    .in("session_id", sessionIds);
+
+  if (recordsDeleteErr) {
+    return jsonError("Falha ao excluir os registros da chamada.", 500, {
+      details: recordsDeleteErr.message,
+    });
+  }
+
+  const { error: sessionsDeleteErr } = await supabaseAdmin
+    .from("attendance_sessions")
+    .delete()
+    .eq("school_id", schoolId)
+    .eq("class_id", classId)
+    .eq("lesson_date", date)
+    .eq("lesson_number", lessonNumber)
+    .in("id", sessionIds);
+
+  if (sessionsDeleteErr) {
+    return jsonError(
+      "Os registros da chamada foram removidos, mas houve falha ao remover a sessão. Recarregue a tela antes de tentar novamente.",
+      500,
+      { details: sessionsDeleteErr.message }
+    );
+  }
+
+  return NextResponse.json(
+    {
+      ok: true,
+      deletedSessionIds: sessionIds,
+      totalDeletedSessions: sessionIds.length,
+      classId,
+      date,
+      lessonNumber,
+    },
+    { headers: corsHeaders() }
+  );
+}
+
 export async function POST(req: Request) {
   const guard = await requireStaff(req, [
     "diretor",
@@ -430,14 +638,25 @@ export async function POST(req: Request) {
     });
   }
 
-  if (calendarBlocksResult.blocks.length > 0) {
-    const formattedBlocks = calendarBlocksResult.blocks.map(formatCalendarBlockForResponse);
+  const calendarDecision = resolveAttendanceCalendar({
+    date,
+    blocks: calendarBlocksResult.blocks,
+  });
 
+  const effectiveBlocks = calendarDecision.isBlocked
+    ? calendarDecision.blockingRules.length > 0
+      ? calendarDecision.blockingRules.map(formatCalendarBlockForResponse)
+      : calendarDecision.weekendBlock
+        ? [calendarDecision.weekendBlock]
+        : []
+    : [];
+
+  if (effectiveBlocks.length > 0) {
     return jsonError("Não é possível salvar chamada em dia sem aula.", 409, {
       attendanceBlock: {
         isBlocked: true,
-        blocks: formattedBlocks,
-        mainBlock: formattedBlocks[0] || null,
+        blocks: effectiveBlocks,
+        mainBlock: effectiveBlocks[0] || null,
         message: "Não haverá aula neste dia. A chamada não precisa ser realizada.",
       },
     });

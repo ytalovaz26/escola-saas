@@ -4,7 +4,7 @@ import { requireStaff } from "@/lib/requireStaff";
 
 export const runtime = "nodejs";
 
-type AttendanceStatus = "present" | "absent" | "late";
+type AttendanceStatus = "present" | "absent" | "late" | "transferred";
 
 type StudentItem = {
   student_id: string;
@@ -22,6 +22,7 @@ type CalendarBlock = {
   class_id: string | null;
   shift: string | null;
   affects_all_classes: boolean | null;
+  calendar_action: "block" | "allow" | string | null;
 };
 
 function jsonError(message: string, status = 400, extra?: any) {
@@ -52,6 +53,9 @@ function normalizeStatus(raw: any): AttendanceStatus | null {
   if (s === "present" || s === "presente" || s === "p") return "present";
   if (s === "absent" || s === "ausente" || s === "f") return "absent";
   if (s === "late" || s === "tarde" || s === "atraso" || s === "t") return "late";
+  if (s === "transferred" || s === "transferido" || s === "transferida" || s === "tr") {
+    return "transferred";
+  }
 
   return null;
 }
@@ -67,6 +71,28 @@ function blockTypeLabel(type: string) {
   if (safe === "event") return "Evento escolar";
 
   return "Calendário escolar";
+}
+
+function getWeekendBlock(date: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+
+  const parsed = new Date(`${date}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  const day = parsed.getUTCDay();
+  if (day !== 0 && day !== 6) return null;
+
+  return {
+    id: `weekend-${date}`,
+    date,
+    type: "weekend",
+    typeLabel: "Fim de semana",
+    title: day === 6 ? "Sábado — sem aula" : "Domingo — sem aula",
+    description: "Fim de semana não é considerado dia letivo para a chamada regular.",
+    targetScope: "all_school",
+    classId: null,
+    shift: null,
+  };
 }
 
 async function getClassInfo(params: { schoolId: string; classId: string }) {
@@ -132,7 +158,8 @@ async function getApplicableCalendarBlocks(params: {
       target_scope,
       class_id,
       shift,
-      affects_all_classes
+      affects_all_classes,
+      calendar_action
     `
     )
     .eq("school_id", params.schoolId)
@@ -170,6 +197,77 @@ async function getApplicableCalendarBlocks(params: {
     ok: true as const,
     error: null,
     blocks: applicableBlocks,
+  };
+}
+
+
+function normalizeCalendarAction(value: unknown) {
+  return cleanText(value) === "allow" ? "allow" : "block";
+}
+
+function calendarScopePriority(block: CalendarBlock) {
+  const scope = cleanText(block.target_scope) || "all_school";
+
+  if (scope === "class") return 3;
+  if (scope === "shift") return 2;
+
+  return 1;
+}
+
+function resolveAttendanceCalendar(params: {
+  date: string;
+  blocks: CalendarBlock[];
+}) {
+  const explicitBlocks = params.blocks || [];
+
+  if (explicitBlocks.length > 0) {
+    const highestPriority = Math.max(
+      ...explicitBlocks.map(calendarScopePriority)
+    );
+
+    const winningRules = explicitBlocks.filter(
+      (block) => calendarScopePriority(block) === highestPriority
+    );
+
+    const blockingRules = winningRules.filter(
+      (block) => normalizeCalendarAction(block.calendar_action) === "block"
+    );
+
+    if (blockingRules.length > 0) {
+      return {
+        isBlocked: true,
+        blockingRules,
+        weekendBlock: null,
+      };
+    }
+
+    const allowingRules = winningRules.filter(
+      (block) => normalizeCalendarAction(block.calendar_action) === "allow"
+    );
+
+    if (allowingRules.length > 0) {
+      return {
+        isBlocked: false,
+        blockingRules: [] as CalendarBlock[],
+        weekendBlock: null,
+      };
+    }
+  }
+
+  const weekendBlock = getWeekendBlock(params.date);
+
+  if (weekendBlock) {
+    return {
+      isBlocked: true,
+      blockingRules: [] as CalendarBlock[],
+      weekendBlock,
+    };
+  }
+
+  return {
+    isBlocked: false,
+    blockingRules: [] as CalendarBlock[],
+    weekendBlock: null,
   };
 }
 
@@ -291,6 +389,7 @@ async function loadExistingMarks(params: {
         status: AttendanceStatus;
         note: string | null;
       }[],
+      hasAttendanceSession: false,
     };
   }
 
@@ -320,6 +419,7 @@ async function loadExistingMarks(params: {
         ok: false as const,
         error: recordsErr.message,
         marks: [],
+        hasAttendanceSession: sessionIds.length > 0,
       };
     }
 
@@ -342,6 +442,7 @@ async function loadExistingMarks(params: {
     ok: true as const,
     error: null,
     marks: Array.from(marksMap.values()),
+    hasAttendanceSession: sessionIds.length > 0,
   };
 }
 
@@ -400,14 +501,25 @@ export async function GET(req: Request) {
     });
   }
 
-  const formattedBlocks = calendarBlocksResult.blocks.map(formatCalendarBlockForResponse);
+  const calendarDecision = resolveAttendanceCalendar({
+    date,
+    blocks: calendarBlocksResult.blocks,
+  });
+
+  const effectiveBlocks = calendarDecision.isBlocked
+    ? calendarDecision.blockingRules.length > 0
+      ? calendarDecision.blockingRules.map(formatCalendarBlockForResponse)
+      : calendarDecision.weekendBlock
+        ? [calendarDecision.weekendBlock]
+        : []
+    : [];
 
   const attendanceBlock = {
-    isBlocked: formattedBlocks.length > 0,
-    blocks: formattedBlocks,
-    mainBlock: formattedBlocks[0] || null,
+    isBlocked: effectiveBlocks.length > 0,
+    blocks: effectiveBlocks,
+    mainBlock: effectiveBlocks[0] || null,
     message:
-      formattedBlocks.length > 0
+      effectiveBlocks.length > 0
         ? "Não haverá aula neste dia. A chamada não precisa ser realizada."
         : null,
   };
@@ -456,6 +568,7 @@ export async function GET(req: Request) {
         ok: true,
         roster: fallbackRoster.data,
         marks: marksResult.marks,
+        hasAttendanceSession: marksResult.hasAttendanceSession,
         attendanceBlock,
         roster_source: "active_links_fallback",
       },
@@ -505,6 +618,7 @@ export async function GET(req: Request) {
       ok: true,
       roster: finalRoster,
       marks: marksResult.marks,
+      hasAttendanceSession: marksResult.hasAttendanceSession,
       attendanceBlock,
       roster_source: finalRoster.length === rpcRoster.data.length ? "rpc" : "active_links_fallback",
     },

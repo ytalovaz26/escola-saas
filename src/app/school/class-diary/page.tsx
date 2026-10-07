@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -28,7 +28,16 @@ type DiaryGroup = {
   entries: DiaryEntry[];
 };
 
-type PeriodPreset = "month" | "bimester" | "semester" | "year" | "custom";
+type PeriodPreset = "month" | "academic" | "year" | "custom";
+
+type AcademicPeriod = {
+  id: string;
+  periodNumber: number;
+  name: string;
+  startDate: string;
+  endDate: string;
+  isActive: boolean;
+};
 
 async function safeJson(res: Response) {
   const text = await res.text();
@@ -80,46 +89,6 @@ function yearEnd(referenceMonth: string) {
   if (!y) return `${new Date().getFullYear()}-12-31`;
 
   return `${y}-12-31`;
-}
-
-function bimesterRange(referenceMonth: string) {
-  const [y, m] = referenceMonth.split("-").map(Number);
-  if (!y || !m) {
-    const now = new Date();
-    return {
-      start: `${now.getFullYear()}-01-01`,
-      end: `${now.getFullYear()}-02-28`,
-    };
-  }
-
-  const bimesterStartMonth = Math.floor((m - 1) / 2) * 2 + 1;
-  const start = `${y}-${pad2(bimesterStartMonth)}-01`;
-  const end = toYMD(new Date(y, bimesterStartMonth + 1, 0));
-
-  return { start, end };
-}
-
-function semesterRange(referenceMonth: string) {
-  const [y, m] = referenceMonth.split("-").map(Number);
-  if (!y || !m) {
-    const now = new Date();
-    return {
-      start: `${now.getFullYear()}-01-01`,
-      end: `${now.getFullYear()}-06-30`,
-    };
-  }
-
-  if (m <= 6) {
-    return {
-      start: `${y}-01-01`,
-      end: `${y}-06-30`,
-    };
-  }
-
-  return {
-    start: `${y}-07-01`,
-    end: `${y}-12-31`,
-  };
 }
 
 function formatDateBR(iso: string) {
@@ -176,11 +145,21 @@ export default function SchoolClassDiaryPage() {
   const [loading, setLoading] = useState(true);
   const [generatingPeriod, setGeneratingPeriod] = useState(false);
   const [generatingDaily, setGeneratingDaily] = useState(false);
+  const [savingEntry, setSavingEntry] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<string>("");
+  const [editLessonDate, setEditLessonDate] = useState("");
+  const [editContentTaught, setEditContentTaught] = useState("");
+  const [editMethodology, setEditMethodology] = useState("");
+  const [editActivities, setEditActivities] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editHomework, setEditHomework] = useState("");
 
   const [referenceMonth, setReferenceMonth] = useState(currentMonthISO());
   const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("month");
   const [startDate, setStartDate] = useState(monthStart(currentMonthISO()));
   const [endDate, setEndDate] = useState(monthEnd(currentMonthISO()));
+  const [academicPeriods, setAcademicPeriods] = useState<AcademicPeriod[]>([]);
+  const [selectedAcademicPeriodId, setSelectedAcademicPeriodId] = useState<string>("");
 
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -191,6 +170,7 @@ export default function SchoolClassDiaryPage() {
 
   const [lastPdfUrl, setLastPdfUrl] = useState<string | null>(null);
   const [lastPdfName, setLastPdfName] = useState<string>("diario-de-classe.pdf");
+  const loadRequestIdRef = useRef(0);
 
   async function ensureToken() {
     const { data } = await supabase.auth.getSession();
@@ -208,30 +188,53 @@ export default function SchoolClassDiaryPage() {
     setPeriodPreset(nextPreset);
 
     if (nextPreset === "month") {
+      setSelectedAcademicPeriodId("");
       setStartDate(monthStart(monthValue));
       setEndDate(monthEnd(monthValue));
       return;
     }
 
-    if (nextPreset === "bimester") {
-      const range = bimesterRange(monthValue);
-      setStartDate(range.start);
-      setEndDate(range.end);
-      return;
-    }
+    if (nextPreset === "academic") {
+      const monthFirstDay = `${monthValue}-01`;
+      const matchingPeriod =
+        academicPeriods.find(
+          (period) =>
+            period.isActive &&
+            period.startDate <= monthEnd(monthValue) &&
+            period.endDate >= monthFirstDay
+        ) ||
+        academicPeriods.find((period) => period.isActive) ||
+        null;
 
-    if (nextPreset === "semester") {
-      const range = semesterRange(monthValue);
-      setStartDate(range.start);
-      setEndDate(range.end);
+      if (matchingPeriod) {
+        setSelectedAcademicPeriodId(matchingPeriod.id);
+        setStartDate(matchingPeriod.startDate);
+        setEndDate(matchingPeriod.endDate);
+      }
       return;
     }
 
     if (nextPreset === "year") {
+      setSelectedAcademicPeriodId("");
       setStartDate(yearStart(monthValue));
       setEndDate(yearEnd(monthValue));
       return;
     }
+
+    if (nextPreset === "custom") {
+      setSelectedAcademicPeriodId("");
+    }
+  }
+
+  function applyAcademicPeriod(periodId: string) {
+    setSelectedAcademicPeriodId(periodId);
+    setPeriodPreset("academic");
+
+    const period = academicPeriods.find((item) => item.id === periodId);
+    if (!period) return;
+
+    setStartDate(period.startDate);
+    setEndDate(period.endDate);
   }
 
   function clearLastPdf() {
@@ -260,13 +263,53 @@ export default function SchoolClassDiaryPage() {
     setMessage("PDF gerado com sucesso.");
   }
 
+  async function loadAcademicPeriods(year: number) {
+    const token = await ensureToken();
+    if (!token) return;
+
+    try {
+      const query = new URLSearchParams({ academicYear: String(year) });
+      const res = await fetch(`/api/school/academic-periods?${query.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setAcademicPeriods([]);
+        return;
+      }
+
+      const periods: AcademicPeriod[] = Array.isArray(json.periods)
+        ? json.periods.filter(
+            (period: AcademicPeriod) =>
+              period?.id &&
+              period?.startDate &&
+              period?.endDate &&
+              period?.isActive !== false
+          )
+        : [];
+
+      setAcademicPeriods(periods);
+    } catch {
+      setAcademicPeriods([]);
+    }
+  }
+
   async function load() {
+    const requestId = ++loadRequestIdRef.current;
+
     setLoading(true);
     setError(null);
     setMessage(null);
 
     const token = await ensureToken();
-    if (!token) return;
+    if (!token) {
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+      }
+      return;
+    }
 
     try {
       const query = new URLSearchParams({
@@ -281,6 +324,10 @@ export default function SchoolClassDiaryPage() {
       });
 
       const json = await safeJson(res);
+
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
 
       if (!res.ok || !json?.ok) {
         setError(json?.error || "Falha ao carregar diários.");
@@ -314,14 +361,28 @@ export default function SchoolClassDiaryPage() {
         setSelectedDailyEntryId("");
       }
     } catch (e: any) {
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
+
       setError(e?.message || "Erro inesperado ao carregar diários.");
       setGroups([]);
       setSelectedDiaryId("");
       setSelectedDailyEntryId("");
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
+
+  useEffect(() => {
+    const year = Number(referenceMonth.slice(0, 4));
+    if (Number.isInteger(year)) {
+      loadAcademicPeriods(year);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [referenceMonth]);
 
   useEffect(() => {
     load();
@@ -340,6 +401,89 @@ export default function SchoolClassDiaryPage() {
   const totalEntries = useMemo(() => {
     return groups.reduce((sum, group) => sum + group.entries.length, 0);
   }, [groups]);
+
+  function startEditingEntry(entry: DiaryEntry) {
+    setEditingEntryId(entry.id);
+    setEditLessonDate(entry.lesson_date || "");
+    setEditContentTaught(entry.content_taught || "");
+    setEditMethodology(entry.methodology || "");
+    setEditActivities(entry.activities || "");
+    setEditNotes(entry.notes || "");
+    setEditHomework(entry.homework || "");
+    setError(null);
+    setMessage(null);
+  }
+
+  function cancelEditingEntry() {
+    setEditingEntryId("");
+    setEditLessonDate("");
+    setEditContentTaught("");
+    setEditMethodology("");
+    setEditActivities("");
+    setEditNotes("");
+    setEditHomework("");
+  }
+
+  async function saveEditedEntry() {
+    if (!selectedGroup || !editingEntryId) return;
+
+    if (!editLessonDate) {
+      setError("Informe a data da aula.");
+      return;
+    }
+
+    if (!editContentTaught.trim()) {
+      setError("Informe o conteúdo ministrado.");
+      return;
+    }
+
+    const token = await ensureToken();
+    if (!token) return;
+
+    setSavingEntry(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const res = await fetch("/api/school/class-diary/update", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          diaryId: selectedGroup.diary.id,
+          entryId: editingEntryId,
+          classId: selectedGroup.diary.class_id,
+          teacherUserId: selectedGroup.diary.teacher_user_id,
+          lessonDate: editLessonDate,
+          contentTaught: editContentTaught.trim(),
+          methodology: editMethodology.trim(),
+          activities: editActivities.trim(),
+          notes: editNotes.trim(),
+          homework: editHomework.trim(),
+        }),
+      });
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setError(
+          (json?.error || "Falha ao alterar lançamento do diário.") +
+            (json?.details ? `\n\nDetalhes: ${json.details}` : "")
+        );
+        return;
+      }
+
+      cancelEditingEntry();
+      await load();
+      setMessage("Lançamento do diário alterado com sucesso.");
+    } catch (e: any) {
+      setError(e?.message || "Erro inesperado ao alterar lançamento do diário.");
+    } finally {
+      setSavingEntry(false);
+    }
+  }
 
   async function generatePeriodPdf() {
     setError(null);
@@ -368,6 +512,7 @@ export default function SchoolClassDiaryPage() {
     try {
       const query = new URLSearchParams({
         classId: selectedGroup.diary.class_id,
+        teacherUserId: selectedGroup.diary.teacher_user_id || "",
         referenceMonth: selectedGroup.diary.reference_month || referenceMonth,
         subjectName: selectedGroup.diary.subject_name || "",
         termLabel: selectedGroup.diary.term_label || "",
@@ -433,6 +578,7 @@ export default function SchoolClassDiaryPage() {
     try {
       const query = new URLSearchParams({
         classId: selectedGroup.diary.class_id,
+        teacherUserId: selectedGroup.diary.teacher_user_id || "",
         referenceMonth: selectedGroup.diary.reference_month || referenceMonth,
         subjectName: selectedGroup.diary.subject_name || "",
         termLabel: selectedGroup.diary.term_label || "",
@@ -488,7 +634,7 @@ export default function SchoolClassDiaryPage() {
 
               <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-500">
                 Acompanhe os lançamentos pedagógicos feitos pelos professores e gere
-                relatórios por dia, mês, bimestre, semestre, ano ou período personalizado.
+                relatórios por dia, mês, período letivo configurado, ano ou período personalizado.
               </p>
             </div>
 
@@ -522,7 +668,9 @@ export default function SchoolClassDiaryPage() {
                 onChange={(e) => {
                   const nextMonth = e.target.value;
                   setReferenceMonth(nextMonth);
-                  applyPreset(periodPreset, nextMonth);
+                  if (periodPreset !== "academic") {
+                    applyPreset(periodPreset, nextMonth);
+                  }
                 }}
                 className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
               />
@@ -538,12 +686,32 @@ export default function SchoolClassDiaryPage() {
                 className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
               >
                 <option value="month">Mensal</option>
-                <option value="bimester">Bimestre</option>
-                <option value="semester">Semestre</option>
+                <option value="academic">Período letivo configurado</option>
                 <option value="year">Anual</option>
                 <option value="custom">Personalizado</option>
               </select>
             </div>
+
+            {periodPreset === "academic" ? (
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Período letivo
+                </label>
+                <select
+                  value={selectedAcademicPeriodId}
+                  onChange={(e) => applyAcademicPeriod(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
+                  disabled={academicPeriods.length === 0}
+                >
+                  <option value="">Selecione o período</option>
+                  {academicPeriods.map((period) => (
+                    <option key={period.id} value={period.id}>
+                      {period.name} • {formatDateBR(period.startDate)} até {formatDateBR(period.endDate)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
 
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -554,6 +722,7 @@ export default function SchoolClassDiaryPage() {
                 value={startDate}
                 onChange={(e) => {
                   setPeriodPreset("custom");
+                  setSelectedAcademicPeriodId("");
                   setStartDate(e.target.value);
                 }}
                 className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
@@ -569,6 +738,7 @@ export default function SchoolClassDiaryPage() {
                 value={endDate}
                 onChange={(e) => {
                   setPeriodPreset("custom");
+                  setSelectedAcademicPeriodId("");
                   setEndDate(e.target.value);
                 }}
                 className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
@@ -707,7 +877,7 @@ export default function SchoolClassDiaryPage() {
           <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <p className="text-sm leading-6 text-slate-500">
               O relatório do período é resumido e exibe apenas a data e o conteúdo ministrado,
-              no modelo tradicional mensal/bimestral.
+              respeitando exatamente as datas do período letivo configurado ou do intervalo escolhido.
             </p>
 
             <button
@@ -753,6 +923,118 @@ export default function SchoolClassDiaryPage() {
           ) : null}
         </section>
 
+        {editingEntryId && selectedGroup ? (
+          <section className="rounded-3xl border border-amber-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                  Alterando lançamento
+                </div>
+                <h2 className="mt-1 text-xl font-semibold text-slate-900">
+                  Corrigir informações do Diário de Classe
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Diretor e coordenação podem corrigir o lançamento selecionado sem alterar os demais registros.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={cancelEditingEntry}
+                disabled={savingEntry}
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Data da aula
+                </label>
+                <input
+                  type="date"
+                  value={editLessonDate}
+                  onChange={(e) => setEditLessonDate(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Conteúdo ministrado
+                </label>
+                <textarea
+                  value={editContentTaught}
+                  onChange={(e) => setEditContentTaught(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Metodologia
+                </label>
+                <textarea
+                  value={editMethodology}
+                  onChange={(e) => setEditMethodology(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Atividades desenvolvidas
+                </label>
+                <textarea
+                  value={editActivities}
+                  onChange={(e) => setEditActivities(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Observações
+                </label>
+                <textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Tarefa de casa
+                </label>
+                <textarea
+                  value={editHomework}
+                  onChange={(e) => setEditHomework(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-2xl border border-slate-300 px-3 py-3 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={saveEditedEntry}
+                disabled={savingEntry}
+                className="rounded-2xl bg-amber-600 px-5 py-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {savingEntry ? "Salvando alteração..." : "Salvar alteração"}
+              </button>
+            </div>
+          </section>
+        ) : null}
+
         {loading ? (
           <section className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
             Carregando diários...
@@ -791,14 +1073,25 @@ export default function SchoolClassDiaryPage() {
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => generateDailyPdf(entry)}
-                        disabled={generatingDaily}
-                        className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                      >
-                        {generatingDaily ? "Gerando..." : "Gerar PDF do dia"}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => startEditingEntry(entry)}
+                          disabled={savingEntry}
+                          className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                        >
+                          Alterar
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => generateDailyPdf(entry)}
+                          disabled={generatingDaily}
+                          className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          {generatingDaily ? "Gerando..." : "Gerar PDF do dia"}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">

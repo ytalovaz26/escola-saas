@@ -6,7 +6,7 @@ import { getTeacherDisplayName } from "@/lib/getTeacherDisplayName";
 
 export const runtime = "nodejs";
 
-type AttendanceStatus = "present" | "absent" | "late";
+type AttendanceStatus = "present" | "absent" | "late" | "transferred";
 
 type SessionRow = {
   id: string;
@@ -43,6 +43,7 @@ type CalendarBlock = {
   class_id: string | null;
   shift: string | null;
   affects_all_classes: boolean | null;
+  calendar_action: "block" | "allow" | string | null;
 };
 
 function jsonError(message: string, status = 400, extra?: any) {
@@ -135,12 +136,14 @@ function normalizeStatus(raw: any): AttendanceStatus | null {
   if (s === "present" || s === "presente" || s === "p") return "present";
   if (s === "absent" || s === "ausente" || s === "f" || s === "falta") return "absent";
   if (s === "late" || s === "tarde" || s === "atraso" || s === "t") return "late";
+  if (s === "transferred" || s === "transferido" || s === "transferida" || s === "tr") return "transferred";
 
   return null;
 }
 
 function aggregateStatus(statuses: AttendanceStatus[]) {
   if (statuses.includes("absent")) return "absent";
+  if (statuses.includes("transferred")) return "transferred";
   if (statuses.includes("late")) return "late";
   if (statuses.includes("present")) return "present";
   return null;
@@ -170,6 +173,69 @@ function isClassScope(value: unknown) {
 function isShiftScope(value: unknown) {
   const scope = normalizeComparable(value);
   return scope === "shift" || scope === "period" || scope === "periodo" || scope === "turno";
+}
+
+function normalizeCalendarAction(value: unknown) {
+  const action = normalizeComparable(value);
+  return action === "allow" ? "allow" : "block";
+}
+
+function isWeekendDate(dateISO: string) {
+  const [year, month, day] = String(dateISO || "")
+    .split("-")
+    .map(Number);
+
+  if (!year || !month || !day) return false;
+
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  const weekDay = parsed.getUTCDay();
+
+  return weekDay === 0 || weekDay === 6;
+}
+
+function calendarRuleSpecificity(block: CalendarBlock) {
+  if (block.affects_all_classes === true) return 1;
+
+  const scope = cleanText(block.target_scope);
+
+  if (isClassScope(scope)) return 3;
+  if (isShiftScope(scope)) return 2;
+  if (isAllSchoolScope(scope)) return 1;
+
+  return 1;
+}
+
+function isDateBlockedByCalendar(params: {
+  dateISO: string;
+  applicableBlocks: CalendarBlock[];
+}) {
+  const { dateISO, applicableBlocks } = params;
+
+  if (applicableBlocks.length === 0) {
+    return isWeekendDate(dateISO);
+  }
+
+  const highestSpecificity = Math.max(
+    ...applicableBlocks.map((block) => calendarRuleSpecificity(block))
+  );
+
+  const strongestRules = applicableBlocks.filter(
+    (block) => calendarRuleSpecificity(block) === highestSpecificity
+  );
+
+  const hasBlock = strongestRules.some(
+    (block) => normalizeCalendarAction(block.calendar_action) === "block"
+  );
+
+  if (hasBlock) return true;
+
+  const hasAllow = strongestRules.some(
+    (block) => normalizeCalendarAction(block.calendar_action) === "allow"
+  );
+
+  if (hasAllow) return false;
+
+  return isWeekendDate(dateISO);
 }
 
 async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
@@ -383,7 +449,8 @@ async function getApplicableBlockedDates(params: {
       target_scope,
       class_id,
       shift,
-      affects_all_classes
+      affects_all_classes,
+      calendar_action
     `
     )
     .eq("school_id", params.schoolId)
@@ -428,11 +495,22 @@ async function getApplicableBlockedDates(params: {
     const date = cleanText(block.block_date);
     if (!date) continue;
 
-    blockedDates.add(date);
-
     const list = blocksByDate.get(date) || [];
     list.push(block);
     blocksByDate.set(date, list);
+  }
+
+  for (const dateISO of datesBetweenInclusive(params.startISO, params.endISO)) {
+    const applicableBlocks = blocksByDate.get(dateISO) || [];
+
+    if (
+      isDateBlockedByCalendar({
+        dateISO,
+        applicableBlocks,
+      })
+    ) {
+      blockedDates.add(dateISO);
+    }
   }
 
   return {
@@ -585,7 +663,7 @@ function drawReportHeader(params: {
       : "";
 
   doc.text(
-    `Dias exibidos: ${brDateFromISO(dateStart)} até ${brDateFromISO(dateEnd)} | Legenda: • = Presente | F = Falta | T = Atraso${removedInfo} | Datas ${datePage}/${datePages} | Alunos ${studentPage}/${studentPages}`,
+    `Dias exibidos: ${brDateFromISO(dateStart)} até ${brDateFromISO(dateEnd)} | Legenda: • = Presente | F = Falta | A = Atraso | T = Transferido${removedInfo} | Datas ${datePage}/${datePages} | Alunos ${studentPage}/${studentPages}`,
     135,
     headerTop + 61,
     {
@@ -805,6 +883,12 @@ function drawAttendanceTable(params: {
         doc.text("F", x, y + 3, { width: cellW, align: "center", lineBreak: false });
         doc.restore();
       } else if (status === "late") {
+        doc.save();
+        doc.fillColor("#000");
+        doc.font("Helvetica-Bold").fontSize(8);
+        doc.text("A", x, y + 3, { width: cellW, align: "center", lineBreak: false });
+        doc.restore();
+      } else if (status === "transferred") {
         doc.save();
         doc.fillColor("#000");
         doc.font("Helvetica-Bold").fontSize(8);

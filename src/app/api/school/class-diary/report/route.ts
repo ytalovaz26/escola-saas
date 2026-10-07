@@ -172,10 +172,28 @@ async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
   });
 }
 
+function normalizePdfText(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFC")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    // As fontes padrão Helvetica do PDFKit não suportam emojis e vários
+    // símbolos Unicode. Quando esses caracteres chegam ao PDF, podem virar
+    // sequências corrompidas como "â...", "ð..." etc.
+    // Mantemos caracteres latinos/acentuados e pontuação compatível com
+    // WinAnsi, removendo apenas símbolos que a fonte padrão não consegue
+    // representar com segurança.
+    .replace(/[\uD800-\uDFFF]/g, "")
+    .replace(/[\u2600-\u27BF]/g, "")
+    .replace(/[\uFE0E\uFE0F]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function getTextHeight(doc: PDFKit.PDFDocument, text: string, width: number, fontSize = 10) {
   doc.font("Helvetica").fontSize(fontSize);
 
-  return doc.heightOfString(text || "—", {
+  return doc.heightOfString(normalizePdfText(text) || "—", {
     width,
     align: "left",
   });
@@ -237,7 +255,6 @@ function drawSummaryHeader(params: {
   teacherName: string;
   subjectName: string;
   termLabel: string;
-  referenceMonthLabel: string;
   periodText: string;
   logoBuffer: Buffer | null;
 }) {
@@ -248,7 +265,6 @@ function drawSummaryHeader(params: {
     teacherName,
     subjectName,
     termLabel,
-    referenceMonthLabel,
     periodText,
     logoBuffer,
   } = params;
@@ -287,7 +303,6 @@ function drawSummaryHeader(params: {
 
   doc.text(`Turma: ${className}`, leftX, boxY + 14);
   doc.text(`Professor(a): ${teacherName}`, leftX, boxY + 32);
-  doc.text(`Mês base: ${referenceMonthLabel}`, leftX, boxY + 50);
 
   doc.text(`Disciplina: ${subjectName}`, rightX, boxY + 14);
   doc.text(`Período letivo: ${termLabel || "—"}`, rightX, boxY + 32);
@@ -587,7 +602,6 @@ function drawSummaryReport(params: {
   teacherName: string;
   subjectName: string;
   termLabel: string;
-  referenceMonthLabel: string;
   periodText: string;
   logoBuffer: Buffer | null;
 }) {
@@ -599,7 +613,6 @@ function drawSummaryReport(params: {
     teacherName,
     subjectName,
     termLabel,
-    referenceMonthLabel,
     periodText,
     logoBuffer,
   } = params;
@@ -619,7 +632,6 @@ function drawSummaryReport(params: {
     teacherName,
     subjectName,
     termLabel,
-    referenceMonthLabel,
     periodText,
     logoBuffer,
   });
@@ -627,7 +639,7 @@ function drawSummaryReport(params: {
   let y = drawSummaryTableHeader(doc, tableTopFirstPage);
 
   for (const entry of entries) {
-    const content = String(entry.content_taught || "").trim() || "—";
+    const content = normalizePdfText(entry.content_taught).trim() || "—";
 
     doc.font("Helvetica").fontSize(9);
 
@@ -697,6 +709,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
 
   const classId = (url.searchParams.get("classId") || "").trim();
+  const teacherUserId = (url.searchParams.get("teacherUserId") || "").trim();
   const referenceMonth = (url.searchParams.get("referenceMonth") || "").trim();
   const subjectName = (url.searchParams.get("subjectName") || "").trim();
   const termLabel = (url.searchParams.get("termLabel") || "").trim();
@@ -791,6 +804,10 @@ export async function GET(req: Request) {
     .eq("subject_name", subjectName)
     .order("reference_month", { ascending: true });
 
+  if (teacherUserId) {
+    diaryQuery = diaryQuery.eq("teacher_user_id", teacherUserId);
+  }
+
   if (isDailyReport) {
     diaryQuery = diaryQuery.eq("reference_month", referenceMonth);
   } else if (startMonth && endMonth) {
@@ -883,7 +900,6 @@ export async function GET(req: Request) {
       teacherName,
       subjectName,
       termLabel: finalTermLabel,
-      referenceMonthLabel,
       periodText: selectedPeriodLabel,
       logoBuffer,
     });

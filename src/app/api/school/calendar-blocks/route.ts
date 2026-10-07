@@ -75,6 +75,14 @@ function normalizeBlockType(value: unknown) {
   return allowed.has(safe) ? safe : "no_class";
 }
 
+function normalizeCalendarAction(value: unknown) {
+  const safe = cleanText(value);
+
+  const allowed = new Set(["block", "allow"]);
+
+  return allowed.has(safe) ? safe : "block";
+}
+
 function normalizeTargetScope(value: unknown) {
   const safe = cleanText(value);
 
@@ -208,6 +216,7 @@ export async function GET(req: Request) {
           target_scope,
           class_id,
           shift,
+          calendar_action,
           created_by,
           created_at,
           updated_at
@@ -224,7 +233,7 @@ export async function GET(req: Request) {
 
     if (blocksRes.error) {
       return jsonError(
-        "Falha ao buscar bloqueios do calendário: " + blocksRes.error.message,
+        "Falha ao buscar calendário escolar: " + blocksRes.error.message,
         500
       );
     }
@@ -239,7 +248,7 @@ export async function GET(req: Request) {
       },
     });
   } catch (e: any) {
-    return jsonError(e?.message || "Erro interno ao buscar bloqueios.", 500);
+    return jsonError(e?.message || "Erro interno ao buscar calendário.", 500);
   }
 }
 
@@ -253,6 +262,9 @@ export async function POST(req: Request) {
 
     const blockDate = normalizeDate(body.blockDate || body.block_date);
     const type = normalizeBlockType(body.type);
+    const calendarAction = normalizeCalendarAction(
+      body.calendarAction || body.calendar_action
+    );
     const title = cleanText(body.title);
     const description = cleanText(body.description) || null;
 
@@ -268,12 +280,22 @@ export async function POST(req: Request) {
     let affectsAllClasses = true;
 
     if (!title) {
-      return jsonError("Informe o título do bloqueio.", 400);
+      return jsonError(
+        calendarAction === "allow"
+          ? "Informe o título do dia letivo excepcional."
+          : "Informe o título do bloqueio.",
+        400
+      );
     }
 
     if (targetScope === "class") {
       if (!rawClassId) {
-        return jsonError("Selecione a turma para bloquear.", 400);
+        return jsonError(
+          calendarAction === "allow"
+            ? "Selecione a turma para liberar."
+            : "Selecione a turma para bloquear.",
+          400
+        );
       }
 
       await assertClassBelongsToSchool({
@@ -288,7 +310,12 @@ export async function POST(req: Request) {
 
     if (targetScope === "shift") {
       if (!rawShift) {
-        return jsonError("Selecione o período/turno para bloquear.", 400);
+        return jsonError(
+          calendarAction === "allow"
+            ? "Selecione o período/turno para liberar."
+            : "Selecione o período/turno para bloquear.",
+          400
+        );
       }
 
       classId = null;
@@ -314,6 +341,7 @@ export async function POST(req: Request) {
         target_scope: targetScope,
         class_id: classId,
         shift,
+        calendar_action: calendarAction,
         created_by: ctx.userId,
         updated_at: new Date().toISOString(),
       })
@@ -329,6 +357,7 @@ export async function POST(req: Request) {
         target_scope,
         class_id,
         shift,
+        calendar_action,
         created_by,
         created_at,
         updated_at
@@ -337,12 +366,12 @@ export async function POST(req: Request) {
       .single();
 
     if (error) {
-      return jsonError("Falha ao cadastrar bloqueio: " + error.message, 500);
+      return jsonError("Falha ao cadastrar data no calendário: " + error.message, 500);
     }
 
     return jsonOk({ block: data }, 201);
   } catch (e: any) {
-    return jsonError(e?.message || "Erro interno ao cadastrar bloqueio.", 500);
+    return jsonError(e?.message || "Erro interno ao cadastrar data no calendário.", 500);
   }
 }
 
@@ -356,7 +385,7 @@ export async function DELETE(req: Request) {
     const id = cleanText(url.searchParams.get("id"));
 
     if (!id) {
-      return jsonError("Informe o ID do bloqueio para remover.", 400);
+      return jsonError("Informe o ID do registro para remover.", 400);
     }
 
     const { error } = await supabaseAdmin
@@ -366,7 +395,7 @@ export async function DELETE(req: Request) {
       .eq("id", id);
 
     if (error) {
-      return jsonError("Falha ao remover bloqueio: " + error.message, 500);
+      return jsonError("Falha ao remover registro do calendário: " + error.message, 500);
     }
 
     return jsonOk({
@@ -374,6 +403,6 @@ export async function DELETE(req: Request) {
       id,
     });
   } catch (e: any) {
-    return jsonError(e?.message || "Erro interno ao remover bloqueio.", 500);
+    return jsonError(e?.message || "Erro interno ao remover registro do calendário.", 500);
   }
 }

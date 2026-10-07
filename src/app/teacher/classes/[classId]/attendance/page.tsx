@@ -13,7 +13,7 @@ type RosterRow = {
 
 type MarkRow = {
   student_id: string;
-  status: "present" | "absent" | "late";
+  status: "present" | "absent" | "late" | "transferred";
   note: string | null;
 };
 
@@ -103,6 +103,7 @@ export default function TeacherAttendancePage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [generatingDailyPdf, setGeneratingDailyPdf] = useState(false);
   const [generatingReportPdf, setGeneratingReportPdf] = useState(false);
 
@@ -153,7 +154,10 @@ export default function TeacherAttendancePage() {
     );
   }
 
-  function setStatus(studentId: string, status: "present" | "absent" | "late") {
+  function setStatus(
+    studentId: string,
+    status: "present" | "absent" | "late" | "transferred"
+  ) {
     if (isLocked || isAttendanceBlocked) return;
 
     setMarks((prev) => ({
@@ -169,6 +173,7 @@ export default function TeacherAttendancePage() {
   const counts = useMemo(() => {
     let p = 0;
     let f = 0;
+    let a = 0;
     let t = 0;
 
     for (const row of roster) {
@@ -176,10 +181,11 @@ export default function TeacherAttendancePage() {
 
       if (status === "present") p++;
       else if (status === "absent") f++;
-      else if (status === "late") t++;
+      else if (status === "late") a++;
+      else if (status === "transferred") t++;
     }
 
-    return { p, f, t };
+    return { p, f, a, t };
   }, [roster, marks]);
 
   function setAllPresent() {
@@ -301,7 +307,11 @@ export default function TeacherAttendancePage() {
       setRoster(cleanRoster);
       setMarks(markMap);
       setAttendanceBlock(block);
-      setIsLocked((m || []).length > 0);
+      setIsLocked(
+        typeof json.hasAttendanceSession === "boolean"
+          ? json.hasAttendanceSession
+          : (m || []).length > 0
+      );
     } catch (e: any) {
       setErr(e?.message || "Erro inesperado.");
     } finally {
@@ -372,6 +382,54 @@ export default function TeacherAttendancePage() {
       setErr(e?.message || "Erro inesperado.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deleteAttendance() {
+    if (!isLocked) return;
+
+    const confirmed = window.confirm(
+      `Excluir a chamada de ${formatDateBR(date)}?\n\nTodos os registros de presença desta chamada serão removidos. Esta ação não pode ser desfeita.`
+    );
+
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setErr(null);
+    setMsg(null);
+
+    const token = await ensureToken();
+    if (!token) {
+      setDeleting(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `/api/teacher/attendance/save?classId=${encodeURIComponent(
+          classId
+        )}&date=${encodeURIComponent(date)}&lessonNumber=1`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        }
+      );
+
+      const json = await safeJson(res);
+
+      if (!res.ok || !json?.ok) {
+        setErr(json?.error || "Falha ao excluir chamada.");
+        return;
+      }
+
+      setIsLocked(false);
+      await load();
+      setMsg("Chamada excluída com sucesso.");
+    } catch (e: any) {
+      setErr(e?.message || "Erro inesperado ao excluir chamada.");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -672,6 +730,15 @@ export default function TeacherAttendancePage() {
 
             <button
               type="button"
+              className="rounded-2xl border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 disabled:opacity-50"
+              onClick={deleteAttendance}
+              disabled={!isLocked || deleting || saving}
+            >
+              {deleting ? "Excluindo..." : "Excluir chamada"}
+            </button>
+
+            <button
+              type="button"
               className="rounded-2xl border border-slate-300 px-4 py-2 text-sm disabled:opacity-50"
               onClick={openPdfDaily}
               disabled={roster.length === 0 || generatingDailyPdf || isAttendanceBlocked}
@@ -715,7 +782,7 @@ export default function TeacherAttendancePage() {
             </div>
           ) : (
             <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              Marque <b>P</b>, <b>F</b> ou <b>T</b> individualmente e salve para registrar a presença.
+              Marque <b>P</b> (Presente), <b>F</b> (Falta), <b>A</b> (Atraso) ou <b>T</b> (Transferido) individualmente e salve para registrar a situação.
             </div>
           )}
 
@@ -752,6 +819,13 @@ export default function TeacherAttendancePage() {
               <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div className="text-xs text-slate-500">Atrasos</div>
                 <div className="text-2xl font-semibold text-amber-600">
+                  {isAttendanceBlocked ? "—" : counts.a}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs text-slate-500">Transferidos</div>
+                <div className="text-2xl font-semibold text-blue-600">
                   {isAttendanceBlocked ? "—" : counts.t}
                 </div>
               </div>
@@ -843,9 +917,24 @@ export default function TeacherAttendancePage() {
                                     type="button"
                                     onClick={() => setStatus(r.student_id, "late")}
                                     disabled={isLocked}
+                                    title="Atraso"
                                     className={`rounded-2xl px-4 py-2 text-sm font-semibold ${
                                       mk.status === "late"
                                         ? "bg-amber-500 text-white"
+                                        : "border border-slate-300 text-slate-700"
+                                    }`}
+                                  >
+                                    A
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setStatus(r.student_id, "transferred")}
+                                    disabled={isLocked}
+                                    title="Transferido"
+                                    className={`rounded-2xl px-4 py-2 text-sm font-semibold ${
+                                      mk.status === "transferred"
+                                        ? "bg-blue-600 text-white"
                                         : "border border-slate-300 text-slate-700"
                                     }`}
                                   >
@@ -909,9 +998,24 @@ export default function TeacherAttendancePage() {
                               type="button"
                               onClick={() => setStatus(r.student_id, "late")}
                               disabled={isLocked}
+                              title="Atraso"
                               className={`flex-1 rounded-2xl px-4 py-2 text-sm font-semibold ${
                                 mk.status === "late"
                                   ? "bg-amber-500 text-white"
+                                  : "border border-slate-300 text-slate-700"
+                              }`}
+                            >
+                              A
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setStatus(r.student_id, "transferred")}
+                              disabled={isLocked}
+                              title="Transferido"
+                              className={`flex-1 rounded-2xl px-4 py-2 text-sm font-semibold ${
+                                mk.status === "transferred"
+                                  ? "bg-blue-600 text-white"
                                   : "border border-slate-300 text-slate-700"
                               }`}
                             >

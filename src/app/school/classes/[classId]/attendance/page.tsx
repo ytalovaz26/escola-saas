@@ -16,6 +16,25 @@ type MarkRow = {
   note: string | null;
 };
 
+type AttendanceBlockItem = {
+  id: string;
+  date: string;
+  type: string;
+  typeLabel: string;
+  title: string;
+  description: string;
+  targetScope: string;
+  classId: string | null;
+  shift: string | null;
+};
+
+type AttendanceBlock = {
+  isBlocked: boolean;
+  blocks: AttendanceBlockItem[];
+  mainBlock: AttendanceBlockItem | null;
+  message: string | null;
+};
+
 function todayISO() {
   const d = new Date();
   const yyyy = d.getFullYear();
@@ -37,6 +56,7 @@ export default function AttendancePage() {
   const [date, setDate] = useState(todayISO());
   const [roster, setRoster] = useState<RosterRow[]>([]);
   const [marks, setMarks] = useState<Record<string, MarkRow>>({});
+  const [attendanceBlock, setAttendanceBlock] = useState<AttendanceBlock | null>(null);
 
   // ✅ trava edição após salvar (pode destravar clicando em "Editar")
   const [isLocked, setIsLocked] = useState(false);
@@ -62,7 +82,7 @@ export default function AttendancePage() {
   }
 
   function setStatus(studentId: string, status: "present" | "absent") {
-    if (isLocked) return;
+    if (isLocked || attendanceBlock?.isBlocked) return;
     setMarks((prev) => ({
       ...prev,
       [studentId]: {
@@ -85,7 +105,7 @@ export default function AttendancePage() {
   }, [roster, marks]);
 
   function setAllPresent() {
-    if (isLocked) return;
+    if (isLocked || attendanceBlock?.isBlocked) return;
     setMarks((prev) => {
       const next = { ...prev };
       for (const r of roster) {
@@ -102,6 +122,7 @@ export default function AttendancePage() {
     setLoading(true);
     setErr(null);
     setMsg(null);
+    setAttendanceBlock(null);
 
     // ao trocar data/turma, destrava automaticamente
     setIsLocked(false);
@@ -130,6 +151,7 @@ export default function AttendancePage() {
 
       const r: RosterRow[] = json.roster || [];
       const m: MarkRow[] = json.marks || [];
+      const block: AttendanceBlock | null = json.attendanceBlock || null;
 
       const map: Record<string, MarkRow> = {};
       for (const row of m) map[row.student_id] = row;
@@ -147,6 +169,7 @@ export default function AttendancePage() {
 
       setRoster(r);
       setMarks(map);
+      setAttendanceBlock(block);
     } catch (e: any) {
       setErr(e?.message || "Erro inesperado.");
     } finally {
@@ -155,6 +178,11 @@ export default function AttendancePage() {
   }
 
   async function save() {
+    if (attendanceBlock?.isBlocked) {
+      setErr("Não é possível salvar chamada em dia sem aula.");
+      return;
+    }
+
     setSaving(true);
     setErr(null);
     setMsg(null);
@@ -287,7 +315,7 @@ export default function AttendancePage() {
             <button
               className="border px-4 py-2 rounded disabled:opacity-60"
               onClick={setAllPresent}
-              disabled={roster.length === 0 || isLocked}
+              disabled={roster.length === 0 || isLocked || attendanceBlock?.isBlocked}
               title="Marca todos como presentes"
             >
               Marcar todos P
@@ -296,7 +324,7 @@ export default function AttendancePage() {
             <button
               className="border px-4 py-2 rounded disabled:opacity-60"
               onClick={() => setIsLocked(false)}
-              disabled={!isLocked}
+              disabled={!isLocked || attendanceBlock?.isBlocked}
               title="Desbloqueia para editar"
             >
               Editar
@@ -305,12 +333,37 @@ export default function AttendancePage() {
             <button
               className="bg-black text-white px-4 py-2 rounded disabled:opacity-60"
               onClick={save}
-              disabled={saving || roster.length === 0}
+              disabled={saving || roster.length === 0 || isLocked || attendanceBlock?.isBlocked}
             >
               {saving ? "Salvando..." : "Salvar presença"}
             </button>
           </div>
         </div>
+
+        {attendanceBlock?.isBlocked && (
+          <div className="border border-amber-300 bg-amber-50 rounded-xl p-4">
+            <div className="font-semibold text-amber-900">
+              Não haverá aula neste dia
+            </div>
+
+            <div className="text-sm text-amber-800 mt-1">
+              {attendanceBlock.mainBlock?.typeLabel || "Dia sem aula"}
+              {attendanceBlock.mainBlock?.title
+                ? ` — ${attendanceBlock.mainBlock.title}`
+                : ""}
+            </div>
+
+            {attendanceBlock.mainBlock?.description && (
+              <div className="text-sm text-amber-700 mt-2">
+                {attendanceBlock.mainBlock.description}
+              </div>
+            )}
+
+            <div className="text-xs text-amber-700 mt-2">
+              A chamada está bloqueada para esta data.
+            </div>
+          </div>
+        )}
 
         {msg && <div className="text-green-700">{msg}</div>}
 
@@ -337,7 +390,7 @@ export default function AttendancePage() {
                           mk.status === "present" ? "bg-black text-white" : ""
                         } ${isLocked ? "opacity-60" : ""}`}
                         onClick={() => setStatus(r.student_id, "present")}
-                        disabled={isLocked}
+                        disabled={isLocked || attendanceBlock?.isBlocked}
                       >
                         P
                       </button>
@@ -346,7 +399,7 @@ export default function AttendancePage() {
                           mk.status === "absent" ? "bg-black text-white" : ""
                         } ${isLocked ? "opacity-60" : ""}`}
                         onClick={() => setStatus(r.student_id, "absent")}
-                        disabled={isLocked}
+                        disabled={isLocked || attendanceBlock?.isBlocked}
                       >
                         F
                       </button>
@@ -383,7 +436,7 @@ export default function AttendancePage() {
                                 mk.status === "present" ? "bg-black text-white" : ""
                               } ${isLocked ? "opacity-60" : ""}`}
                               onClick={() => setStatus(r.student_id, "present")}
-                              disabled={isLocked}
+                              disabled={isLocked || attendanceBlock?.isBlocked}
                             >
                               P
                             </button>
@@ -392,7 +445,7 @@ export default function AttendancePage() {
                                 mk.status === "absent" ? "bg-black text-white" : ""
                               } ${isLocked ? "opacity-60" : ""}`}
                               onClick={() => setStatus(r.student_id, "absent")}
-                              disabled={isLocked}
+                              disabled={isLocked || attendanceBlock?.isBlocked}
                             >
                               F
                             </button>

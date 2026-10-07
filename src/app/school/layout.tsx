@@ -41,6 +41,7 @@ const STAFF_HREF = "/school/staff";
 const SCHEDULE_HREF = "/school/schedule";
 const CALENDAR_BLOCKS_HREF = "/school/calendar-blocks";
 const MENU_HREF = "/school/menu";
+const ACADEMIC_SETTINGS_HREF = "/school/academic-settings";
 
 function safeJson(text: string) {
   if (!text) return null;
@@ -293,6 +294,13 @@ export default function SchoolLayout({
         roles: ["diretor", "coordenador", "secretaria", "admin"],
       },
       {
+        label: "Configurações Acadêmicas",
+        href: ACADEMIC_SETTINGS_HREF,
+        icon: "⚙️",
+        section: "configuracao",
+        roles: ["diretor", "coordenador", "admin"],
+      },
+      {
         label: "Branding",
         href: BRANDING_HREF,
         icon: "🎨",
@@ -308,18 +316,38 @@ export default function SchoolLayout({
   }, [navItems, role]);
 
   const mainItems = allowedNavItems.filter((i) => i.section === "principal");
-  const operationItems = allowedNavItems.filter((i) => i.section === "operacao");
-  const configItems = allowedNavItems.filter((i) => i.section === "configuracao");
+  const operationItems = allowedNavItems.filter(
+    (i) => i.section === "operacao"
+  );
+  const configItems = allowedNavItems.filter(
+    (i) => i.section === "configuracao"
+  );
 
-  const canOpenStaff = role === "diretor" || role === "coordenador" || role === "admin";
-  const canOpenSubjects = role === "diretor" || role === "coordenador" || role === "admin";
+  const canOpenStaff =
+    role === "diretor" || role === "coordenador" || role === "admin";
+
+  const canOpenSubjects =
+    role === "diretor" || role === "coordenador" || role === "admin";
+
   const canOpenBranding = role === "diretor" || role === "admin";
+
   const canOpenSchedule =
-    role === "diretor" || role === "coordenador" || role === "secretaria" || role === "admin";
+    role === "diretor" ||
+    role === "coordenador" ||
+    role === "secretaria" ||
+    role === "admin";
+
   const canOpenCalendarBlocks =
-    role === "diretor" || role === "coordenador" || role === "secretaria" || role === "admin";
+    role === "diretor" ||
+    role === "coordenador" ||
+    role === "secretaria" ||
+    role === "admin";
+
   const canOpenMenu =
-    role === "diretor" || role === "coordenador" || role === "secretaria" || role === "admin";
+    role === "diretor" ||
+    role === "coordenador" ||
+    role === "secretaria" ||
+    role === "admin";
 
   useEffect(() => {
     (async () => {
@@ -432,7 +460,11 @@ export default function SchoolLayout({
                   <div className="truncate text-base font-semibold text-slate-900">
                     {brandName}
                   </div>
-                  <div className="mt-0.5 text-xs text-slate-500">{roleLabel}</div>
+
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    {roleLabel}
+                  </div>
+
                   <div className="mt-1 truncate text-[11px] text-slate-400">
                     {userEmail}
                   </div>
@@ -442,9 +474,26 @@ export default function SchoolLayout({
 
             <div className="flex-1 overflow-y-auto px-4 py-5">
               <div className="space-y-6">
-                <NavSection title="Principal" items={mainItems} pathname={pathname} onGo={go} />
-                <NavSection title="Operação" items={operationItems} pathname={pathname} onGo={go} />
-                <NavSection title="Configuração" items={configItems} pathname={pathname} onGo={go} />
+                <NavSection
+                  title="Principal"
+                  items={mainItems}
+                  pathname={pathname}
+                  onGo={go}
+                />
+
+                <NavSection
+                  title="Operação"
+                  items={operationItems}
+                  pathname={pathname}
+                  onGo={go}
+                />
+
+                <NavSection
+                  title="Configuração"
+                  items={configItems}
+                  pathname={pathname}
+                  onGo={go}
+                />
               </div>
             </div>
 
@@ -490,6 +539,7 @@ export default function SchoolLayout({
                   <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
                     Plataforma escolar
                   </div>
+
                   <div className="truncate text-sm font-semibold text-slate-900 md:text-base">
                     {brandName}
                   </div>
@@ -589,14 +639,34 @@ export default function SchoolLayout({
                     <div className="truncate text-sm font-semibold text-slate-900">
                       {brandName}
                     </div>
-                    <div className="text-xs text-slate-500">{roleLabel}</div>
+
+                    <div className="text-xs text-slate-500">
+                      {roleLabel}
+                    </div>
                   </div>
                 </div>
 
                 <div className="space-y-5">
-                  <NavSection title="Principal" items={mainItems} pathname={pathname} onGo={go} />
-                  <NavSection title="Operação" items={operationItems} pathname={pathname} onGo={go} />
-                  <NavSection title="Configuração" items={configItems} pathname={pathname} onGo={go} />
+                  <NavSection
+                    title="Principal"
+                    items={mainItems}
+                    pathname={pathname}
+                    onGo={go}
+                  />
+
+                  <NavSection
+                    title="Operação"
+                    items={operationItems}
+                    pathname={pathname}
+                    onGo={go}
+                  />
+
+                  <NavSection
+                    title="Configuração"
+                    items={configItems}
+                    pathname={pathname}
+                    onGo={go}
+                  />
                 </div>
 
                 <button
