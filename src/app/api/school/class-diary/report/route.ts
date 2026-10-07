@@ -176,7 +176,18 @@ function normalizePdfText(value: unknown) {
   return String(value ?? "")
     .normalize("NFC")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "");
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    // As fontes padrão Helvetica do PDFKit não suportam emojis e vários
+    // símbolos Unicode. Quando esses caracteres chegam ao PDF, podem virar
+    // sequências corrompidas como "â...", "ð..." etc.
+    // Mantemos caracteres latinos/acentuados e pontuação compatível com
+    // WinAnsi, removendo apenas símbolos que a fonte padrão não consegue
+    // representar com segurança.
+    .replace(/[\uD800-\uDFFF]/g, "")
+    .replace(/[\u2600-\u27BF]/g, "")
+    .replace(/[\uFE0E\uFE0F]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function getTextHeight(doc: PDFKit.PDFDocument, text: string, width: number, fontSize = 10) {
