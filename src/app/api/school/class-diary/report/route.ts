@@ -173,19 +173,37 @@ async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
 }
 
 function normalizePdfText(value: unknown) {
-  return String(value ?? "")
-    .normalize("NFC")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
-    // As fontes padrão Helvetica do PDFKit não suportam emojis e vários
-    // símbolos Unicode. Quando esses caracteres chegam ao PDF, podem virar
-    // sequências corrompidas como "â...", "ð..." etc.
-    // Mantemos caracteres latinos/acentuados e pontuação compatível com
-    // WinAnsi, removendo apenas símbolos que a fonte padrão não consegue
-    // representar com segurança.
-    .replace(/[\uD800-\uDFFF]/g, "")
-    .replace(/[\u2600-\u27BF]/g, "")
-    .replace(/[\uFE0E\uFE0F]/g, "")
+  // As fontes Helvetica internas do PDFKit usam WinAnsi (Windows-1252).
+  // Caracteres fora desse repertorio podem ser convertidos incorretamente
+  // pelo PDFKit. Preservamos os acentos portugueses e a pontuacao suportada.
+  const substitutions: Record<string, string> = {
+    "\u00ad": "", "\u200b": "", "\u200c": "", "\u200d": "",
+    "\u2060": "", "\ufeff": "", "\ufe0e": "", "\ufe0f": "",
+    "\u2010": "-", "\u2011": "-", "\u2012": "-",
+    "\u2212": "-", "\u2028": "\n", "\u2029": "\n",
+    "\u00a0": " ", "\u202f": " ", "\u2009": " ",
+    "\u2192": " -> ", "\u2190": " <- ",
+    "\u2713": "", "\u2714": "", "\u25cf": "•",
+  };
+  const winAnsiExtra = new Set(
+    Array.from("€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ")
+  );
+
+  return Array.from(String(value ?? "").normalize("NFC"))
+    .map((character) => {
+      if (Object.prototype.hasOwnProperty.call(substitutions, character)) {
+        return substitutions[character];
+      }
+      const code = character.codePointAt(0) ?? 0;
+      if (character === "\n" || character === "\r" || character === "\t") return " ";
+      if ((code >= 32 && code <= 126) || (code >= 160 && code <= 255)) {
+        return character;
+      }
+      if (winAnsiExtra.has(character)) return character;
+      // Nao enviamos caracteres Unicode sem glifo a fonte Helvetica.
+      return " ";
+    })
+    .join("")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
@@ -431,7 +449,7 @@ function drawSummaryFooter(params: {
 
 function estimateSectionHeight(doc: PDFKit.PDFDocument, value: string, width: number) {
   const titleGap = 16;
-  const text = value?.trim() ? value.trim() : "—";
+  const text = normalizePdfText(value) || "—";
   const textHeight = getTextHeight(doc, text, width - 24, 10);
   const boxHeight = Math.max(40, textHeight + 20);
 
@@ -447,7 +465,7 @@ function drawSection(params: {
   value: string;
 }) {
   const { doc, x, y, width, title, value } = params;
-  const text = value?.trim() ? value.trim() : "—";
+  const text = normalizePdfText(value) || "—";
 
   doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827").text(title, x, y);
 
