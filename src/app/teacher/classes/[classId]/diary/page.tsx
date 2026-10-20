@@ -197,28 +197,43 @@ export default function TeacherClassDiaryPage() {
     }
 
     try {
-      const method = editingEntryId ? "PUT" : "POST";
-
-      const res = await fetch("/api/teacher/class-diary", {
-        method,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          classId,
-          entryId: editingEntryId,
-          subjectName,
-          termLabel,
-          referenceMonth,
-          lessonDate,
-          contentTaught,
-          methodology,
-          activities,
-          notes,
-          homework,
-        }),
-      });
+      // A edição possui uma rota própria. A criação continua na API original.
+      const isEditing = Boolean(editingEntryId);
+      const res = await fetch(
+        isEditing ? "/api/teacher/class-diary/update" : "/api/teacher/class-diary",
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(
+            isEditing
+              ? {
+                  entryId: editingEntryId,
+                  classId,
+                  content_taught: contentTaught,
+                  methodology,
+                  activities,
+                  notes,
+                  homework,
+                }
+              : {
+                  classId,
+                  entryId: editingEntryId,
+                  subjectName,
+                  termLabel,
+                  referenceMonth,
+                  lessonDate,
+                  contentTaught,
+                  methodology,
+                  activities,
+                  notes,
+                  homework,
+                }
+          ),
+        }
+      );
 
       const json = await safeJson(res);
 
