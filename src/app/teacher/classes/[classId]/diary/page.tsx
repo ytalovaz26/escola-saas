@@ -212,6 +212,8 @@ export default function TeacherClassDiaryPage() {
               ? {
                   entryId: editingEntryId,
                   classId,
+                  subjectName,
+                  termLabel,
                   content_taught: contentTaught,
                   methodology,
                   activities,
@@ -340,6 +342,8 @@ export default function TeacherClassDiaryPage() {
         termLabel,
         lessonDate,
       });
+      // O ID não muda quando a disciplina é renomeada.
+      if (diaryMeta?.id) query.set("diaryId", diaryMeta.id);
 
       const res = await fetch(`/api/teacher/class-diary/report?${query.toString()}`, {
         method: "GET",

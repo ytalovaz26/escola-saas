@@ -291,13 +291,14 @@ export async function GET(req: Request) {
   const classId = String(url.searchParams.get("classId") || "").trim();
   const referenceMonth = String(url.searchParams.get("referenceMonth") || "").trim();
   const subjectName = String(url.searchParams.get("subjectName") || "").trim();
+  const diaryId = String(url.searchParams.get("diaryId") || "").trim();
   const termLabel = String(url.searchParams.get("termLabel") || "").trim();
   const lessonDate = String(url.searchParams.get("lessonDate") || "").trim();
 
   if (!teacherUserId) return jsonError("Professor não identificado.", 401);
   if (!classId) return jsonError("classId é obrigatório.", 400);
   if (!referenceMonth) return jsonError("referenceMonth é obrigatório.", 400);
-  if (!subjectName) return jsonError("subjectName é obrigatório.", 400);
+  if (!subjectName && !diaryId) return jsonError("subjectName ou diaryId é obrigatório.", 400);
   if (!lessonDate) return jsonError("lessonDate é obrigatório.", 400);
 
   const { data: link, error: linkErr } = await supabaseAdmin
@@ -348,15 +349,21 @@ export async function GET(req: Request) {
   const className = classData?.name || classId;
   const teacherName = await getTeacherDisplayName({ teacherUserId, schoolId });
 
-  const { data: diary, error: diaryErr } = await supabaseAdmin
+  // Preferir o ID imutável: a disciplina pode ter sido renomeada na edição.
+  // Mantém a busca antiga por nome para compatibilidade com chamadas existentes.
+  let diaryQuery = supabaseAdmin
     .from("class_diaries")
     .select("*")
     .eq("school_id", schoolId)
     .eq("class_id", classId)
     .eq("teacher_user_id", teacherUserId)
-    .eq("subject_name", subjectName)
-    .eq("reference_month", referenceMonth)
-    .maybeSingle();
+    .eq("reference_month", referenceMonth);
+
+  diaryQuery = diaryId
+    ? diaryQuery.eq("id", diaryId)
+    : diaryQuery.eq("subject_name", subjectName);
+
+  const { data: diary, error: diaryErr } = await diaryQuery.maybeSingle();
 
   if (diaryErr) {
     return jsonError("Falha ao buscar diário.", 500, { details: diaryErr.message });
@@ -405,8 +412,8 @@ export async function GET(req: Request) {
     schoolName,
     className,
     teacherName,
-    subjectName,
-    termLabel: termLabel || diary.term_label || "—",
+    subjectName: diary.subject_name || subjectName,
+    termLabel: diary.term_label || termLabel || "—",
     referenceMonthLabel,
     logoBuffer,
   });
