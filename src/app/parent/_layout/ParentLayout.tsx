@@ -340,6 +340,12 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       description: "Financeiro escolar",
     },
     {
+      href: "/parent/matricula",
+      icon: "📎",
+      title: "Matrícula",
+      description: "Dados e documentos",
+    },
+    {
       href: "/parent/complete-profile",
       icon: "🪪",
       title: "Meus dados",

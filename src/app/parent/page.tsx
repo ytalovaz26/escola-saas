@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
+import EnrollmentPendingBanner from "@/components/parent/EnrollmentPendingBanner";
 
 type MePayload = {
   ok: true;
@@ -562,6 +563,7 @@ export default function ParentHomePage() {
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
+        <EnrollmentPendingBanner />
         <section className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 bg-white px-6 py-5 md:px-8">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
