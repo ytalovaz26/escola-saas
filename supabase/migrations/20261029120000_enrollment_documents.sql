@@ -138,8 +138,10 @@ create trigger enrollment_documents_no_truncate
   before truncate on public.enrollment_documents
   for each statement execute function public.enrollment_documents_block_delete();
 
--- Envio/reenvio atômico: trava as versões do mesmo aluno e tipo, recusa se já houver
--- aprovado, marca pendente/rejeitado anteriores como "superseded" e insere a nova versão.
+-- Envio/reenvio atômico: serializa envios do mesmo aluno e tipo (também quando ainda não
+-- há documento), trava as versões existentes, recusa se já houver aprovado, marca
+-- pendente/rejeitado anteriores como "superseded" e insere a nova versão.
+-- Envios simultâneos: o último a entrar substitui o anterior, sem erro.
 -- Tudo na mesma transação (falha = nada muda). Só o servidor (service_role) executa.
 create function public.enrollment_document_submit(
   p_id uuid, p_school_id uuid, p_student_id uuid, p_parent_id uuid, p_doc_type text,
@@ -153,6 +155,11 @@ as $$
 declare
   v_replaced uuid;
 begin
+  -- Lock transacional por aluno+tipo: sem ele, dois primeiros envios simultâneos não
+  -- teriam linha para travar e o segundo falharia no índice único.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('enrollment_document_submit:' || p_student_id::text || ':' || p_doc_type, 0));
+
   perform 1 from public.enrollment_documents d
    where d.student_id = p_student_id and d.doc_type = p_doc_type and d.status <> 'superseded'
    for update;
