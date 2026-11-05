@@ -1,6 +1,7 @@
 // src/lib/requireTeacher.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { blockedByFirstAccess } from "@/lib/auth/server";
 
 function normRole(role: any) {
   return String(role || "").trim().toLowerCase();
@@ -24,6 +25,9 @@ export async function requireTeacher(req: Request) {
       res: NextResponse.json({ ok: false, error: "Invalid session" }, { status: 401 }),
     };
   }
+
+  const firstAccess = blockedByFirstAccess(u.user);
+  if (firstAccess) return { ok: false as const, res: firstAccess };
 
   const userId = u.user.id;
 

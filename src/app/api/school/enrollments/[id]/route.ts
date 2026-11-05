@@ -273,7 +273,7 @@ export async function GET(
 ) {
   const guard = await requireStaff(req, [
     "director",
-    "coordinator",
+    "coordinator", "secretaria",
     "diretor",
     "coordenador",
     "admin",
@@ -437,7 +437,7 @@ export async function PATCH(
 ) {
   const guard = await requireStaff(req, [
     "director",
-    "coordinator",
+    "coordinator", "secretaria",
     "diretor",
     "coordenador",
     "admin",
@@ -674,7 +674,7 @@ export async function DELETE(
 ) {
   const guard = await requireStaff(req, [
     "director",
-    "coordinator",
+    "coordinator", "secretaria",
     "diretor",
     "coordenador",
     "admin",

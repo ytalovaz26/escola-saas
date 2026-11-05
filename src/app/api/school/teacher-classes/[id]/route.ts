@@ -6,7 +6,7 @@ import { jsonFail, jsonOk, logRouteError } from "@/lib/http";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function DELETE(req: Request, ctx: Ctx) {
-  const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
+  const guard = await requireStaff(req, ["director", "coordinator", "secretaria", "diretor", "coordenador"]);
   if (!guard.ok) return guard.res;
 
   const { id } = await ctx.params;

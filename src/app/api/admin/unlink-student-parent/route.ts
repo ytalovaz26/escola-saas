@@ -1,20 +1,18 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireStaff } from "@/lib/requireStaff";
+import { SCHOOL_MANAGEMENT_ROLES } from "@/lib/auth/schoolRoles";
 
-function getEnv(name: string) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
+export const runtime = "nodejs";
 
+// Desvincular responsável de aluno (soft delete em student_parents).
+// Autorização no servidor: vínculo ATIVO de gestão (diretor, coordenação, secretaria) em
+// school_users (requireStaff). A escola é sempre a do vínculo de quem pede; o schoolId do
+// corpo só é aceito se for igual a ela. Não usa o token do usuário contra o banco (RLS).
 export async function POST(req: Request) {
   try {
-    const authHeader = req.headers.get("authorization") || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-
-    if (!token) {
-      return NextResponse.json({ ok: false, error: "Missing Bearer token" }, { status: 401 });
-    }
+    const guard = await requireStaff(req, [...SCHOOL_MANAGEMENT_ROLES]);
+    if (!guard.ok) return guard.res;
 
     const body = await req.json().catch(() => null);
 
@@ -27,6 +25,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "schoolId é obrigatório" }, { status: 400 });
     }
 
+    if (schoolId !== guard.schoolId) {
+      return NextResponse.json({ ok: false, error: "Sem permissão para desvincular" }, { status: 403 });
+    }
+
     // Precisamos de UM identificador do vínculo:
     // - linkId OU (parentId + studentId)
     if (!linkId && !(parentId && studentId)) {
@@ -36,43 +38,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
-    const anonKey = getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-
-    // Cliente com JWT do usuário logado (RLS ativo)
-    const supaUser = createClient(url, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false },
-    });
-
-    // 1) valida token e pega callerId
-    const { data: meData, error: meErr } = await supaUser.auth.getUser();
-    if (meErr || !meData?.user) {
-      return NextResponse.json({ ok: false, error: "Token inválido" }, { status: 401 });
-    }
-    const callerId = meData.user.id;
-
-    // 2) valida permissão (diretor/coordenador nesta escola)
-    const { data: roleRow, error: roleErr } = await supaUser
-      .from("school_users")
-      .select("role")
-      .eq("school_id", schoolId)
-      .eq("user_id", callerId)
-      .maybeSingle();
-
-    if (roleErr) {
-      return NextResponse.json({ ok: false, error: roleErr.message }, { status: 400 });
-    }
-
-    const role = String(roleRow?.role || "");
-    const allowed = role === "diretor" || role === "coordenador";
-
-    if (!allowed) {
-      return NextResponse.json({ ok: false, error: "Sem permissão para desvincular" }, { status: 403 });
-    }
-
-    // 3) desativa vínculo (soft delete)
-    let q = supaUser.from("student_parents").update({ is_active: false });
+    // desativa vínculo (soft delete), sempre restrito à escola de quem pede
+    let q = supabaseAdmin.from("student_parents").update({ is_active: false });
 
     if (linkId) {
       q = q.eq("id", linkId);
@@ -80,12 +47,11 @@ export async function POST(req: Request) {
       q = q.eq("parent_id", parentId!).eq("student_id", studentId!);
     }
 
-    // sempre garanta que é da escola
-    q = q.eq("school_id", schoolId).eq("is_active", true);
+    q = q.eq("school_id", guard.schoolId).eq("is_active", true);
 
     const { error: updErr } = await q;
     if (updErr) {
-      return NextResponse.json({ ok: false, error: updErr.message }, { status: 400 });
+      return NextResponse.json({ ok: false, error: "Não foi possível desvincular." }, { status: 500 });
     }
 
     return NextResponse.json({ ok: true });

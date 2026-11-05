@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { usePathname, useRouter } from "next/navigation";
+import { FIRST_ACCESS_PATH } from "@/lib/auth/firstAccess";
 
 type MePayload = {
   ok: true;
@@ -251,6 +252,11 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
           return;
         }
 
+        if (meJson?.mustChangePassword) {
+          router.replace(FIRST_ACCESS_PATH);
+          return;
+        }
+
         if (!meJson?.parent?.parentId) {
           router.replace(meJson?.redirectTo || "/login");
           return;
@@ -350,6 +356,12 @@ export default function ParentLayout({ children }: { children: React.ReactNode }
       icon: "🪪",
       title: "Meus dados",
       description: "Atualizar cadastro",
+    },
+    {
+      href: "/account/change-password",
+      icon: "🔐",
+      title: "Alterar senha",
+      description: "Segurança da conta",
     },
   ];
 

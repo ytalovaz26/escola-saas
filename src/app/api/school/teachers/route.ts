@@ -8,7 +8,7 @@ function normRole(role: any) {
 }
 
 export async function GET(req: Request) {
-  const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
+  const guard = await requireStaff(req, ["director", "coordinator", "secretaria", "diretor", "coordenador"]);
   if (!guard.ok) return guard.res;
 
   try {

@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     "admin",
     "diretor",
     "director",
-    "coordenador",
+    "coordenador", "secretaria",
     "coordinator",
   ]);
   if (!guard.ok) return guard.res;

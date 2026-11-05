@@ -1,5 +1,6 @@
 "use client";
 
+import { isSchoolManagementRole } from "@/lib/auth/schoolRoles";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -56,10 +57,7 @@ function canManageBranding(role: string | null | undefined) {
   const r = safeRole(role);
 
   return (
-    r === "diretor" ||
-    r === "director" ||
-    r === "coordenador" ||
-    r === "coordinator"
+    isSchoolManagementRole(r)
   );
 }
 

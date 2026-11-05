@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { FIRST_ACCESS_PATH, mustChangePassword } from "@/lib/auth/firstAccess";
+import { isSchoolManagementRole as isManagementRole } from "@/lib/auth/schoolRoles";
 
 export const runtime = "nodejs";
 
 type MeResponse = {
   ok: true;
   user: { id: string; email: string | null };
+  mustChangePassword: boolean;
   isPlatformAdmin: boolean;
   school?: { schoolId: string; role: string };
   parent?: {
@@ -36,17 +39,7 @@ function getBearerToken(req: Request) {
 }
 
 function isSchoolManagementRole(role: string) {
-  const r = normRole(role);
-
-  return (
-    r === "diretor" ||
-    r === "director" ||
-    r === "coordenador" ||
-    r === "coordinator" ||
-    r === "secretaria" ||
-    r === "secretary" ||
-    r === "admin"
-  );
+  return isManagementRole(role);
 }
 
 function isTeacherRole(role: string) {
@@ -196,9 +189,16 @@ export async function GET(req: Request) {
       };
     }
 
+    // Primeiro acesso: conta criada pela escola com senha temporária ou convite.
+    const mustChange = mustChangePassword(userData.user);
+    if (mustChange) {
+      redirectTo = FIRST_ACCESS_PATH;
+    }
+
     const payload: MeResponse = {
       ok: true,
       user: { id: userId, email },
+      mustChangePassword: mustChange,
       isPlatformAdmin,
       school,
       parent,

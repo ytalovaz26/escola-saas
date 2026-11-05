@@ -249,7 +249,7 @@ async function syncActiveClassLink({
 export async function GET(req: Request) {
   const guard = await requireStaff(req, [
     "director",
-    "coordinator",
+    "coordinator", "secretaria",
     "diretor",
     "coordenador",
     "admin",
@@ -516,7 +516,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const guard = await requireStaff(req, [
     "director",
-    "coordinator",
+    "coordinator", "secretaria",
     "diretor",
     "coordenador",
     "admin",

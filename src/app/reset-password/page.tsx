@@ -3,31 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { validateNewPassword } from "@/lib/auth/passwordPolicy";
 
 function validatePassword(password: string, confirmPassword: string) {
-  if (!password) return "Informe a nova senha.";
-
-  if (password.length < 8) {
-    return "A nova senha precisa ter pelo menos 8 caracteres.";
-  }
-
-  if (password.length > 72) {
-    return "A nova senha precisa ter no máximo 72 caracteres.";
-  }
-
-  if (!/[A-Za-zÀ-ÿ]/.test(password)) {
-    return "A nova senha precisa conter pelo menos uma letra.";
-  }
-
-  if (!/[0-9]/.test(password)) {
-    return "A nova senha precisa conter pelo menos um número.";
-  }
-
-  if (password !== confirmPassword) {
-    return "A confirmação de senha não confere.";
-  }
-
-  return null;
+  return validateNewPassword({ newPassword: password, confirmPassword });
 }
 
 function passwordStrength(password: string) {
@@ -97,6 +76,47 @@ export default function ResetPasswordPage() {
     setError(null);
 
     try {
+      // Formatos de link do Supabase Auth:
+      // - #access_token=...&type=recovery (fluxo implícito): o cliente lê sozinho;
+      // - ?token_hash=...&type=recovery (modelo de e-mail com token_hash): verifyOtp;
+      // - ?code=... (PKCE): troca do código, válida no mesmo navegador que pediu o link.
+      const params = new URLSearchParams(window.location.search);
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const tokenHash = params.get("token_hash");
+      const code = params.get("code");
+      const linkError = hashParams.get("error_code") || params.get("error_code");
+
+      if (linkError) {
+        setHasSession(false);
+        setError(
+          linkError === "otp_expired"
+            ? "O link de recuperação expirou. Solicite um novo em “Esqueci minha senha”."
+            : "Link inválido. Solicite um novo em “Esqueci minha senha”."
+        );
+        return;
+      }
+
+      if (tokenHash) {
+        const otpType = params.get("type") === "invite" ? "invite" : "recovery";
+        const { error: otpErr } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: otpType });
+        window.history.replaceState({}, document.title, "/reset-password");
+        if (otpErr) {
+          setHasSession(false);
+          setError("Link inválido ou expirado. Solicite um novo em “Esqueci minha senha”.");
+          return;
+        }
+      } else if (code) {
+        const { error: codeErr } = await supabase.auth.exchangeCodeForSession(code);
+        window.history.replaceState({}, document.title, "/reset-password");
+        if (codeErr) {
+          setHasSession(false);
+          setError(
+            "Não foi possível validar o link neste navegador. Abra o link no mesmo aparelho em que pediu a recuperação ou solicite um novo."
+          );
+          return;
+        }
+      }
+
       const { data, error: sessionErr } = await supabase.auth.getSession();
 
       if (sessionErr) {
@@ -136,13 +156,38 @@ export default function ResetPasswordPage() {
     try {
       setSaving(true);
 
-      const { error: updateErr } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
+      // Grava pelo servidor (sessão de recuperação dispensa a senha atual e encerra a marca
+      // de primeiro acesso). Se o servidor não reconhecer a sessão como recuperação, usa o
+      // caminho padrão do Supabase Auth.
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
 
-      if (updateErr) {
-        setError("Não foi possível alterar a senha. Solicite um novo link e tente novamente.");
+      if (!token) {
+        setError("Link inválido ou expirado. Solicite um novo em “Esqueci minha senha”.");
         return;
+      }
+
+      const res = await fetch("/api/account/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ newPassword, confirmPassword }),
+      });
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok || !json?.ok) {
+        if (json?.code !== "CURRENT_PASSWORD_REQUIRED") {
+          setError(json?.error || "Não foi possível alterar a senha. Solicite um novo link e tente novamente.");
+          return;
+        }
+
+        const { error: updateErr } = await supabase.auth.updateUser({
+          password: newPassword,
+        });
+
+        if (updateErr) {
+          setError("Não foi possível alterar a senha. Solicite um novo link e tente novamente.");
+          return;
+        }
       }
 
       setNewPassword("");

@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import { isSchoolManagementRole } from "@/lib/auth/schoolRoles";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -234,7 +235,7 @@ export default function SchoolDashboardPage() {
       description: "Gerencie diretores, coordenadores, secretarias e professores.",
       status: "ativo",
       category: "Gestão Escolar",
-      roles: ["diretor", "coordenador", "admin"],
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
       label: "Turmas",
@@ -242,7 +243,7 @@ export default function SchoolDashboardPage() {
       description: "Crie, visualize e organize as turmas da escola por série e turno.",
       status: "ativo",
       category: "Gestão Acadêmica",
-      roles: ["diretor", "coordenador", "admin"],
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
       label: "Alunos",
@@ -274,7 +275,7 @@ export default function SchoolDashboardPage() {
       description: "Cadastre professores e mantenha o corpo docente centralizado pela direção.",
       status: "ativo",
       category: "Gestão Acadêmica",
-      roles: ["diretor", "coordenador", "admin"],
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
       label: "Vínculo Professor ↔️ Turmas",
@@ -282,7 +283,7 @@ export default function SchoolDashboardPage() {
       description: "Defina quais professores atendem cada turma e mantenha o painel docente correto.",
       status: "ativo",
       category: "Gestão Acadêmica",
-      roles: ["diretor", "coordenador", "admin"],
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
       label: "Disciplinas",
@@ -290,7 +291,7 @@ export default function SchoolDashboardPage() {
       description: "Cadastre as disciplinas da escola e vincule quais matérias pertencem a cada turma.",
       status: "ativo",
       category: "Gestão Acadêmica",
-      roles: ["diretor", "coordenador", "admin"],
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
       label: "Presença",
@@ -306,7 +307,7 @@ export default function SchoolDashboardPage() {
       description: "Acompanhe o diário pedagógico lançado pelos professores por turma e período.",
       status: "ativo",
       category: "Gestão Acadêmica",
-      roles: ["diretor", "coordenador", "admin"],
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
     {
       label: "Boletins Bimestrais",
@@ -346,7 +347,7 @@ export default function SchoolDashboardPage() {
       description: "Personalize logo e identidade visual da escola nos painéis e PDFs.",
       status: "ativo",
       category: "Gestão Escolar",
-      roles: ["diretor", "admin"],
+      roles: ["diretor", "coordenador", "secretaria", "admin"],
     },
   ];
 
@@ -545,9 +546,7 @@ export default function SchoolDashboardPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {currentRole === "diretor" ||
-              currentRole === "coordenador" ||
-              currentRole === "admin" ? (
+              {isSchoolManagementRole(currentRole) ? (
                 <button
                   type="button"
                   onClick={() => go(STAFF_HREF)}
@@ -557,9 +556,7 @@ export default function SchoolDashboardPage() {
                 </button>
               ) : null}
 
-              {currentRole === "diretor" ||
-              currentRole === "coordenador" ||
-              currentRole === "admin" ? (
+              {isSchoolManagementRole(currentRole) ? (
                 <button
                   type="button"
                   onClick={() => go(SUBJECTS_HREF)}
@@ -585,7 +582,7 @@ export default function SchoolDashboardPage() {
                 Comunicados
               </button>
 
-              {currentRole === "diretor" || currentRole === "admin" ? (
+              {isSchoolManagementRole(currentRole) ? (
                 <button
                   type="button"
                   onClick={() => go(BRANDING_HREF)}

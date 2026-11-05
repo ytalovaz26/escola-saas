@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { validateTemporaryPassword } from "@/lib/auth/passwordPolicy";
 
 type MePayload = {
   ok: true;
@@ -204,62 +205,47 @@ export default function ParentsPage() {
     return sessionData.session?.access_token || null;
   }
 
-  async function loadParents(sid: string) {
-    const { data, error } = await supabase
-      .from("parents")
-      .select("id,school_id,user_id,full_name,phone,photo_url,created_at")
-      .eq("school_id", sid)
-      .order("created_at", { ascending: false });
+  // Responsáveis, alunos e vínculos vêm do servidor, sempre da escola do usuário logado
+  // (GET /api/school/parents/links). O navegador não consulta essas tabelas diretamente.
+  async function loadAll() {
+    const token = await getAccessToken();
 
-    if (error) {
-      setError("Erro ao carregar responsáveis: " + error.message);
+    if (!token) {
+      router.replace("/login");
       return;
     }
 
-    const list = (data ?? []) as ParentRow[];
-    setParents(list);
+    const res = await fetch("/api/school/parents/links", {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    const json = await res.json().catch(() => null);
 
-    if (!selectedParentId && list[0]?.id) setSelectedParentId(list[0].id);
+    if (!res.ok || !json?.ok) {
+      setError(json?.error || "Erro ao carregar responsáveis, alunos e vínculos.");
+      return;
+    }
+
+    const parentList = (json.parents ?? []) as ParentRow[];
+    const studentList = (json.students ?? []) as StudentRow[];
+
+    setParents(parentList);
+    setStudents(studentList);
+    setLinks((json.links ?? []) as LinkRow[]);
+
+    if (!selectedParentId && parentList[0]?.id) setSelectedParentId(parentList[0].id);
+    if (!selectedStudentId && studentList[0]?.id) setSelectedStudentId(studentList[0].id);
   }
 
-  async function loadStudents(sid: string) {
-    const { data, error } = await supabase
-      .from("students")
-      .select("id,full_name,registration_number,created_at")
-      .eq("school_id", sid)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setError("Erro ao carregar alunos: " + error.message);
-      return;
-    }
-
-    const list = (data ?? []) as StudentRow[];
-    setStudents(list);
-
-    if (!selectedStudentId && list[0]?.id) setSelectedStudentId(list[0].id);
-  }
-
-  async function loadLinks(sid: string) {
-    const { data, error } = await supabase
-      .from("student_parents")
-      .select("id,parent_id,student_id,is_active,created_at")
-      .eq("school_id", sid)
-      .eq("is_active", true);
-
-    if (error) {
-      setError("Erro ao carregar vínculos: " + error.message);
-      return;
-    }
-
-    setLinks((data ?? []) as LinkRow[]);
+  async function loadLinks(_sid?: string) {
+    await loadAll();
   }
 
   async function refreshAll() {
     if (!schoolId) return;
 
     setError(null);
-    await Promise.all([loadParents(schoolId), loadStudents(schoolId), loadLinks(schoolId)]);
+    await loadAll();
   }
 
   useEffect(() => {
@@ -319,7 +305,7 @@ export default function ParentsPage() {
 
         setSchoolId(sid);
 
-        await Promise.all([loadParents(sid), loadStudents(sid), loadLinks(sid)]);
+        await loadAll();
       } catch (e: any) {
         setError(e?.message || "Erro inesperado ao carregar responsáveis.");
       } finally {
@@ -335,9 +321,12 @@ export default function ParentsPage() {
     if (!parentName.trim()) return alert("Informe o nome do responsável.");
     if (!parentEmail.trim()) return alert("Informe o e-mail do responsável.");
 
-    if (!tempPassword.trim() || tempPassword.trim().length < 6) {
-      return alert("Senha temporária precisa ter pelo menos 6 caracteres.");
+    if (!tempPassword.trim()) {
+      return alert("Informe a senha temporária.");
     }
+
+    const tempError = validateTemporaryPassword(tempPassword.trim());
+    if (tempError) return alert(tempError);
 
     try {
       setCreating(true);
@@ -405,20 +394,23 @@ export default function ParentsPage() {
       setLinking(true);
       setError(null);
 
-      const { error } = await supabase.from("student_parents").upsert(
-        {
-          school_id: schoolId,
-          parent_id: selectedParentId,
-          student_id: selectedStudentId,
-          is_active: true,
-        },
-        {
-          onConflict: "student_id,parent_id",
-        }
-      );
+      const token = await getAccessToken();
 
-      if (error) {
-        alert("Erro ao vincular: " + friendlyLinkError(error.message));
+      if (!token) {
+        alert("Sessão inválida. Faça login novamente.");
+        router.replace("/login");
+        return;
+      }
+
+      const res = await fetch("/api/school/parents/links", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ parentId: selectedParentId, studentId: selectedStudentId }),
+      });
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok || !json?.ok) {
+        alert("Erro ao vincular: " + friendlyLinkError(json?.error || "desconhecido"));
         return;
       }
 

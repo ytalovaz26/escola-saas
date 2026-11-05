@@ -1,5 +1,6 @@
 "use client";
 
+import { isSchoolManagementRole } from "@/lib/auth/schoolRoles";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
@@ -96,10 +97,7 @@ export default function SchoolTeachersPage() {
   const canManage = useMemo(() => {
     const role = normRole(me?.school?.role);
     return (
-      role === "diretor" ||
-      role === "coordenador" ||
-      role === "director" ||
-      role === "coordinator"
+      isSchoolManagementRole(role)
     );
   }, [me]);
 
@@ -178,10 +176,7 @@ export default function SchoolTeachersPage() {
       }
 
       const allowed =
-        role === "diretor" ||
-        role === "coordenador" ||
-        role === "director" ||
-        role === "coordinator";
+        isSchoolManagementRole(role);
 
       if (!allowed) {
         setError(`Acesso negado. Role atual: "${meJson?.school?.role}".`);

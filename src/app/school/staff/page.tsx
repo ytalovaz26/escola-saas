@@ -1,5 +1,6 @@
 "use client";
 
+import { canAssignRole, isSchoolManagementRole } from "@/lib/auth/schoolRoles";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -39,7 +40,7 @@ function normalizeRole(role?: string): RoleKey {
 
 function canManageStaff(role?: string) {
   const r = normalizeRole(role);
-  return r === "diretor" || r === "coordenador" || r === "admin";
+  return isSchoolManagementRole(r);
 }
 
 function roleLabel(role: string) {
@@ -459,11 +460,12 @@ export default function SchoolStaffPage() {
               <h2 className="text-xl font-semibold text-slate-900">Criar colaborador</h2>
               <p className="mt-1 text-sm text-slate-500">
                 Use senha temporária para acesso imediato ou deixe vazio para convite por e-mail.
+                No primeiro acesso, o colaborador define a própria senha.
               </p>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
-              Diretor e coordenador podem criar equipe. Secretaria não gerencia esta área.
+              Diretor, coordenação e secretaria gerenciam a equipe. Somente o diretor cadastra outro diretor.
             </div>
           </div>
 
@@ -491,7 +493,9 @@ export default function SchoolStaffPage() {
               <option value="coordenador">Coordenador</option>
               <option value="secretaria">Secretaria</option>
               <option value="professor">Professor</option>
-              <option value="diretor">Diretor</option>
+              {canAssignRole(me?.school?.role, "diretor") ? (
+                <option value="diretor">Diretor</option>
+              ) : null}
             </select>
 
             <input

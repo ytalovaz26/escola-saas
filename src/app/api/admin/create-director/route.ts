@@ -56,6 +56,8 @@ export async function POST(req: Request) {
       email,
       password: passwordTemp,
       email_confirm: true,
+      // Primeiro acesso: o diretor define a senha pessoal ao entrar (a temporária não é guardada).
+      app_metadata: { must_change_password: true },
     });
 
     if (!createErr && createdUser?.user?.id) {

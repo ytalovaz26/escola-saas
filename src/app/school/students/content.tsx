@@ -3,6 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import StudentDocumentsDialog from "@/components/school/StudentDocumentsDialog";
+import { changedStaffFields } from "@/lib/students/profileSync";
 
 type ClassRow = {
   id: string;
@@ -61,6 +63,7 @@ type StudentProfilePayload = {
     studentPhotoUploadedAt?: string | null;
     studentPhotoUploadedBy?: string | null;
     studentProfileUpdatedAt?: string | null;
+    profileVersion?: string | null;
 
     gender?: string | null;
     cpf?: string | null;
@@ -376,6 +379,7 @@ export default function StudentsPage() {
   const [profileLoadingId, setProfileLoadingId] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<StudentProfilePayload | null>(null);
+  const [documentsStudent, setDocumentsStudent] = useState<{ id: string; name: string } | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoMessage, setPhotoMessage] = useState<string | null>(null);
   const [generatingPdf, setGeneratingPdf] = useState(false);
@@ -911,7 +915,12 @@ export default function StudentsPage() {
           Authorization: `Bearer ${token}`,
         },
         cache: "no-store",
-        body: JSON.stringify(extraForm),
+        // Somente os campos alterados + a versão da ficha aberta: o servidor recusa (409) se o
+        // responsável atualizou o aluno nesse meio-tempo, em vez de apagar o que ele enviou.
+        body: JSON.stringify({
+          ...changedStaffFields(formFromProfile(selectedProfile), extraForm),
+          expectedProfileVersion: selectedProfile.student.profileVersion ?? null,
+        }),
       });
 
       const json = await safeJson(res);
@@ -1314,6 +1323,14 @@ export default function StudentsPage() {
                       className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 transition hover:bg-blue-100 disabled:opacity-60"
                     >
                       {profileLoadingId === s.id ? "Carregando..." : "Ficha completa"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setDocumentsStudent({ id: s.id, name: s.full_name })}
+                      className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 transition hover:bg-violet-100"
+                    >
+                      Documentos
                     </button>
 
                     <select
@@ -1855,6 +1872,14 @@ export default function StudentsPage() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {documentsStudent ? (
+        <StudentDocumentsDialog
+          studentId={documentsStudent.id}
+          studentName={documentsStudent.name}
+          onClose={() => setDocumentsStudent(null)}
+        />
       ) : null}
     </main>
   );

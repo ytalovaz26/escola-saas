@@ -1,5 +1,6 @@
 "use client";
 
+import { isSchoolManagementRole } from "@/lib/auth/schoolRoles";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -111,10 +112,7 @@ function roleCanManage(role: string | null | undefined) {
   const r = normalizeText(role);
 
   return (
-    r === "diretor" ||
-    r === "director" ||
-    r === "coordenador" ||
-    r === "coordinator"
+    isSchoolManagementRole(r)
   );
 }
 

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { FIRST_ACCESS_PATH } from "@/lib/auth/firstAccess";
 
 type Branding = {
   ok: true;
@@ -79,6 +80,12 @@ const navItems: NavItem[] = [
     href: "/teacher/profile",
     icon: "🪪",
     description: "Foto e informações pessoais",
+  },
+  {
+    label: "Alterar senha",
+    href: "/account/change-password",
+    icon: "🔐",
+    description: "Segurança da sua conta",
   },
 ];
 
@@ -245,6 +252,10 @@ export default function TeacherLayout({ children }: { children: React.ReactNode 
         if (!alive) return;
 
         if (meRes.ok && meJson?.ok) {
+          if (meJson?.mustChangePassword) {
+            router.replace(FIRST_ACCESS_PATH);
+            return;
+          }
           setMe(meJson as MePayload);
         }
 

@@ -21,7 +21,7 @@ export async function GET(req: Request) {
     "admin",
     "diretor",
     "director",
-    "coordenador",
+    "coordenador", "secretaria",
     "coordinator",
     "professor",
     "teacher",

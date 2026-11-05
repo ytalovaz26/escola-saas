@@ -112,7 +112,7 @@ function serializePeriod(row: any) {
 async function authorize(req: Request) {
   return requireStaff(req, [
     "diretor",
-    "coordenador",
+    "coordenador", "secretaria",
     "admin",
   ]);
 }

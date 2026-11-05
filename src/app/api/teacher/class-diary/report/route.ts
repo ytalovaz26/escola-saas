@@ -274,7 +274,7 @@ export async function GET(req: Request) {
   const guard = await requireStaff(req, [
     "professor",
     "teacher",
-    "coordenador",
+    "coordenador", "secretaria",
     "coordinator",
     "diretor",
     "director",

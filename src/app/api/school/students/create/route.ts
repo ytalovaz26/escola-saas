@@ -5,7 +5,7 @@ import { jsonFail, jsonOk, logRouteError, readJsonBody } from "@/lib/http";
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
+  const guard = await requireStaff(req, ["director", "coordinator", "secretaria", "diretor", "coordenador"]);
   if (!guard.ok) return guard.res;
 
   try {

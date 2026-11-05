@@ -1,6 +1,7 @@
 // src/lib/requireParent.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { blockedByFirstAccess } from "@/lib/auth/server";
 
 export async function requireParent(req: Request) {
   const auth = req.headers.get("authorization") || "";
@@ -14,6 +15,9 @@ export async function requireParent(req: Request) {
   if (uErr || !u?.user) {
     return { ok: false as const, res: NextResponse.json({ ok: false, error: "Invalid session" }, { status: 401 }) };
   }
+
+  const firstAccess = blockedByFirstAccess(u.user);
+  if (firstAccess) return { ok: false as const, res: firstAccess };
 
   const userId = u.user.id;
 

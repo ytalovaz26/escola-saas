@@ -9,7 +9,7 @@ export async function DELETE(req: Request) {
   const guard = await requireStaff(req, [
     "professor",
     "teacher",
-    "coordenador",
+    "coordenador", "secretaria",
     "coordinator",
     "diretor",
     "director",

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isSchoolManagementRole } from "@/lib/auth/schoolRoles";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -16,7 +17,7 @@ function normRole(role: any) {
 
 function canManageStaff(roleRaw: any) {
   const r = normRole(roleRaw);
-  return r === "diretor" || r === "coordenador" || r === "director" || r === "coordinator";
+  return isSchoolManagementRole(r);
 }
 
 function getBearerToken(req: Request) {

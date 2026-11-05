@@ -1,6 +1,7 @@
 // src/app/api/school/teachers/classes/unassign/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { isSchoolManagementRole } from "@/lib/auth/schoolRoles";
 
 export const runtime = "nodejs";
 
@@ -21,7 +22,7 @@ async function getBearerToken(req: Request) {
 // diretor/coordenador podem gerenciar (se quiser admin_master, inclua aqui)
 function canManage(roleRaw: any) {
   const r = normRole(roleRaw);
-  return r === "diretor" || r === "coordenador";
+  return isSchoolManagementRole(r);
 }
 
 export async function POST(req: Request) {

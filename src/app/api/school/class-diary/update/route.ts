@@ -29,7 +29,7 @@ export async function PUT(req: Request) {
   const guard = await requireStaff(req, [
     "diretor",
     "director",
-    "coordenador",
+    "coordenador", "secretaria",
     "coordinator",
     "admin",
   ]);

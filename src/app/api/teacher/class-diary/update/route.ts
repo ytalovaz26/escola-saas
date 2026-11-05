@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export async function PUT(req: Request) {
   try {
     const guard = await requireStaff(req, [
-      "professor", "teacher", "coordenador", "coordinator",
+      "professor", "teacher", "coordenador", "secretaria", "coordinator",
       "diretor", "director", "admin",
     ]);
     if (!guard.ok) return guard.res;

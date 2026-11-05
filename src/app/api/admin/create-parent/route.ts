@@ -1,255 +1,159 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { decideExistingAccount, isSchoolManagementRole } from "@/lib/auth/schoolRoles";
+import { withMustChangePassword } from "@/lib/auth/firstAccess";
+import { validateTemporaryPassword } from "@/lib/auth/passwordPolicy";
+import {
+  blockedByFirstAccess,
+  EXISTING_ACCOUNT_CONFLICT_MESSAGE,
+  findAuthUserByEmail,
+  getExistingAccountLinks,
+} from "@/lib/auth/server";
 
-function getEnv(name: string) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
+export const runtime = "nodejs";
 
 /**
- * Esta rota cria um usuário no Supabase Auth (pai) usando SERVICE_ROLE,
- * e registra/vincula no banco (tables) com RLS respeitado (via client anon + JWT).
+ * Cria (ou reaproveita) o acesso de um responsável numa escola.
  *
  * Segurança:
- * - Recebe Authorization: Bearer <access_token> do diretor/coordenador
- * - Valida se quem chama é diretor/coordenador na escola enviada ou platform admin
+ * - Autorização no servidor: Admin Master, ou gestão ATIVA da própria escola enviada
+ *   (diretor, coordenação, secretaria). Só depois disso usa a chave secreta.
+ * - E-mail já existente de outra escola, de equipe escolar ou do Admin Master é recusado:
+ *   a rota nunca altera a senha de contas de terceiros.
+ * - A senha temporária não é guardada; a conta fica marcada para o primeiro acesso.
  */
+
+function fail(error: string, status: number) {
+  return NextResponse.json({ ok: false, error }, { status });
+}
+
 export async function POST(req: Request) {
   try {
     const authHeader = req.headers.get("authorization") || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-    if (!token) {
-      return NextResponse.json(
-        { ok: false, error: "Missing Bearer token" },
-        { status: 401 }
-      );
-    }
+    if (!token) return fail("Missing Bearer token", 401);
 
     const body = await req.json().catch(() => null);
-    const schoolId = body?.schoolId as string | undefined;
-    const fullName = body?.fullName as string | undefined;
-    const phone = (body?.phone as string | undefined) ?? null;
-    const email = body?.email as string | undefined;
-    const passwordTemp = body?.passwordTemp as string | undefined;
+    const schoolId = typeof body?.schoolId === "string" ? body.schoolId.trim() : "";
+    const fullName = typeof body?.fullName === "string" ? body.fullName.trim() : "";
+    const phone = (typeof body?.phone === "string" ? body.phone : null) ?? null;
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const passwordTemp = typeof body?.passwordTemp === "string" ? body.passwordTemp : "";
 
-    if (!schoolId)
-      return NextResponse.json(
-        { ok: false, error: "schoolId é obrigatório" },
-        { status: 400 }
-      );
-    if (!fullName?.trim())
-      return NextResponse.json(
-        { ok: false, error: "fullName é obrigatório" },
-        { status: 400 }
-      );
-    if (!email?.trim())
-      return NextResponse.json(
-        { ok: false, error: "email é obrigatório" },
-        { status: 400 }
-      );
-    if (!passwordTemp || passwordTemp.length < 6)
-      return NextResponse.json(
-        { ok: false, error: "passwordTemp precisa ter >= 6 caracteres" },
-        { status: 400 }
-      );
-
-    const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
-    const anonKey = getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-    const serviceKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
-
-    // Client com JWT do usuário logado (para validar role e gravar nas tables com RLS)
-    const supaUser = createClient(url, anonKey, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false },
-    });
+    if (!schoolId) return fail("schoolId é obrigatório", 400);
+    if (!fullName) return fail("fullName é obrigatório", 400);
+    if (!email) return fail("email é obrigatório", 400);
+    if (!passwordTemp) return fail("Informe a senha temporária.", 400);
+    const tempError = validateTemporaryPassword(passwordTemp);
+    if (tempError) return fail(tempError, 400);
 
     // 1) valida chamador e escola
-    const { data: meData, error: meErr } = await supaUser.auth.getUser();
-    if (meErr || !meData?.user) {
-      return NextResponse.json(
-        { ok: false, error: "Token inválido" },
-        { status: 401 }
-      );
-    }
+    const { data: meData, error: meErr } = await supabaseAdmin.auth.getUser(token);
+    if (meErr || !meData?.user) return fail("Token inválido", 401);
+
+    const firstAccess = blockedByFirstAccess(meData.user);
+    if (firstAccess) return firstAccess;
+
     const callerId = meData.user.id;
 
-    // ✅ CORREÇÃO AQUI: função espera p_user_id (não p_uid)
-    const { data: isPlat, error: platErr } = await supaUser.rpc(
-      "is_platform_admin",
-      { p_user_id: callerId }
-    );
+    const { data: pa, error: paErr } = await supabaseAdmin
+      .from("platform_admins")
+      .select("user_id")
+      .eq("user_id", callerId)
+      .maybeSingle();
+    if (paErr) return fail("Falha ao verificar permissão.", 500);
 
-    if (platErr) {
-      return NextResponse.json(
-        { ok: false, error: "RPC is_platform_admin falhou: " + platErr.message },
-        { status: 400 }
-      );
-    }
-
-    let allowed = Boolean(isPlat);
+    let allowed = !!pa?.user_id;
 
     if (!allowed) {
-      const { data: roleRow, error: roleErr } = await supaUser
+      const { data: roleRow, error: roleErr } = await supabaseAdmin
         .from("school_users")
         .select("role")
         .eq("school_id", schoolId)
         .eq("user_id", callerId)
+        .eq("is_active", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
-
-      if (roleErr)
-        return NextResponse.json(
-          { ok: false, error: roleErr.message },
-          { status: 400 }
-        );
-
-      const role = String(roleRow?.role || "");
-      if (role === "diretor" || role === "coordenador") allowed = true;
+      if (roleErr) return fail("Falha ao verificar permissão.", 500);
+      allowed = isSchoolManagementRole(roleRow?.role);
     }
 
-    if (!allowed) {
-      return NextResponse.json(
-        { ok: false, error: "Sem permissão para criar pai nesta escola" },
-        { status: 403 }
-      );
-    }
+    if (!allowed) return fail("Sem permissão para criar pai nesta escola", 403);
 
-    // 2) cria/recupera user no Auth usando service role
-    const supaAdmin = createClient(url, serviceKey, {
-      auth: { persistSession: false },
-    });
+    const { data: school, error: schoolErr } = await supabaseAdmin
+      .from("schools")
+      .select("id")
+      .eq("id", schoolId)
+      .maybeSingle();
+    if (schoolErr) return fail("Falha ao verificar a escola.", 500);
+    if (!school?.id) return fail("Escola não encontrada.", 404);
 
-    let userId: string | null = null;
+    // 2) cria ou reaproveita o usuário no Auth (somente contas desta escola)
+    let userId: string;
     let createdNew = false;
 
-    // ✅ Estratégia sênior: tenta criar direto; se já existir, recupera e atualiza senha.
-    const { data: created, error: createErr } = await supaAdmin.auth.admin.createUser(
-      {
-        email,
-        password: passwordTemp,
-        email_confirm: true,
-      }
-    );
+    const existing = await findAuthUserByEmail(email);
 
-    if (!createErr && created?.user) {
-      userId = created.user.id;
-      createdNew = true;
-    } else {
-      // Se já existe, precisamos localizar o user e atualizar
-      // Algumas versões retornam mensagens diferentes; tratamos por string.
-      const msg = (createErr?.message || "").toLowerCase();
-      const already =
-        msg.includes("already") ||
-        msg.includes("registered") ||
-        msg.includes("exists");
+    if (existing?.id) {
+      if (existing.id === callerId) return fail("Você não pode alterar o próprio acesso por esta tela.", 400);
 
-      if (!already) {
-        return NextResponse.json(
-          { ok: false, error: "Falha createUser: " + (createErr?.message || "desconhecido") },
-          { status: 500 }
-        );
-      }
-
-      // Fallback: listUsers (mantive porque é o que seu projeto já usa)
-      const { data: listData, error: listErr } = await supaAdmin.auth.admin.listUsers({
-        page: 1,
-        perPage: 200,
-      });
-
-      if (listErr) {
-        return NextResponse.json(
-          { ok: false, error: "Falha listUsers: " + listErr.message },
-          { status: 500 }
-        );
-      }
-
-      const existing = (listData.users || []).find(
-        (u) => (u.email || "").toLowerCase() === email.toLowerCase()
-      );
-
-      if (!existing?.id) {
-        return NextResponse.json(
-          { ok: false, error: "Usuário já existe, mas não encontrei por email no listUsers." },
-          { status: 500 }
-        );
+      const links = await getExistingAccountLinks(existing.id);
+      if (decideExistingAccount(links, schoolId, "parent") === "conflict") {
+        return fail(EXISTING_ACCOUNT_CONFLICT_MESSAGE, 409);
       }
 
       userId = existing.id;
 
-      const { error: updErr } = await supaAdmin.auth.admin.updateUserById(userId, {
+      const { error: updErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
         password: passwordTemp,
         email_confirm: true,
+        app_metadata: withMustChangePassword(existing.app_metadata, true),
       });
-
-      if (updErr) {
-        return NextResponse.json(
-          { ok: false, error: "Falha updateUser: " + updErr.message },
-          { status: 500 }
-        );
-      }
+      if (updErr) return fail("Falha ao atualizar o acesso do responsável.", 500);
+    } else {
+      const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+        email,
+        password: passwordTemp,
+        email_confirm: true,
+        app_metadata: withMustChangePassword(null, true),
+      });
+      if (createErr || !created?.user) return fail("Falha ao criar o acesso do responsável.", 500);
+      userId = created.user.id;
+      createdNew = true;
     }
 
-    // 3) cria/atualiza registro em parents com RLS (via token)
-    const { data: parentExisting, error: parentFindErr } = await supaUser
+    // 3) cria/atualiza o cadastro do responsável nesta escola
+    const { data: parentExisting, error: parentFindErr } = await supabaseAdmin
       .from("parents")
-      .select("id,user_id,school_id,full_name,phone")
+      .select("id")
       .eq("school_id", schoolId)
       .eq("user_id", userId)
       .maybeSingle();
-
-    if (parentFindErr) {
-      return NextResponse.json(
-        { ok: false, error: parentFindErr.message },
-        { status: 400 }
-      );
-    }
+    if (parentFindErr) return fail(parentFindErr.message, 400);
 
     let parentId: string;
 
     if (parentExisting?.id) {
       parentId = parentExisting.id;
-
-      const { error: upErr } = await supaUser
+      const { error: upErr } = await supabaseAdmin
         .from("parents")
-        .update({ full_name: fullName.trim(), phone })
-        .eq("id", parentId);
-
-      if (upErr)
-        return NextResponse.json(
-          { ok: false, error: upErr.message },
-          { status: 400 }
-        );
+        .update({ full_name: fullName, phone })
+        .eq("id", parentId)
+        .eq("school_id", schoolId);
+      if (upErr) return fail(upErr.message, 400);
     } else {
-      const { data: ins, error: insErr } = await supaUser
+      const { data: ins, error: insErr } = await supabaseAdmin
         .from("parents")
-        .insert({
-          school_id: schoolId,
-          user_id: userId,
-          full_name: fullName.trim(),
-          phone,
-        })
+        .insert({ school_id: schoolId, user_id: userId, full_name: fullName, phone })
         .select("id")
         .single();
-
-      if (insErr || !ins?.id) {
-        return NextResponse.json(
-          { ok: false, error: "Falha insert parents: " + (insErr?.message || "") },
-          { status: 400 }
-        );
-      }
+      if (insErr || !ins?.id) return fail("Falha insert parents: " + (insErr?.message || ""), 400);
       parentId = ins.id;
     }
 
-    return NextResponse.json({
-      ok: true,
-      created: createdNew,
-      userId,
-      parentId,
-    });
+    return NextResponse.json({ ok: true, created: createdNew, userId, parentId });
   } catch (e: any) {
-    return NextResponse.json(
-      { ok: false, error: e?.message || "Erro interno" },
-      { status: 500 }
-    );
+    return fail(e?.message || "Erro interno", 500);
   }
 }

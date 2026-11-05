@@ -73,8 +73,13 @@ export async function requireParentForStudent(req: Request, studentId: unknown) 
   return { ok: true as const, userId, parentId: link.parentId, schoolId: link.schoolId, studentId };
 }
 
-export async function createSignedDocumentUrl(storagePath: string): Promise<string | null> {
-  const { data, error } = await supabaseAdmin.storage.from(ENROLLMENT_BUCKET).createSignedUrl(storagePath, SIGNED_URL_SECONDS);
+// URL TEMPORÁRIA (SIGNED_URL_SECONDS). Com downloadName, o navegador baixa o arquivo com
+// esse nome em vez de abri-lo. Nunca há URL pública permanente.
+export async function createSignedDocumentUrl(storagePath: string, downloadName?: string): Promise<string | null> {
+  const bucket = supabaseAdmin.storage.from(ENROLLMENT_BUCKET);
+  const { data, error } = downloadName
+    ? await bucket.createSignedUrl(storagePath, SIGNED_URL_SECONDS, { download: downloadName })
+    : await bucket.createSignedUrl(storagePath, SIGNED_URL_SECONDS);
   if (error || !data?.signedUrl) return null;
   return data.signedUrl;
 }

@@ -1,7 +1,30 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  ASSIGNABLE_ROLES,
+  canAssignRole,
+  canManageExistingMember,
+  canonicalRole,
+  decideExistingAccount,
+  isSchoolManagementRole,
+} from "@/lib/auth/schoolRoles";
+import { withMustChangePassword } from "@/lib/auth/firstAccess";
+import { validateTemporaryPassword } from "@/lib/auth/passwordPolicy";
+import {
+  blockedByFirstAccess,
+  EXISTING_ACCOUNT_CONFLICT_MESSAGE,
+  findAuthUserByEmail,
+  getExistingAccountLinks,
+  setMustChangePassword,
+} from "@/lib/auth/server";
 
 export const runtime = "nodejs";
+
+// Cadastro de membros da equipe pela gestão da escola (diretor, coordenação, secretaria).
+// - Só o diretor cadastra/promove diretores.
+// - E-mail já existente de outra escola, de responsável de outra escola ou do Admin Master
+//   é recusado: a rota nunca altera a senha de contas de terceiros.
+// - Contas criadas aqui (senha temporária ou convite) ficam marcadas para o primeiro acesso.
 
 function jsonError(message: string, status: number, details?: any) {
   return NextResponse.json(
@@ -10,48 +33,10 @@ function jsonError(message: string, status: number, details?: any) {
   );
 }
 
-function normRole(role: any) {
-  return String(role || "").trim().toLowerCase();
-}
-
-function canManageStaff(roleRaw: any) {
-  const r = normRole(roleRaw);
-  return r === "diretor" || r === "coordenador" || r === "director" || r === "coordinator";
-}
-
-function isAllowedNewRole(roleRaw: any) {
-  const r = normRole(roleRaw);
-  return r === "diretor" || r === "coordenador" || r === "secretaria" || r === "professor";
-}
-
 function getBearerToken(req: Request) {
   const auth = req.headers.get("authorization") || "";
   const m = auth.match(/^Bearer\s+(.+)$/i);
   return m?.[1] || null;
-}
-
-async function findAuthUserByEmail(email: string) {
-  let page = 1;
-  const perPage = 1000;
-
-  for (;;) {
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
-
-    if (error) throw new Error("listUsers failed: " + error.message);
-
-    const users = data?.users || [];
-    const found = users.find(
-      (u) => String(u.email || "").trim().toLowerCase() === email
-    );
-
-    if (found) return found;
-
-    if (users.length < perPage) break;
-    page += 1;
-    if (page > 20) break;
-  }
-
-  return null;
 }
 
 async function saveProfileSafe(params: {
@@ -148,6 +133,9 @@ export async function POST(req: Request) {
       return jsonError("Invalid token/session.", 401, userErr?.message);
     }
 
+    const firstAccess = blockedByFirstAccess(userData.user);
+    if (firstAccess) return firstAccess;
+
     const requesterId = userData.user.id;
 
     const { data: requester, error: requesterErr } = await supabaseAdmin
@@ -167,38 +155,83 @@ export async function POST(req: Request) {
       return jsonError("Você não está vinculado a nenhuma escola.", 403);
     }
 
-    if (!canManageStaff(requester.role)) {
+    if (!isSchoolManagementRole(requester.role)) {
       return jsonError(`Forbidden: role "${requester.role}" não pode criar equipe.`, 403);
     }
 
+    const schoolId = String(requester.school_id);
     const body = await req.json().catch(() => ({}));
 
     const email = String(body?.email || "").trim().toLowerCase();
     const fullName = String(body?.full_name || "").trim();
-    const role = normRole(body?.role);
-    const tempPassword = String(body?.temp_password || "").trim();
+    const role = canonicalRole(body?.role);
+    // A senha temporária não é cortada nem guardada: vai direto para o Auth (hash).
+    const tempPassword = typeof body?.temp_password === "string" ? body.temp_password : "";
 
     if (!email) return jsonError("Email é obrigatório.", 400);
     if (!fullName) return jsonError("Nome completo é obrigatório.", 400);
-    if (!role) return jsonError("Cargo/função é obrigatório.", 400);
+    if (!body?.role) return jsonError("Cargo/função é obrigatório.", 400);
 
-    if (!isAllowedNewRole(role)) {
+    if (!(ASSIGNABLE_ROLES as readonly string[]).includes(role)) {
       return jsonError(
-        `Role inválida: "${role}". Use diretor, coordenador, secretaria ou professor.`,
+        `Role inválida: "${String(body?.role)}". Use diretor, coordenador, secretaria ou professor.`,
         400
       );
     }
+
+    if (!canAssignRole(requester.role, role)) {
+      return jsonError("Somente o diretor pode cadastrar ou promover outro diretor.", 403);
+    }
+
+    const tempError = validateTemporaryPassword(tempPassword);
+    if (tempError) return jsonError(tempError, 400);
 
     let targetUserId: string | null = null;
 
     const existingAuthUser = await findAuthUserByEmail(email);
 
     if (existingAuthUser?.id) {
+      if (existingAuthUser.id === requesterId) {
+        return jsonError("Você não pode alterar o próprio acesso por esta tela.", 400);
+      }
+
+      const links = await getExistingAccountLinks(existingAuthUser.id);
+      if (decideExistingAccount(links, schoolId, "staff") === "conflict") {
+        return jsonError(EXISTING_ACCOUNT_CONFLICT_MESSAGE, 409);
+      }
+
+      const { data: currentLink, error: currentErr } = await supabaseAdmin
+        .from("school_users")
+        .select("role")
+        .eq("school_id", schoolId)
+        .eq("user_id", existingAuthUser.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (currentErr) {
+        return jsonError("Falha ao checar vínculo existente.", 500, currentErr.message);
+      }
+
+      if (
+        currentLink &&
+        !canManageExistingMember({
+          requesterRole: requester.role,
+          requesterUserId: requesterId,
+          targetUserId: existingAuthUser.id,
+          currentTargetRole: currentLink.role,
+          newTargetRole: role,
+        })
+      ) {
+        return jsonError("Você não tem permissão para alterar o acesso deste membro da equipe.", 403);
+      }
+
       targetUserId = existingAuthUser.id;
 
       const updatePayload: {
         user_metadata: Record<string, any>;
         password?: string;
+        app_metadata?: Record<string, unknown>;
       } = {
         user_metadata: {
           ...(existingAuthUser.user_metadata || {}),
@@ -208,6 +241,7 @@ export async function POST(req: Request) {
 
       if (tempPassword) {
         updatePayload.password = tempPassword;
+        updatePayload.app_metadata = withMustChangePassword(existingAuthUser.app_metadata, true);
       }
 
       const { error: updErr } = await supabaseAdmin.auth.admin.updateUserById(
@@ -225,6 +259,7 @@ export async function POST(req: Request) {
           password: tempPassword,
           email_confirm: true,
           user_metadata: { full_name: fullName },
+          app_metadata: withMustChangePassword(null, true),
         });
 
         if (cErr || !created?.user?.id) {
@@ -247,6 +282,12 @@ export async function POST(req: Request) {
         }
 
         targetUserId = invited.user.id;
+
+        try {
+          await setMustChangePassword(targetUserId, true);
+        } catch (err: any) {
+          return jsonError("Falha ao preparar o primeiro acesso do convite.", 500, err?.message);
+        }
       }
     }
 
@@ -263,7 +304,7 @@ export async function POST(req: Request) {
     const { data: existingLink, error: exErr } = await supabaseAdmin
       .from("school_users")
       .select("id, role, is_active, created_at")
-      .eq("school_id", requester.school_id)
+      .eq("school_id", schoolId)
       .eq("user_id", targetUserId)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -275,7 +316,7 @@ export async function POST(req: Request) {
 
     if (!existingLink?.id) {
       const { error: linkErr } = await supabaseAdmin.from("school_users").insert({
-        school_id: requester.school_id,
+        school_id: schoolId,
         user_id: targetUserId,
         role,
         is_active: true,
@@ -302,7 +343,7 @@ export async function POST(req: Request) {
         email,
         full_name: fullName,
         role,
-        school_id: requester.school_id,
+        school_id: schoolId,
       },
     });
   } catch (e: any) {

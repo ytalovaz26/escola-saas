@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isSchoolManagementRole } from "@/lib/auth/schoolRoles";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -78,7 +79,7 @@ export async function GET(req: Request) {
 
     const role = normRole(su.role);
     const allowed =
-      role === "diretor" || role === "coordenador" || role === "director" || role === "coordinator";
+      isSchoolManagementRole(role);
     if (!allowed) return jsonError(`Acesso negado. Role: "${su?.role}"`, 403);
 
     const schoolId = su.school_id;

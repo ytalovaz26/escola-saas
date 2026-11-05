@@ -109,7 +109,7 @@ export async function POST(req: Request) {
   const guard = await requireStaff(req, [
     "diretor",
     "director",
-    "coordenador",
+    "coordenador", "secretaria",
     "coordinator",
     "admin",
   ]);

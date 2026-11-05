@@ -1,5 +1,6 @@
 "use client";
 
+import { isSchoolManagementRole } from "@/lib/auth/schoolRoles";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -92,7 +93,7 @@ export default function SchoolTeacherClassesPage() {
 
   const canManage = useMemo(() => {
     const r = normRole(me?.school?.role);
-    return r === "diretor" || r === "director" || r === "coordenador" || r === "coordinator";
+    return isSchoolManagementRole(r);
   }, [me?.school?.role]);
 
   async function getTokenOrRedirect() {
@@ -154,10 +155,7 @@ export default function SchoolTeacherClassesPage() {
       }
 
       const allowed =
-        role === "diretor" ||
-        role === "director" ||
-        role === "coordenador" ||
-        role === "coordinator";
+        isSchoolManagementRole(role);
 
       if (!allowed) {
         router.replace(meJson?.redirectTo || "/login");

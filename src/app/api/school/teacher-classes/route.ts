@@ -4,7 +4,7 @@ import { requireStaff } from "@/lib/requireStaff";
 import { jsonFail, jsonOk, logRouteError, readJsonBody } from "@/lib/http";
 
 export async function GET(req: Request) {
-  const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
+  const guard = await requireStaff(req, ["director", "coordinator", "secretaria", "diretor", "coordenador"]);
   if (!guard.ok) return guard.res;
 
   try {
@@ -30,7 +30,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const guard = await requireStaff(req, ["director", "coordinator", "diretor", "coordenador"]);
+  const guard = await requireStaff(req, ["director", "coordinator", "secretaria", "diretor", "coordenador"]);
   if (!guard.ok) return guard.res;
 
   try {

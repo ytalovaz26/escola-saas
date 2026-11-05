@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { FIRST_ACCESS_PATH } from "@/lib/auth/firstAccess";
 
 type BrandingPayload = {
   brandName: string | null;
@@ -13,6 +14,7 @@ type BrandingPayload = {
 type MePayload = {
   ok: true;
   user: { id: string; email: string | null };
+  mustChangePassword?: boolean;
   isPlatformAdmin: boolean;
   school?: { schoolId: string; role: string };
   branding?: BrandingPayload;
@@ -34,6 +36,12 @@ type NavItem = {
   section: "principal" | "operacao" | "configuracao";
   roles: RoleKey[];
 };
+
+// Diretor, coordenação e secretaria usam o mesmo painel de gestão. Cada API confere o
+// papel e a escola no servidor; o menu apenas reflete essas permissões.
+// (Financeiro mantém sua regra própria.)
+const MANAGEMENT_ROLES: RoleKey[] = ["diretor", "coordenador", "secretaria", "admin"];
+const CHANGE_PASSWORD_HREF = "/account/change-password";
 
 const SUBJECTS_HREF = "/school/subjects";
 const BRANDING_HREF = "/school/settings/branding";
@@ -186,14 +194,14 @@ export default function SchoolLayout({
         href: STAFF_HREF,
         icon: "🧑‍💼",
         section: "principal",
-        roles: ["diretor", "coordenador", "admin"],
+        roles: MANAGEMENT_ROLES,
       },
       {
         label: "Turmas",
         href: "/school/classes",
         icon: "🏫",
         section: "principal",
-        roles: ["diretor", "coordenador", "admin"],
+        roles: MANAGEMENT_ROLES,
       },
       {
         label: "Alunos",
@@ -228,14 +236,14 @@ export default function SchoolLayout({
         href: "/school/teachers",
         icon: "👩‍🏫",
         section: "operacao",
-        roles: ["diretor", "coordenador", "admin"],
+        roles: MANAGEMENT_ROLES,
       },
       {
         label: "Disciplinas",
         href: SUBJECTS_HREF,
         icon: "📚",
         section: "operacao",
-        roles: ["diretor", "coordenador", "admin"],
+        roles: MANAGEMENT_ROLES,
       },
       {
         label: "Horários",
@@ -270,7 +278,7 @@ export default function SchoolLayout({
         href: "/school/class-diary",
         icon: "📘",
         section: "operacao",
-        roles: ["diretor", "coordenador", "admin"],
+        roles: MANAGEMENT_ROLES,
       },
       {
         label: "Boletins",
@@ -305,14 +313,14 @@ export default function SchoolLayout({
         href: ACADEMIC_SETTINGS_HREF,
         icon: "⚙️",
         section: "configuracao",
-        roles: ["diretor", "coordenador", "admin"],
+        roles: MANAGEMENT_ROLES,
       },
       {
         label: "Branding",
         href: BRANDING_HREF,
         icon: "🎨",
         section: "configuracao",
-        roles: ["diretor", "admin"],
+        roles: MANAGEMENT_ROLES,
       },
     ],
     []
@@ -330,13 +338,13 @@ export default function SchoolLayout({
     (i) => i.section === "configuracao"
   );
 
-  const canOpenStaff =
-    role === "diretor" || role === "coordenador" || role === "admin";
+  const isManagement = MANAGEMENT_ROLES.includes(role);
 
-  const canOpenSubjects =
-    role === "diretor" || role === "coordenador" || role === "admin";
+  const canOpenStaff = isManagement;
 
-  const canOpenBranding = role === "diretor" || role === "admin";
+  const canOpenSubjects = isManagement;
+
+  const canOpenBranding = isManagement;
 
   const canOpenSchedule =
     role === "diretor" ||
@@ -383,6 +391,11 @@ export default function SchoolLayout({
 
         const payload = json as MePayload;
         const currentRole = normalizeRole(payload?.school?.role);
+
+        if (payload.mustChangePassword) {
+          router.replace(FIRST_ACCESS_PATH);
+          return;
+        }
 
         if (payload.isPlatformAdmin) {
           router.replace("/admin-master");
@@ -520,8 +533,16 @@ export default function SchoolLayout({
 
                 <button
                   type="button"
+                  onClick={() => go(CHANGE_PASSWORD_HREF)}
+                  className="mt-4 w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  Alterar senha
+                </button>
+
+                <button
+                  type="button"
                   onClick={logout}
-                  className="mt-4 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90"
+                  className="mt-2 w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:opacity-90"
                 >
                   Sair do sistema
                 </button>
@@ -616,6 +637,14 @@ export default function SchoolLayout({
 
                 <button
                   type="button"
+                  onClick={() => go(CHANGE_PASSWORD_HREF)}
+                  className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  Alterar senha
+                </button>
+
+                <button
+                  type="button"
                   onClick={logout}
                   className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
                 >
@@ -678,8 +707,16 @@ export default function SchoolLayout({
 
                 <button
                   type="button"
-                  onClick={logout}
+                  onClick={() => go(CHANGE_PASSWORD_HREF)}
                   className="mt-5 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700"
+                >
+                  Alterar senha
+                </button>
+
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="mt-2 w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700"
                 >
                   Sair do sistema
                 </button>

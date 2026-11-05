@@ -15,7 +15,7 @@ const CAN_READ_CLASSES = [
 
 const CAN_CREATE_CLASSES = [
   "director",
-  "coordinator",
+  "coordinator", "secretaria",
   "diretor",
   "coordenador",
   "admin",

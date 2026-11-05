@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
+import { computeStaffStudentUpdate, isStaleProfile } from "@/lib/students/profileSync";
 
 export const runtime = "nodejs";
 
@@ -259,6 +260,8 @@ async function getStudentProfile(studentId: string, schoolId: string) {
         studentPhotoUploadedBy: student.student_photo_uploaded_by ?? null,
         studentProfileUpdatedAt:
           student.student_profile_updated_at ?? student.created_at ?? null,
+        // Versão exata da ficha (sem fallback) para a conferência ao salvar.
+        profileVersion: student.student_profile_updated_at ?? null,
 
         gender: student.gender ?? null,
         cpf: student.cpf ?? null,
@@ -287,7 +290,7 @@ export async function GET(
 ) {
   const guard = await requireStaff(req, [
     "director",
-    "coordinator",
+    "coordinator", "secretaria",
     "diretor",
     "coordenador",
   ]);
@@ -318,7 +321,7 @@ export async function PATCH(
 ) {
   const guard = await requireStaff(req, [
     "director",
-    "coordinator",
+    "coordinator", "secretaria",
     "diretor",
     "coordenador",
   ]);
@@ -341,37 +344,57 @@ export async function PATCH(
       return jsonError("JSON inválido.", 400);
     }
 
-    const payload = {
-      gender: normalizeNullableText(body?.gender),
-      cpf: normalizeNullableText(body?.cpf),
-      rg: normalizeNullableText(body?.rg),
-      birth_certificate: normalizeNullableText(body?.birthCertificate),
-      mother_name: normalizeNullableText(body?.motherName),
-      father_name: normalizeNullableText(body?.fatherName),
-      medical_notes: normalizeNullableText(body?.medicalNotes),
-      allergies: normalizeNullableText(body?.allergies),
-      continuous_medication: normalizeNullableText(body?.continuousMedication),
-      food_restrictions: normalizeNullableText(body?.foodRestrictions),
-      emergency_contact_name: normalizeNullableText(body?.emergencyContactName),
-      emergency_contact_phone: normalizeNullableText(body?.emergencyContactPhone),
-      authorized_pickup_notes: normalizeNullableText(body?.authorizedPickupNotes),
-      general_notes: normalizeNullableText(body?.generalNotes),
-      student_profile_updated_at: new Date().toISOString(),
-    };
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonError("JSON inválido.", 400);
+    }
 
-    const { data: updated, error: updateErr } = await supabaseAdmin
+    // Só os campos enviados são gravados (a tela envia apenas os alterados), para não apagar
+    // dados que o responsável preencheu no painel de matrícula.
+    const update = computeStaffStudentUpdate(body);
+    if (!update.ok) return jsonError(update.error, 400);
+
+    if (Object.keys(update.payload).length === 0) {
+      const unchanged = await getStudentProfile(studentId, guard.schoolId);
+      if (!unchanged.ok) return unchanged.response;
+      return NextResponse.json({ ...unchanged.payload, saved: false });
+    }
+
+    // Conferência de versão (atômica): grava somente se a ficha não mudou desde que foi aberta.
+    const expectedProvided = Object.prototype.hasOwnProperty.call(body, "expectedProfileVersion");
+    const expected = expectedProvided ? body.expectedProfileVersion ?? null : undefined;
+
+    let query = supabaseAdmin
       .from("students")
-      .update(payload)
+      .update({ ...update.payload, student_profile_updated_at: new Date().toISOString() })
       .eq("id", studentId)
-      .eq("school_id", guard.schoolId)
-      .select("id")
-      .maybeSingle();
+      .eq("school_id", guard.schoolId);
+
+    if (expectedProvided) {
+      query = expected === null ? query.is("student_profile_updated_at", null) : query.eq("student_profile_updated_at", expected);
+    }
+
+    const { data: updated, error: updateErr } = await query.select("id").maybeSingle();
 
     if (updateErr) {
       return jsonError("Erro ao atualizar dados do aluno: " + updateErr.message, 500);
     }
 
     if (!updated?.id) {
+      const { data: exists } = await supabaseAdmin
+        .from("students")
+        .select("id, student_profile_updated_at")
+        .eq("id", studentId)
+        .eq("school_id", guard.schoolId)
+        .maybeSingle();
+
+      if (exists?.id && isStaleProfile(exists.student_profile_updated_at, expected, expectedProvided)) {
+        return jsonError(
+          "Esta ficha foi atualizada por outra pessoa (por exemplo, o responsável) enquanto estava aberta. Recarregue a ficha e refaça a alteração.",
+          409,
+          { code: "PROFILE_CHANGED" }
+        );
+      }
+
       return jsonError("Aluno não encontrado para atualização.", 404);
     }
 

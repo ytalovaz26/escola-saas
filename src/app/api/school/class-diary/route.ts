@@ -39,7 +39,7 @@ export async function GET(req: Request) {
   const guard = await requireStaff(req, [
     "diretor",
     "director",
-    "coordenador",
+    "coordenador", "secretaria",
     "coordinator",
     "admin",
   ]);
