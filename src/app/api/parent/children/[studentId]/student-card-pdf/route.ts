@@ -2,6 +2,8 @@
 import { NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { SCHOOL_IDENTITY_COLUMNS, resolveSchoolIdentity } from "@/lib/schoolIdentity";
+import { loadPdfImage } from "@/lib/pdf/pdfImage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,75 +48,6 @@ function initialsFromName(name: string | null | undefined) {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
 
   return `${parts[0]?.[0] || ""}${parts[1]?.[0] || ""}`.toUpperCase() || "AL";
-}
-
-function parseSupabaseStorageRef(url: string): { bucket: string; path: string } | null {
-  const clean = String(url || "").trim();
-
-  if (!clean) return null;
-
-  const publicSplit = clean.split("/storage/v1/object/public/");
-
-  if (publicSplit.length === 2) {
-    const rest = publicSplit[1];
-    const parts = rest.split("/");
-    const bucket = parts.shift();
-    const path = parts.join("/");
-
-    if (bucket && path) return { bucket, path };
-  }
-
-  const signedSplit = clean.split("/storage/v1/object/sign/");
-
-  if (signedSplit.length === 2) {
-    const rest = signedSplit[1].split("?")[0];
-    const parts = rest.split("/");
-    const bucket = parts.shift();
-    const path = parts.join("/");
-
-    if (bucket && path) return { bucket, path };
-  }
-
-  if (!clean.startsWith("http://") && !clean.startsWith("https://") && clean.includes("/")) {
-    const parts = clean.split("/");
-    const bucket = parts.shift();
-    const path = parts.join("/");
-
-    if (bucket && path) return { bucket, path };
-  }
-
-  return null;
-}
-
-async function getImageBuffer(url: string | null | undefined): Promise<Buffer | null> {
-  try {
-    if (!url) return null;
-
-    const clean = String(url).trim();
-
-    if (!clean) return null;
-
-    const ref = parseSupabaseStorageRef(clean);
-
-    if (ref) {
-      const { data, error } = await supabaseAdmin.storage.from(ref.bucket).download(ref.path);
-
-      if (!error && data) {
-        const ab = await data.arrayBuffer();
-        return Buffer.from(ab);
-      }
-    }
-
-    const res = await fetch(clean);
-
-    if (!res.ok) return null;
-
-    const ab = await res.arrayBuffer();
-
-    return Buffer.from(ab);
-  } catch {
-    return null;
-  }
 }
 
 async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
@@ -265,7 +198,7 @@ export async function GET(
 
     const { data: school, error: schoolErr } = await supabaseAdmin
       .from("schools")
-      .select("name, brand_logo_url, logo_url")
+      .select(SCHOOL_IDENTITY_COLUMNS)
       .eq("id", schoolId)
       .maybeSingle();
 
@@ -330,11 +263,11 @@ export async function GET(
       activeClass = classData || null;
     }
 
-    const schoolLogoBuffer = await getImageBuffer(
-      school?.brand_logo_url || school?.logo_url || null
-    );
+    // Identidade canônica da escola do aluno; imagens só do Storage do projeto, tratadas.
+    const schoolIdentity = resolveSchoolIdentity(school);
+    const schoolLogoBuffer = await loadPdfImage(schoolIdentity.logoUrl);
 
-    const studentPhotoBuffer = await getImageBuffer(student.student_photo_url || null);
+    const studentPhotoBuffer = await loadPdfImage(student.student_photo_url || null);
 
     const doc = new PDFDocument({
       size: "A4",
@@ -372,7 +305,7 @@ export async function GET(
 
     doc.font("Helvetica-Bold").fontSize(10).fillColor("#cbd5e1");
 
-    doc.text(field(school?.name || "Escola"), cardX + 90, cardY + 22, {
+    doc.text(field(schoolIdentity.displayName || "Escola"), cardX + 90, cardY + 22, {
       width: cardW - 120,
       ellipsis: true,
     });

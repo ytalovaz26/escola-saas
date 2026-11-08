@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
+import { SCHOOL_IDENTITY_COLUMNS, resolveSchoolIdentity } from "@/lib/schoolIdentity";
 
 export const runtime = "nodejs";
 
@@ -33,7 +34,7 @@ export async function GET(req: Request) {
 
   const { data: school, error } = await supabaseAdmin
     .from("schools") // ✅ TABELA CORRETA
-    .select("id, name, logo_url, primary_color")
+    .select(`${SCHOOL_IDENTITY_COLUMNS}, primary_color`)
     .eq("id", schoolId)
     .maybeSingle();
 
@@ -43,11 +44,16 @@ export async function GET(req: Request) {
     });
   }
 
+  // Mesma identidade de /api/me e dos PDFs: brand_name ?? name, brand_logo_url ?? logo_url.
+  // (Antes: name e logo_url do cadastro original, divergindo do painel da direção.)
+  const identity = resolveSchoolIdentity(school, schoolId);
+
   return NextResponse.json({
     ok: true,
     schoolId,
-    name: school?.name ?? null,
-    logoUrl: school?.logo_url ?? null,
+    name: identity.displayName,
+    legalName: identity.legalName,
+    logoUrl: identity.logoUrl,
     primaryColor: normalizeHexColor(school?.primary_color),
   });
 }

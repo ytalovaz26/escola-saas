@@ -4,7 +4,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
 import { getTeacherDisplayName } from "@/lib/getTeacherDisplayName";
 import { logRouteError } from "@/lib/http";
-import { toPdfImage } from "@/lib/pdf/safeImage";
+import { loadSchoolPdfIdentity } from "@/lib/pdf/schoolPdfIdentity";
 
 export const runtime = "nodejs";
 
@@ -78,85 +78,6 @@ function monthEnd(referenceMonth: string) {
 function monthFromDateYMD(value: string) {
   if (!isValidDateYMD(value)) return "";
   return value.slice(0, 7);
-}
-
-function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: string } | null {
-  const u = (logoUrl || "").trim();
-  if (!u) return null;
-
-  const pub = u.split("/storage/v1/object/public/");
-  if (pub.length === 2) {
-    const rest = pub[1];
-    const parts = rest.split("/");
-    const bucket = parts.shift();
-    const path = parts.join("/");
-
-    if (bucket && path) return { bucket, path };
-  }
-
-  const sign = u.split("/storage/v1/object/sign/");
-  if (sign.length === 2) {
-    const restWithQuery = sign[1];
-    const rest = restWithQuery.split("?")[0];
-    const parts = rest.split("/");
-    const bucket = parts.shift();
-    const path = parts.join("/");
-
-    if (bucket && path) return { bucket, path };
-  }
-
-  if (!u.startsWith("http://") && !u.startsWith("https://") && u.includes("/")) {
-    const parts = u.split("/");
-    const bucket = parts.shift();
-    const path = parts.join("/");
-
-    if (bucket && path) return { bucket, path };
-  }
-
-  return null;
-}
-
-function bufferFromDataUrl(dataUrl: string): Buffer | null {
-  try {
-    const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-    if (!match) return null;
-
-    return Buffer.from(match[2], "base64");
-  } catch {
-    return null;
-  }
-}
-
-async function getLogoBuffer(logoUrl: string | null): Promise<Buffer | null> {
-  try {
-    if (!logoUrl) return null;
-
-    const clean = logoUrl.trim();
-    if (!clean) return null;
-
-    if (clean.startsWith("data:image/")) {
-      return bufferFromDataUrl(clean);
-    }
-
-    const ref = parseSupabaseStorageRef(clean);
-
-    if (ref) {
-      const { data, error } = await supabaseAdmin.storage.from(ref.bucket).download(ref.path);
-
-      if (!error && data) {
-        const ab = await data.arrayBuffer();
-        return Buffer.from(ab);
-      }
-    }
-
-    const res = await fetch(clean);
-    if (!res.ok) return null;
-
-    const ab = await res.arrayBuffer();
-    return Buffer.from(ab);
-  } catch {
-    return null;
-  }
 }
 
 async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
@@ -795,22 +716,16 @@ async function handleGet(req: Request) {
     return jsonError("A data inicial não pode ser maior que a data final.", 400);
   }
 
-  const { data: school, error: schoolErr } = await supabaseAdmin
-    .from("schools")
-    .select("name, brand_logo_url, logo_url")
-    .eq("id", schoolId)
-    .single();
+  // Identidade canônica da escola autorizada (mesma dos painéis) e logomarca tratada:
+  // WebP/SVG convertidos, imagem inválida = PDF sem logo, somente Storage do próprio projeto.
+  const pdfIdentity = await loadSchoolPdfIdentity(schoolId);
 
-  if (schoolErr) {
-    return jsonError("Falha ao buscar dados da escola.", 500, {
-      details: schoolErr.message,
-    });
+  if (pdfIdentity.error || !pdfIdentity.identity) {
+    return jsonError("Falha ao buscar dados da escola.", 500);
   }
 
-  const schoolName = school?.name || "Escola";
-  const logoUrl = school?.brand_logo_url || school?.logo_url || null;
-  // Só PNG/JPEG legíveis pelo PDFKit; WebP/SVG/corrompido = PDF sem logo (não derruba a geração).
-  const logoBuffer = toPdfImage(await getLogoBuffer(logoUrl));
+  const schoolName = pdfIdentity.name || "Escola";
+  const logoBuffer = pdfIdentity.logo;
 
   const { data: classData, error: classErr } = await supabaseAdmin
     .from("classes")

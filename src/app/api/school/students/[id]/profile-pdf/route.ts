@@ -4,6 +4,8 @@
 // src/lib/students/profilePdf.ts.
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { SCHOOL_IDENTITY_COLUMNS, resolveSchoolIdentity } from "@/lib/schoolIdentity";
+import { loadPdfImage } from "@/lib/pdf/pdfImage";
 import { requireStaff } from "@/lib/requireStaff";
 import { buildStudentProfilePdf, type ProfilePdfParent } from "@/lib/students/profilePdf";
 import { safeFileName } from "@/lib/pdf/text";
@@ -12,56 +14,6 @@ export const runtime = "nodejs";
 
 function jsonError(message: string, status = 400, extra?: any) {
   return NextResponse.json({ ok: false, error: message, ...extra }, { status });
-}
-
-function parseSupabaseStorageRef(url: string): { bucket: string; path: string } | null {
-  const u = String(url || "").trim();
-  if (!u) return null;
-
-  const publicParts = u.split("/storage/v1/object/public/");
-  if (publicParts.length === 2) {
-    const pieces = publicParts[1].split("/");
-    const bucket = pieces.shift();
-    const path = pieces.join("/");
-    if (bucket && path) return { bucket, path };
-  }
-
-  const signedParts = u.split("/storage/v1/object/sign/");
-  if (signedParts.length === 2) {
-    const pieces = signedParts[1].split("?")[0].split("/");
-    const bucket = pieces.shift();
-    const path = pieces.join("/");
-    if (bucket && path) return { bucket, path };
-  }
-
-  if (!u.startsWith("http://") && !u.startsWith("https://") && u.includes("/")) {
-    const pieces = u.split("/");
-    const bucket = pieces.shift();
-    const path = pieces.join("/");
-    if (bucket && path) return { bucket, path };
-  }
-
-  return null;
-}
-
-async function getImageBuffer(url: string | null | undefined): Promise<Buffer | null> {
-  try {
-    if (!url) return null;
-    const clean = String(url).trim();
-    if (!clean) return null;
-
-    const ref = parseSupabaseStorageRef(clean);
-    if (ref) {
-      const { data, error } = await supabaseAdmin.storage.from(ref.bucket).download(ref.path);
-      if (!error && data) return Buffer.from(await data.arrayBuffer());
-    }
-
-    const res = await fetch(clean);
-    if (!res.ok) return null;
-    return Buffer.from(await res.arrayBuffer());
-  } catch {
-    return null;
-  }
 }
 
 export async function GET(
@@ -88,7 +40,7 @@ export async function GET(
 
     const { data: school, error: schoolErr } = await supabaseAdmin
       .from("schools")
-      .select("name, brand_logo_url, logo_url")
+      .select(SCHOOL_IDENTITY_COLUMNS)
       .eq("id", schoolId)
       .maybeSingle();
 
@@ -226,13 +178,15 @@ export async function GET(
         .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
     }
 
+    // Identidade canônica da escola autorizada; imagens só do Storage do projeto, tratadas.
+    const schoolIdentity = resolveSchoolIdentity(school);
     const [schoolLogo, studentPhoto] = await Promise.all([
-      getImageBuffer(school?.brand_logo_url || school?.logo_url || null),
-      getImageBuffer(student.student_photo_url || null),
+      loadPdfImage(schoolIdentity.logoUrl),
+      loadPdfImage(student.student_photo_url || null),
     ]);
 
     const buffer = await buildStudentProfilePdf({
-      schoolName: String(school?.name || "Escola"),
+      schoolName: String(schoolIdentity.displayName || "Escola"),
       schoolLogo,
       studentPhoto,
       student,

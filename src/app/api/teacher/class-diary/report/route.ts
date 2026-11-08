@@ -4,7 +4,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
 import { getTeacherDisplayName } from "@/lib/getTeacherDisplayName";
 import { logRouteError } from "@/lib/http";
-import { toPdfImage } from "@/lib/pdf/safeImage";
+import { loadSchoolPdfIdentity } from "@/lib/pdf/schoolPdfIdentity";
 
 export const runtime = "nodejs";
 
@@ -33,46 +33,6 @@ function formatMonthLabel(ref: string) {
   if (!year || !month) return ref;
   const date = new Date(Number(year), Number(month) - 1, 1);
   return date.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
-}
-
-function parseSupabaseStorageRef(logoUrl: string): { bucket: string; path: string } | null {
-  const u = String(logoUrl || "").trim();
-  if (!u) return null;
-
-  const pub = u.split("/storage/v1/object/public/");
-  if (pub.length === 2) {
-    const rest = pub[1];
-    const parts = rest.split("/");
-    const bucket = parts.shift();
-    const path = parts.join("/");
-    if (bucket && path) return { bucket, path };
-  }
-
-  return null;
-}
-
-async function getLogoBuffer(logoUrl: string | null): Promise<Buffer | null> {
-  try {
-    if (!logoUrl) return null;
-
-    const ref = parseSupabaseStorageRef(logoUrl);
-
-    if (ref) {
-      const { data, error } = await supabaseAdmin.storage.from(ref.bucket).download(ref.path);
-      if (!error && data) {
-        const ab = await data.arrayBuffer();
-        return Buffer.from(ab);
-      }
-    }
-
-    const res = await fetch(logoUrl);
-    if (!res.ok) return null;
-
-    const ab = await res.arrayBuffer();
-    return Buffer.from(ab);
-  } catch {
-    return null;
-  }
 }
 
 async function pdfToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
@@ -334,21 +294,15 @@ async function handleGet(req: Request) {
     return jsonError("Professor não está vinculado a esta turma.", 403);
   }
 
-  const { data: school, error: schoolErr } = await supabaseAdmin
-    .from("schools")
-    .select("name, brand_logo_url")
-    .eq("id", schoolId)
-    .single();
+  // Identidade canônica da escola autorizada (mesma dos painéis) e logomarca tratada.
+  const pdfIdentity = await loadSchoolPdfIdentity(schoolId);
 
-  if (schoolErr) {
-    return jsonError("Falha ao buscar dados da escola.", 500, {
-      details: schoolErr.message,
-    });
+  if (pdfIdentity.error || !pdfIdentity.identity) {
+    return jsonError("Falha ao buscar dados da escola.", 500);
   }
 
-  const schoolName = school?.name || "Escola";
-  // Só PNG/JPEG legíveis pelo PDFKit; WebP/SVG/corrompido = PDF sem logo (não derruba a geração).
-  const logoBuffer = toPdfImage(await getLogoBuffer(school?.brand_logo_url || null));
+  const schoolName = pdfIdentity.name || "Escola";
+  const logoBuffer = pdfIdentity.logo;
 
   const { data: classData, error: classErr } = await supabaseAdmin
     .from("classes")
