@@ -3,6 +3,8 @@ import PDFDocument from "pdfkit";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
 import { getTeacherDisplayName } from "@/lib/getTeacherDisplayName";
+import { logRouteError } from "@/lib/http";
+import { toPdfImage } from "@/lib/pdf/safeImage";
 
 export const runtime = "nodejs";
 
@@ -711,7 +713,20 @@ function drawSummaryReport(params: {
   });
 }
 
+// Falha inesperada na geração: resposta JSON com mensagem (antes: HTTP 500 sem corpo, que a
+// tela exibia só como "Falha ao gerar PDF diário.") e registro no log do servidor.
 export async function GET(req: Request) {
+  try {
+    return await handleGet(req);
+  } catch (err) {
+    logRouteError("GET /api/school/class-diary/report", err);
+    return jsonError("Não foi possível gerar o PDF do diário. Tente novamente; se persistir, avise o suporte.", 500, {
+      code: "PDF_GENERATION_FAILED",
+    });
+  }
+}
+
+async function handleGet(req: Request) {
   const guard = await requireStaff(req, [
     "diretor",
     "director",
@@ -794,7 +809,8 @@ export async function GET(req: Request) {
 
   const schoolName = school?.name || "Escola";
   const logoUrl = school?.brand_logo_url || school?.logo_url || null;
-  const logoBuffer = await getLogoBuffer(logoUrl);
+  // Só PNG/JPEG legíveis pelo PDFKit; WebP/SVG/corrompido = PDF sem logo (não derruba a geração).
+  const logoBuffer = toPdfImage(await getLogoBuffer(logoUrl));
 
   const { data: classData, error: classErr } = await supabaseAdmin
     .from("classes")

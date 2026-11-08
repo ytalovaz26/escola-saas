@@ -27,6 +27,14 @@ class Query {
     this.filters.push((r) => (val === null ? r[col] === null || r[col] === undefined : r[col] === val));
     return this;
   }
+  gte(col, val) {
+    this.filters.push((r) => String(r[col]) >= String(val));
+    return this;
+  }
+  lte(col, val) {
+    this.filters.push((r) => String(r[col]) <= String(val));
+    return this;
+  }
   in(col, vals) {
     this.filters.push((r) => vals.map(String).includes(String(r[col])));
     return this;
