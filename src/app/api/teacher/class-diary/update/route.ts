@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
+import { requireTeacherClassAccess } from "@/lib/teacherClassAccess";
 
 export const runtime = "nodejs";
 
@@ -76,6 +77,14 @@ export async function PUT(req: Request) {
         { status: 404 }
       );
     }
+
+    // Ser autor do diário não basta: exige vínculo ATIVO com a turma (regra central).
+    const teacherClassDenied = await requireTeacherClassAccess({
+      schoolId,
+      teacherUserId,
+      classId: diary.class_id,
+    });
+    if (teacherClassDenied) return teacherClassDenied;
 
     const newSubject = typeof subjectName === "string" ? subjectName.trim() : diary.subject_name;
     const newTerm = typeof termLabel === "string" ? termLabel.trim() : diary.term_label;

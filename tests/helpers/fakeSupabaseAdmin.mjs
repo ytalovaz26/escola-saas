@@ -62,6 +62,10 @@ class Query {
     this.payload = payload;
     return this;
   }
+  delete() {
+    this.op = "delete";
+    return this;
+  }
   maybeSingle() {
     return this.exec("maybe");
   }
@@ -79,6 +83,10 @@ class Query {
       return { data: mode === "many" ? items : items[0], error: null };
     }
     let matched = rows.filter((r) => this.filters.every((f) => f(r)));
+    if (this.op === "delete") {
+      state.tables[this.table] = rows.filter((r) => !matched.includes(r));
+      return { data: null, error: null };
+    }
     if (this.op === "update") {
       matched.forEach((r) => Object.assign(r, this.payload));
       if (!this.returning) return { data: null, error: null };

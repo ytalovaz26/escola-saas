@@ -9,8 +9,8 @@ export async function GET(req: Request) {
     "admin",
     "secretaria",
     "coordenador",
-    "professor",
-    "teacher",
+    // Professor fora: esta lista traz TODOS os alunos da escola. Professor usa as rotas
+    // /api/teacher/*, restritas às turmas de vínculo ativo.
   ]);
 
   if (!guard.ok) return guard.res;

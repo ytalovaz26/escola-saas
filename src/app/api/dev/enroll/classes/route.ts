@@ -9,8 +9,7 @@ export async function GET(req: Request) {
     "admin",
     "secretaria",
     "coordenador",
-    "professor",
-    "teacher",
+    // Professor fora: esta lista traz TODAS as turmas da escola (ferramenta de matrícula).
   ]);
 
   if (!guard.ok) return guard.res;

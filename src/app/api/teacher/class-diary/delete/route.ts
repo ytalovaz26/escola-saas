@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
+import { requireTeacherClassAccess } from "@/lib/teacherClassAccess";
 
 export const runtime = "nodejs";
 
@@ -28,6 +29,29 @@ export async function DELETE(req: Request) {
   if (!entryId) {
     return NextResponse.json({ ok:false, error:"entryId obrigatório" },{status:400});
   }
+
+  // Ser autor do lançamento não basta: exige vínculo ATIVO com a turma (regra central).
+  const { data: entry, error: entryError } = await supabaseAdmin
+    .from("class_diary_entries")
+    .select("id, class_id")
+    .eq("id", entryId)
+    .eq("school_id", schoolId)
+    .eq("teacher_user_id", teacherUserId)
+    .maybeSingle();
+
+  if (entryError) {
+    return NextResponse.json({ ok:false, error:"Erro ao localizar lançamento." },{status:500});
+  }
+  if (!entry) {
+    return NextResponse.json({ ok:false, error:"Lançamento não encontrado." },{status:404});
+  }
+
+  const teacherClassDenied = await requireTeacherClassAccess({
+    schoolId,
+    teacherUserId,
+    classId: entry.class_id,
+  });
+  if (teacherClassDenied) return teacherClassDenied;
 
   const { error } = await supabaseAdmin
     .from("class_diary_entries")

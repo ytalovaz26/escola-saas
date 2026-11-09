@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
+import { isTeacherRole, requireTeacherClassAccess } from "@/lib/teacherClassAccess";
 
 export const runtime = "nodejs";
 
@@ -300,6 +301,16 @@ export async function GET(req: Request) {
   if (!date) return jsonError("date é obrigatório (YYYY-MM-DD).", 400);
   if (!isValidDateString(date)) {
     return jsonError("date inválido. Use o formato YYYY-MM-DD.", 400);
+  }
+
+  // Gestão acessa todas as turmas da escola; professor só as de vínculo ATIVO (regra central).
+  if (isTeacherRole(guard.role)) {
+    const teacherClassDenied = await requireTeacherClassAccess({
+      schoolId,
+      teacherUserId: guard.userId,
+      classId,
+    });
+    if (teacherClassDenied) return teacherClassDenied;
   }
 
   const classInfo = await getClassInfo({ schoolId, classId });

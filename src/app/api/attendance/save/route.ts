@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireTeacherClassAccess } from "@/lib/teacherClassAccess";
 import { requireStaff } from "@/lib/requireStaff";
 
 export const runtime = "nodejs";
@@ -417,23 +418,12 @@ export async function POST(req: Request) {
   if (!classInfo.ok) return jsonError(classInfo.error, 404);
 
   if (isTeacherRole(role)) {
-    const { data: teacherClassLink, error: teacherClassErr } = await supabaseAdmin
-      .from("teacher_classes")
-      .select("id")
-      .eq("school_id", schoolId)
-      .eq("class_id", classId)
-      .eq("teacher_user_id", userId)
-      .limit(1);
-
-    if (teacherClassErr) {
-      return jsonError("Falha ao validar vínculo professor-turma.", 500, {
-        details: teacherClassErr.message,
-      });
-    }
-
-    if (!teacherClassLink || teacherClassLink.length === 0) {
-      return jsonError("Professor não está vinculado a esta turma.", 403);
-    }
+    const teacherClassDenied = await requireTeacherClassAccess({
+      schoolId: schoolId,
+      teacherUserId: userId,
+      classId: classId,
+    });
+    if (teacherClassDenied) return teacherClassDenied;
   }
 
   const calendarBlocksResult = await getApplicableCalendarBlocks({

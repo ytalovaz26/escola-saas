@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireStaff } from "@/lib/requireStaff";
+import { checkTeacherClassAccess } from "@/lib/teacherClassAccess";
 
 export const runtime = "nodejs";
 
@@ -32,24 +33,9 @@ async function validateTeacherClassAccess(params: {
   teacherUserId: string;
   classId: string;
 }) {
-  const { schoolId, teacherUserId, classId } = params;
-
-  const { data, error } = await supabaseAdmin
-    .from("teacher_classes")
-    .select("id")
-    .eq("school_id", schoolId)
-    .eq("class_id", classId)
-    .eq("teacher_user_id", teacherUserId)
-    .limit(1);
-
-  if (error) {
-    return { ok: false, error: error.message, status: 500 };
-  }
-
-  if (!data || data.length === 0) {
-    return { ok: false, error: "Professor não está vinculado a esta turma.", status: 403 };
-  }
-
+  // Regra central: vínculo ATIVO, da escola da sessão, com turma da mesma escola.
+  const access = await checkTeacherClassAccess(params);
+  if (!access.ok) return { ok: false as const, error: access.error, status: access.status };
   return { ok: true as const };
 }
 

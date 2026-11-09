@@ -95,8 +95,8 @@ export default function DevEnrollPage() {
 
   const canUse = useMemo(() => {
     const role = normRole((me as any)?.school?.role);
-    // DEV TOOL: permite diretor/secretaria/coordenador/professor
-    return ["diretor", "director", "admin", "secretaria", "coordenador", "professor", "teacher"].includes(role);
+    // DEV TOOL: permite diretor/secretaria/coordenador (professor usa as rotas restritas por turma)
+    return ["diretor", "director", "admin", "secretaria", "coordenador"].includes(role);
   }, [me]);
 
   async function getToken(): Promise<string | null> {
@@ -283,7 +283,7 @@ export default function DevEnrollPage() {
     return (
       <main className="p-6 space-y-2">
         <h1 className="text-xl font-semibold">Acesso restrito</h1>
-        <p>Apenas diretor/secretaria/coordenador/professor.</p>
+        <p>Apenas diretor/secretaria/coordenador.</p>
         <button onClick={() => router.replace((me as any)?.redirectTo || "/")} className="rounded bg-black text-white px-4 py-2">
           Voltar
         </button>

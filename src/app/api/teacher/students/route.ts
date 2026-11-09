@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireTeacherClassAccess } from "@/lib/teacherClassAccess";
 
 export const runtime = "nodejs";
 
@@ -58,19 +59,8 @@ export async function GET(req: Request) {
 
     const schoolId = schoolLink.school_id;
 
-    const { data: teacherClass, error: tcErr } = await supabaseAdmin
-      .from("teacher_classes")
-      .select("id")
-      .eq("school_id", schoolId)
-      .eq("class_id", classId)
-      .eq("teacher_user_id", userId)
-      .limit(1)
-      .maybeSingle();
-
-    if (tcErr) return jsonFail(500, tcErr.message);
-    if (!teacherClass?.id) {
-      return jsonFail(403, "Professor não está vinculado a esta turma.");
-    }
+    const teacherClassDenied = await requireTeacherClassAccess({ schoolId, teacherUserId: userId, classId });
+    if (teacherClassDenied) return teacherClassDenied;
 
     const { data, error } = await supabaseAdmin
       .from("student_classes")

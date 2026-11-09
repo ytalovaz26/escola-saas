@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { activeTeacherClassLinks, classIdsOfSchool } from "@/lib/teacherClassAccess";
 
 export const runtime = "nodejs";
 
@@ -57,9 +58,11 @@ export async function GET(req: Request) {
 
     const schoolId = schoolLink.school_id;
 
-    const { data, error } = await supabaseAdmin
-      .from("teacher_classes")
-      .select(`
+    // Só vínculos ATIVOS (regra central): turma desvinculada some da lista do professor.
+    const { data, error } = await activeTeacherClassLinks(
+      schoolId,
+      userId,
+      `
         id,
         class_id,
         created_at,
@@ -69,16 +72,18 @@ export async function GET(req: Request) {
           grade,
           shift
         )
-      `)
-      .eq("teacher_user_id", userId)
-      .eq("school_id", schoolId)
-      .order("created_at", { ascending: false });
+      `
+    ).order("created_at", { ascending: false });
 
     if (error) {
       return jsonFail(500, error.message);
     }
 
-    const classes = (data || []).map((item: any) => ({
+    // Defesa em profundidade: descarta vínculo cuja turma não seja desta escola.
+    const rows = (data as any[]) || [];
+    const inSchool = await classIdsOfSchool(schoolId, rows.map((item: any) => item.class_id));
+
+    const classes = rows.filter((item: any) => inSchool.has(String(item.class_id))).map((item: any) => ({
       assignmentId: item.id,
       classId: item.class_id,
       createdAt: item.created_at || null,

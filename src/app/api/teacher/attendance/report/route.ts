@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { SCHOOL_IDENTITY_COLUMNS, resolveSchoolIdentity } from "@/lib/schoolIdentity";
 import { loadPdfImage } from "@/lib/pdf/pdfImage";
+import { requireTeacherClassAccess } from "@/lib/teacherClassAccess";
 import { requireStaff } from "@/lib/requireStaff";
 import { getTeacherDisplayName } from "@/lib/getTeacherDisplayName";
 import PDFDocument from "pdfkit";
@@ -376,23 +377,12 @@ export async function GET(req: Request) {
   if (!classId) return jsonError("classId é obrigatório.", 400);
   if (!date) return jsonError("Envie date=YYYY-MM-DD (PDF Diário).", 400);
 
-  const { data: link, error: linkErr } = await supabaseAdmin
-    .from("teacher_classes")
-    .select("id")
-    .eq("school_id", schoolId)
-    .eq("class_id", classId)
-    .eq("teacher_user_id", teacherUserId)
-    .limit(1);
-
-  if (linkErr) {
-    return jsonError("Erro ao validar vínculo professor-turma.", 500, {
-      details: linkErr.message,
-    });
-  }
-
-  if (!link || link.length === 0) {
-    return jsonError("Professor não está vinculado a esta turma.", 403);
-  }
+  const teacherClassDenied = await requireTeacherClassAccess({
+    schoolId: schoolId,
+    teacherUserId: teacherUserId,
+    classId: classId,
+  });
+  if (teacherClassDenied) return teacherClassDenied;
 
   const { data: school, error: schoolErr } = await supabaseAdmin
     .from("schools")

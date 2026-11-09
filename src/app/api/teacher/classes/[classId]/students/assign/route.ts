@@ -1,6 +1,7 @@
 // src/app/api/teacher/classes/[classId]/students/assign/route.ts
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireTeacherClassAccess } from "@/lib/teacherClassAccess";
 
 export const runtime = "nodejs";
 
@@ -64,18 +65,12 @@ export async function POST(req: Request, context: any) {
     if (clsRow.school_id !== schoolId) return jsonError("Turma não pertence à sua escola.", 403);
 
     // 4) Professor está vinculado à turma (teacher_classes)?
-    const { data: tc, error: tcErr } = await supabaseAdmin
-      .from("teacher_classes")
-      .select("id, is_active")
-      .eq("school_id", schoolId)
-      .eq("class_id", classId)
-      .eq("teacher_user_id", teacherUserId)
-      .eq("is_active", true)
-      .limit(1)
-      .maybeSingle();
-
-    if (tcErr) return jsonError("teacher_classes lookup failed: " + tcErr.message, 500);
-    if (!tc?.id) return jsonError("Você não tem acesso a esta turma.", 403);
+    const teacherClassDenied = await requireTeacherClassAccess({
+      schoolId: schoolId,
+      teacherUserId: teacherUserId,
+      classId: classId,
+    });
+    if (teacherClassDenied) return teacherClassDenied;
 
     // 5) Payload (studentId)
     const body = await req.json().catch(() => ({}));

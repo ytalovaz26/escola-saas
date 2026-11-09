@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { checkTeacherClassAccess } from "@/lib/teacherClassAccess";
 
 export const runtime = "nodejs";
 
@@ -95,19 +96,9 @@ async function ensureTeacherOwnsSession(
     return { ok: false as const, error: new Error("Sessão não pertence a esta escola.") };
   }
 
-  const { data, error } = await supabase
-    .from("teacher_classes")
-    .select("id")
-    .eq("teacher_id", teacherId)
-    .eq("class_id", s.class_id)
-    .eq("school_id", schoolId)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (error) return { ok: false as const, error };
-  if (!data) {
-    return { ok: false as const, error: new Error("Professor não vinculado à turma desta sessão.") };
-  }
+  // Regra central: vínculo ATIVO, da escola da sessão, com turma da mesma escola.
+  const access = await checkTeacherClassAccess({ schoolId, teacherUserId: teacherId, classId: s.class_id });
+  if (!access.ok) return { ok: false as const, error: new Error(access.error) };
 
   return { ok: true as const, session: s };
 }

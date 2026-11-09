@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { listActiveTeacherClassIds } from "@/lib/teacherClassAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -223,19 +224,9 @@ async function getTeacherContext(req: Request) {
   };
 }
 
-async function getTeacherLinkedClassIds(teacherUserId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("teacher_classes")
-    .select("class_id")
-    .eq("teacher_user_id", teacherUserId);
-
-  if (error) {
-    throw new Error("Falha ao buscar turmas vinculadas ao professor: " + error.message);
-  }
-
-  return Array.from(
-    new Set((data || []).map((item: any) => cleanText(item.class_id)).filter(Boolean))
-  );
+async function getTeacherLinkedClassIds(schoolId: string, teacherUserId: string) {
+  // Regra central: só vínculos ATIVOS na escola da sessão.
+  return listActiveTeacherClassIds(schoolId, teacherUserId);
 }
 
 async function getOfficialSchedule(params: {
@@ -548,7 +539,7 @@ export async function GET(req: Request) {
       : 31;
 
     const [linkedClassIds, scheduleRows] = await Promise.all([
-      getTeacherLinkedClassIds(ctx.user.id),
+      getTeacherLinkedClassIds(ctx.schoolId, ctx.user.id),
       getOfficialSchedule({
         schoolId: ctx.schoolId,
         teacherUserId: ctx.user.id,

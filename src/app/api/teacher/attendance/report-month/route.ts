@@ -3,6 +3,7 @@ import PDFDocument from "pdfkit";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPdfImage } from "@/lib/pdf/pdfImage";
 import { requireStaff } from "@/lib/requireStaff";
+import { checkTeacherClassAccess } from "@/lib/teacherClassAccess";
 import { getTeacherDisplayName } from "@/lib/getTeacherDisplayName";
 
 export const runtime = "nodejs";
@@ -324,32 +325,11 @@ async function validateTeacherClassLink(params: {
   classId: string;
   teacherUserId: string;
 }) {
-  const { data, error } = await supabaseAdmin
-    .from("teacher_classes")
-    .select("id")
-    .eq("school_id", params.schoolId)
-    .eq("class_id", params.classId)
-    .eq("teacher_user_id", params.teacherUserId)
-    .limit(1);
-
-  if (error) {
-    return {
-      ok: false as const,
-      status: 500,
-      message: "Erro ao validar vínculo professor-turma.",
-      details: error.message,
-    };
+  // Regra central: vínculo ATIVO, da escola da sessão, com turma da mesma escola.
+  const access = await checkTeacherClassAccess(params);
+  if (!access.ok) {
+    return { ok: false as const, status: access.status, message: access.error, details: null };
   }
-
-  if (!data || data.length === 0) {
-    return {
-      ok: false as const,
-      status: 403,
-      message: "Professor não está vinculado a esta turma.",
-      details: null,
-    };
-  }
-
   return {
     ok: true as const,
   };

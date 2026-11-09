@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { requireTeacherClassAccess } from "@/lib/teacherClassAccess";
 import { requireStaff } from "@/lib/requireStaff";
 
 export const runtime = "nodejs";
@@ -40,18 +41,12 @@ export async function GET(req: Request) {
   if (!isISODate(from) || !isISODate(to)) return jsonError("Datas inválidas. Use YYYY-MM-DD.", 400);
 
   // vínculo professor-turma
-  const { data: link, error: linkErr } = await supabaseAdmin
-    .from("teacher_classes")
-    .select("id")
-    .eq("school_id", schoolId)
-    .eq("class_id", classId)
-    .eq("teacher_user_id", teacherUserId)
-    .limit(1);
-
-  if (linkErr) {
-    return jsonError("Erro ao validar vínculo professor-turma.", 500, { details: linkErr.message });
-  }
-  if (!link || link.length === 0) return jsonError("Professor não está vinculado a esta turma.", 403);
+  const teacherClassDenied = await requireTeacherClassAccess({
+    schoolId: schoolId,
+    teacherUserId: teacherUserId,
+    classId: classId,
+  });
+  if (teacherClassDenied) return teacherClassDenied;
 
   // pega tudo do intervalo e agrega no Node (rápido e simples)
   const { data: rows, error } = await supabaseAdmin
